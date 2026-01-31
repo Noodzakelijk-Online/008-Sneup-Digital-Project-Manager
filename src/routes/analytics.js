@@ -1,0 +1,172 @@
+const express = require('express');
+const router = express.Router();
+const logger = require('../utils/logger');
+const analyticsService = require('../services/analyticsService');
+const Analytics = require('../models/Analytics');
+
+// Get latest analytics for a board
+router.get('/board/:boardId/latest', async (req, res) => {
+  try {
+    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId);
+    
+    if (!analytics) {
+      return res.status(404).json({
+        success: false,
+        error: 'Analytics not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      analytics
+    });
+  } catch (error) {
+    logger.error('Failed to get latest analytics:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve analytics'
+    });
+  }
+});
+
+// Get analytics history for a board
+router.get('/board/:boardId/history', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 30;
+    const history = await analyticsService.getAnalyticsHistory(req.params.boardId, days);
+    
+    res.json({
+      success: true,
+      count: history.length,
+      history
+    });
+  } catch (error) {
+    logger.error('Failed to get analytics history:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve analytics history'
+    });
+  }
+});
+
+// Generate analytics for a board
+router.post('/board/:boardId/generate', async (req, res) => {
+  try {
+    const analytics = await analyticsService.generateBoardAnalytics(req.params.boardId);
+    
+    if (!analytics) {
+      return res.status(404).json({
+        success: false,
+        error: 'Board not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Analytics generated successfully',
+      analytics
+    });
+  } catch (error) {
+    logger.error('Failed to generate analytics:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate analytics'
+    });
+  }
+});
+
+// Get critical boards
+router.get('/critical', async (req, res) => {
+  try {
+    const criticalBoards = await Analytics.getCriticalBoards();
+    
+    res.json({
+      success: true,
+      count: criticalBoards.length,
+      boards: criticalBoards
+    });
+  } catch (error) {
+    logger.error('Failed to get critical boards:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve critical boards'
+    });
+  }
+});
+
+// Get bottlenecks for a board
+router.get('/board/:boardId/bottlenecks', async (req, res) => {
+  try {
+    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId);
+    
+    if (!analytics) {
+      return res.status(404).json({
+        success: false,
+        error: 'Analytics not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      bottlenecks: analytics.bottlenecks || []
+    });
+  } catch (error) {
+    logger.error('Failed to get bottlenecks:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve bottlenecks'
+    });
+  }
+});
+
+// Get project health for a board
+router.get('/board/:boardId/health', async (req, res) => {
+  try {
+    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId);
+    
+    if (!analytics) {
+      return res.status(404).json({
+        success: false,
+        error: 'Analytics not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      health: analytics.projectHealth || {}
+    });
+  } catch (error) {
+    logger.error('Failed to get project health:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve project health'
+    });
+  }
+});
+
+// Get velocity metrics for a board
+router.get('/board/:boardId/velocity', async (req, res) => {
+  try {
+    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId);
+    
+    if (!analytics) {
+      return res.status(404).json({
+        success: false,
+        error: 'Analytics not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      velocity: analytics.velocity || {}
+    });
+  } catch (error) {
+    logger.error('Failed to get velocity:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve velocity'
+    });
+  }
+});
+
+module.exports = router;
