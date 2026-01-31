@@ -1,7 +1,7 @@
 {
   "name": "sneup",
-  "version": "1.0.0",
-  "description": "Autonomous AI-powered digital project manager for Trello - manages 50+ boards with deep context understanding, bottleneck identification, and autonomous team management",
+  "version": "2.0.0",
+  "description": "Autonomous AI-powered digital project manager for Trello v2.0 - proactive management, performance tracking, conversational AI, and accountability enforcement",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
@@ -29,6 +29,7 @@
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
     "winston": "^3.11.0",
+    "openai": "^4.20.0",
     "cors": "^2.8.5",
     "helmet": "^7.1.0",
     "compression": "^1.7.4"
