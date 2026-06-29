@@ -1,0 +1,240 @@
+const PRIORITY_ORDER = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+  P3: 3
+};
+
+const enhancements = [
+  {
+    id: 'ENH-001',
+    priority: 'P0',
+    area: 'connectors',
+    title: 'Build provider sync adapters from linked accounts',
+    evidence: 'Connector accounts can be linked and stored, normalized WorkSignal records now exist, `/api/work-signals/contracts` exposes adapter contracts for the connector catalog, `/api/work-signals/accounts/:accountId/upsert` gives sync workers a safe workspace-scoped target, and the command dashboard exposes a Signals view for cross-tool work plus adapter readiness. Provider-specific list/fetchDelta workers still need to be implemented.',
+    impact: 'Turns the connector marketplace from account linking into cross-tool project ingestion.',
+    effort: 'XL',
+    status: 'in-progress',
+    nextStep: 'Implement Trello, Jira, Asana, Slack, GitHub, Google, and Microsoft list/fetchDelta adapters that write to WorkSignal with retries and rate limits.',
+    acceptanceCriteria: [
+      'Each adapter exposes list, fetchDelta, normalize, and applyAction methods.',
+      'A scheduled job syncs connected accounts with retries and per-provider rate limits.',
+      'Mission control can show external work signals with source attribution.'
+    ]
+  },
+  {
+    id: 'ENH-002',
+    priority: 'P0',
+    area: 'autonomy',
+    title: 'Add a human approval queue for autonomous actions',
+    evidence: 'Autopilot commands can now be queued into the durable recommendation and decision queue with approve, reject, change, snooze, delegate, and payload-edit paths.',
+    impact: 'Allows Sneup to become more autonomous while preserving human control over risky project changes.',
+    effort: 'L',
+    status: 'done',
+    nextStep: 'Replace prompt-based payload editing with a structured review form and add policy-driven default snooze durations.',
+    acceptanceCriteria: [
+      'Every automatable command can be approved, rejected, snoozed, or delegated.',
+      'Approvals are auditable with actor, timestamp, target, and source evidence.',
+      'Execution is blocked unless approval policy allows it.'
+    ]
+  },
+  {
+    id: 'ENH-003',
+    priority: 'P0',
+    area: 'security',
+    title: 'Add real users, workspaces, RBAC, and audit logs',
+    evidence: 'The API resolves request identity and workspace context, supports hashed database API tokens and hashed per-user session tokens, Workspace/User/ApiToken/SessionToken models exist, consequential write endpoints require explicit role permissions, workspace/user/session management APIs exist, the dashboard exposes current workspace selection for local/service contexts, multi-workspace identity operations are documented, and boards/cards/connector accounts plus core operations-ledger, analytics, chat, team, list/member/comment, intervention, learning, and performance collections are workspace-scoped.',
+    impact: 'Required before Sneup can safely run as a shared or internet-facing project-management control plane.',
+    effort: 'XL',
+    status: 'in-progress',
+    nextStep: 'Add invitation/email delivery, session revocation UI, and production migration scripts for existing shared deployments.',
+    acceptanceCriteria: [
+      'Every API request resolves a user or service identity.',
+      'Connector accounts and project data are workspace-scoped.',
+      'Sensitive actions emit immutable audit events.'
+    ]
+  },
+  {
+    id: 'ENH-004',
+    priority: 'P1',
+    area: 'trust',
+    title: 'Attach evidence and source citations to every recommendation',
+    evidence: 'Recommendations preserve sourceEvidence, `/api/recommendations/:recommendationId/evidence` returns source refs plus decisions, approvals, Trello attempts, audit events, follow-ups, worker responses, and related findings, mission-control command/focus/risk/chat payloads now carry sourceEvidence, and the dashboard exposes evidence counts plus compact evidence rows.',
+    impact: 'Makes Sneup defensible: humans can inspect why a recommendation exists before trusting it.',
+    effort: 'M',
+    status: 'in-progress',
+    nextStep: 'Add clickable source drilldowns for command queue, focus, risk, and chat evidence refs, including direct card/comment/provider object links where the upstream connector exposes them.',
+    acceptanceCriteria: [
+      'Each recommendation links to source cards, comments, commits, messages, documents, or analytics snapshots.',
+      'The dashboard shows source count and newest evidence timestamp.',
+      'API consumers can fetch the evidence bundle for a recommendation.'
+    ]
+  },
+  {
+    id: 'ENH-005',
+    priority: 'P1',
+    area: 'forecasting',
+    title: 'Upgrade forecasting with capacity calendars and confidence ranges',
+    evidence: 'Current health and priority logic uses card counts, due dates, risk levels, and simple workload scoring.',
+    impact: 'Improves delivery predictions and prevents false certainty in project dates.',
+    effort: 'L',
+    status: 'needs-research',
+    nextStep: 'Model availability, holidays, focus time, role skills, historical throughput, and dependency uncertainty.',
+    acceptanceCriteria: [
+      'Forecasts return P50/P80 date ranges instead of single dates.',
+      'Forecasts explain capacity assumptions and known blockers.',
+      'Predictions degrade gracefully when evidence is incomplete.'
+    ]
+  },
+  {
+    id: 'ENH-006',
+    priority: 'P1',
+    area: 'desktop',
+    title: 'Add first-run setup and signed desktop release polish',
+    evidence: 'The Windows installer works, but there is no branded icon, publisher certificate, auto-update channel, or guided setup.',
+    impact: 'Reduces installation friction and improves trust for Windows 11 users.',
+    effort: 'M',
+    status: 'ready',
+    nextStep: 'Add first-run wizard for MongoDB/demo mode/API keys, installer icon assets, publisher signing, and update feed configuration.',
+    acceptanceCriteria: [
+      'First run explains demo mode versus live mode.',
+      'Installer shows a branded icon and signed publisher when a certificate is configured.',
+      'The app can check for updates without blocking startup.'
+    ]
+  },
+  {
+    id: 'ENH-007',
+    priority: 'P1',
+    area: 'operations',
+    title: 'Add job observability and controls',
+    evidence: 'Background workers run on schedules, but the dashboard does not expose job history, failures, retries, or pause/resume controls.',
+    impact: 'Makes Sneup operable for real teams and reduces blind spots when sync or analytics jobs fail.',
+    effort: 'M',
+    status: 'ready',
+    nextStep: 'Add JobRun model and dashboard panels for sync, analytics, intervention, and webhook processing.',
+    acceptanceCriteria: [
+      'Each job run records start, finish, duration, status, and error summary.',
+      'Operators can pause, resume, and manually trigger safe jobs.',
+      'Mission control shows stale data warnings when jobs fail.'
+    ]
+  },
+  {
+    id: 'ENH-008',
+    priority: 'P2',
+    area: 'dashboard',
+    title: 'Move dashboard CSS and JavaScript into external assets',
+    evidence: 'Dashboard CSS and JavaScript now live in external static assets and Helmet no longer allows inline scripts or styles.',
+    impact: 'Improves browser hardening and makes the UI easier to test and maintain.',
+    effort: 'M',
+    status: 'done',
+    nextStep: 'Add static asset cache/versioning once the dashboard build pipeline exists.',
+    acceptanceCriteria: [
+      'CSP no longer needs `unsafe-inline` for scripts.',
+      'Dashboard behavior is unchanged in browser smoke tests.',
+      'Static assets are cacheable with explicit versioning.'
+    ]
+  },
+  {
+    id: 'ENH-009',
+    priority: 'P2',
+    area: 'ai-quality',
+    title: 'Add an evaluation harness for AI recommendations',
+    evidence: 'AI fallback and OpenAI generation exist, but there is no test set measuring answer quality, safety, or actionability.',
+    impact: 'Prevents regressions as Sneup becomes more autonomous.',
+    effort: 'M',
+    status: 'needs-research',
+    nextStep: 'Create representative project scenarios and score recommendations for correctness, evidence use, tone, and action safety.',
+    acceptanceCriteria: [
+      'Evaluation scenarios cover blockers, overload, overdue work, stakeholder updates, and ambiguous requests.',
+      'Every model/prompt change runs the evaluation suite.',
+      'Unsafe autonomous-action suggestions fail the suite.'
+    ]
+  },
+  {
+    id: 'ENH-010',
+    priority: 'P2',
+    area: 'notifications',
+    title: 'Add multi-channel notification delivery',
+    evidence: 'Sneup detects commands and risks, but it does not yet deliver them to Slack, Teams, email, or calendar workflows.',
+    impact: 'Moves Sneup from dashboard-only visibility into the places project managers and teams already work.',
+    effort: 'L',
+    status: 'ready',
+    nextStep: 'Implement NotificationPolicy and NotificationDelivery models with Slack, Teams, email, and webhook senders.',
+    acceptanceCriteria: [
+      'Users can choose channel, severity threshold, digest cadence, and quiet hours.',
+      'Notifications link back to source evidence and the approval queue.',
+      'Delivery failures are visible in job observability.'
+    ]
+  },
+  {
+    id: 'ENH-011',
+    priority: 'P2',
+    area: 'data-model',
+    title: 'Introduce a normalized cross-tool work graph',
+    evidence: 'The current data model is Trello-first, while connectors cover many non-Trello project systems.',
+    impact: 'Allows Sneup to reason across projects without forcing every provider into Trello-specific schemas.',
+    effort: 'XL',
+    status: 'ready',
+    nextStep: 'Create WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent models with provider mappings.',
+    acceptanceCriteria: [
+      'Trello data can be projected into the normalized graph without losing Trello-specific fields.',
+      'At least three non-Trello providers can sync into the graph.',
+      'Mission control can read from the graph rather than Trello-only collections.'
+    ]
+  },
+  {
+    id: 'ENH-012',
+    priority: 'P3',
+    area: 'reporting',
+    title: 'Generate stakeholder-ready exports',
+    evidence: 'Mission control has useful status data, but there is no export flow for clients, executives, or team rituals.',
+    impact: 'Saves project managers recurring reporting time and creates visible value quickly.',
+    effort: 'M',
+    status: 'ready',
+    nextStep: 'Add weekly status, standup, risk register, and client update exporters.',
+    acceptanceCriteria: [
+      'Reports can export to Markdown and PDF.',
+      'Each report includes risks, decisions needed, owners, dates, and source evidence.',
+      'Reports can be generated from live data or demo data.'
+    ]
+  }
+];
+
+const sortEnhancements = (items) => [...items].sort((left, right) => {
+  const priorityDiff = PRIORITY_ORDER[left.priority] - PRIORITY_ORDER[right.priority];
+  if (priorityDiff !== 0) return priorityDiff;
+  return left.id.localeCompare(right.id);
+});
+
+const listEnhancements = (filters = {}) => {
+  const filtered = enhancements.filter(item => {
+    if (filters.priority && item.priority !== filters.priority) return false;
+    if (filters.area && item.area !== filters.area) return false;
+    if (filters.status && item.status !== filters.status) return false;
+    return true;
+  });
+
+  return sortEnhancements(filtered);
+};
+
+const getEnhancement = (id) =>
+  enhancements.find(item => item.id.toLowerCase() === String(id).toLowerCase()) || null;
+
+const getSummary = (items = enhancements) => items.reduce((summary, item) => {
+  summary.total += 1;
+  summary.byPriority[item.priority] = (summary.byPriority[item.priority] || 0) + 1;
+  summary.byArea[item.area] = (summary.byArea[item.area] || 0) + 1;
+  summary.byStatus[item.status] = (summary.byStatus[item.status] || 0) + 1;
+  return summary;
+}, {
+  total: 0,
+  byPriority: {},
+  byArea: {},
+  byStatus: {}
+});
+
+module.exports = {
+  getEnhancement,
+  getSummary,
+  listEnhancements
+};

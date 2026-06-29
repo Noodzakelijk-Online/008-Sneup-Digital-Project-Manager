@@ -1,0 +1,165 @@
+const express = require('express');
+const router = express.Router();
+const logger = require('../utils/logger');
+const accountConnectorService = require('../services/accountConnectorService');
+const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
+const { requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
+
+router.param('accountId', validateObjectIdParam('accountId'));
+
+const getBaseUrl = (req) => {
+  const protocol = req.protocol;
+  return `${protocol}://${req.get('host')}`;
+};
+
+const connectorRequestOptions = (req) => ({
+  workspaceId: getRequestWorkspaceObjectId(req),
+  actorId: req.auth?.actorId
+});
+
+const sendError = (res, error) => {
+  res.status(error.statusCode || 500).json({
+    success: false,
+    error: error.message || 'Connector operation failed'
+  });
+};
+
+router.get('/', async (req, res) => {
+  try {
+    const catalog = accountConnectorService.getCatalog();
+    const accounts = await accountConnectorService.listAccounts(connectorRequestOptions(req));
+    res.json({
+      success: true,
+      ...catalog,
+      accounts
+    });
+  } catch (error) {
+    logger.error('Failed to get connector catalog:', error);
+    sendError(res, error);
+  }
+});
+
+router.get('/categories', (req, res) => {
+  try {
+    res.json({
+      success: true,
+      categories: accountConnectorService.getCatalog().categories
+    });
+  } catch (error) {
+    logger.error('Failed to get connector categories:', error);
+    sendError(res, error);
+  }
+});
+
+router.get('/accounts', async (req, res) => {
+  try {
+    const accounts = await accountConnectorService.listAccounts(connectorRequestOptions(req));
+    res.json({
+      success: true,
+      count: accounts.length,
+      accounts
+    });
+  } catch (error) {
+    logger.error('Failed to list connector accounts:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/validate', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.markAccountValidated(req.params.accountId, connectorRequestOptions(req));
+    res.json({
+      success: true,
+      account
+    });
+  } catch (error) {
+    logger.error('Failed to validate connector account:', error);
+    sendError(res, error);
+  }
+});
+
+router.delete('/accounts/:accountId', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const result = await accountConnectorService.deleteAccount(req.params.accountId, connectorRequestOptions(req));
+    res.json(result);
+  } catch (error) {
+    logger.error('Failed to delete connector account:', error);
+    sendError(res, error);
+  }
+});
+
+router.get('/:connectorId', (req, res) => {
+  try {
+    const connector = accountConnectorService.getConnectorDetails(req.params.connectorId);
+    if (!connector) {
+      return res.status(404).json({
+        success: false,
+        error: 'Connector not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      connector
+    });
+  } catch (error) {
+    logger.error('Failed to get connector details:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/:connectorId/connect', requirePermission('connectors:manage'), (req, res) => {
+  try {
+    const result = accountConnectorService.beginConnection(req.params.connectorId, {
+      baseUrl: getBaseUrl(req),
+      returnTo: req.body.returnTo,
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    logger.error('Failed to begin connector connection:', error);
+    sendError(res, error);
+  }
+});
+
+router.get('/:connectorId/callback', async (req, res) => {
+  try {
+    const result = await accountConnectorService.completeOAuth(req.params.connectorId, req.query, {
+      baseUrl: getBaseUrl(req)
+    });
+    const separator = result.returnTo.includes('?') ? '&' : '?';
+    res.redirect(`${result.returnTo}${separator}connector=${encodeURIComponent(result.account.connectorId)}&status=connected`);
+  } catch (error) {
+    logger.error('OAuth connector callback failed:', error);
+    res.status(error.statusCode || 500).send(`
+      <!doctype html>
+      <html lang="en">
+        <head><meta charset="utf-8"><title>Sneup connector error</title></head>
+        <body>
+          <h1>Connector could not be linked</h1>
+          <p>${String(error.message || 'Connector operation failed').replace(/[<>&"]/g, '')}</p>
+          <p><a href="/?connectors=1">Return to Sneup</a></p>
+        </body>
+      </html>
+    `);
+  }
+});
+
+router.post('/:connectorId/accounts', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.saveCredentialAccount(req.params.connectorId, req.body, connectorRequestOptions(req));
+    res.status(201).json({
+      success: true,
+      account
+    });
+  } catch (error) {
+    logger.error('Failed to save connector account:', error);
+    sendError(res, error);
+  }
+});
+
+module.exports = router;

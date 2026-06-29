@@ -6,10 +6,13 @@ const Card = require('../models/Card');
 const Performance = require('../models/Performance');
 const performanceTracker = require('./performanceTracker');
 const teamManager = require('./teamManager');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 class ConversationalAI {
   constructor() {
-    this.openai = new OpenAI();
+    this.openai = process.env.OPENAI_API_KEY
+      ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+      : null;
     this.systemPrompt = this.getSystemPrompt();
   }
 
@@ -45,17 +48,18 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
   }
 
   // Process a message from a worker
-  async processMessage(memberId, message, channel = 'trello_comment', cardId = null) {
+  async processMessage(memberId, message, channel = 'trello_comment', cardId = null, options = {}) {
     try {
       logger.info(`Processing message from member ${memberId}: ${message.substring(0, 50)}...`);
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
 
-      const member = await Member.findById(memberId).populate('boardId');
+      const member = await Member.findOne({ _id: memberId, workspaceId }).populate('boards');
       if (!member) {
         throw new Error('Member not found');
       }
 
       // Get or create conversation
-      let conversation = await this.getOrCreateConversation(memberId, channel, cardId);
+      let conversation = await this.getOrCreateConversation(memberId, channel, cardId, { workspaceId });
 
       // Add user message
       await conversation.addMessage('user', message);
@@ -68,7 +72,8 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
       }
 
       // Get context for response
-      const context = await this.getResponseContext(member, cardId);
+      const context = await this.getResponseContext(member, cardId, { workspaceId });
+      const sourceEvidence = this.buildResponseSourceEvidence(context, cardId);
 
       // Generate response
       const response = await this.generateResponse(conversation, context);
@@ -77,14 +82,15 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
       await conversation.addMessage('assistant', response);
 
       // Execute any actions if needed
-      await this.executeActions(intent, member, response, cardId);
+      await this.executeActions(intent, member, response, cardId, { workspaceId });
 
       logger.info(`Generated response for ${member.username}`);
 
       return {
         response,
         conversation: conversation._id,
-        intent
+        intent,
+        sourceEvidence
       };
     } catch (error) {
       logger.error('Failed to process message:', error);
@@ -93,10 +99,12 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
   }
 
   // Get or create conversation
-  async getOrCreateConversation(memberId, channel, cardId) {
+  async getOrCreateConversation(memberId, channel, cardId, options = {}) {
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     // Check for recent unresolved conversation
     const recentConversation = await Conversation.findOne({
       memberId,
+      workspaceId,
       resolved: false,
       createdAt: { $gte: new Date(Date.now() - 60 * 60 * 1000) } // within last hour
     }).sort({ createdAt: -1 });
@@ -106,11 +114,13 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
     }
 
     // Create new conversation
-    const member = await Member.findById(memberId);
+    const member = await Member.findOne({ _id: memberId, workspaceId });
+    const boardId = member?.boards?.[0]?._id || member?.boards?.[0];
     return new Conversation({
       memberId,
-      boardId: member.boardId,
+      boardId,
       cardId,
+      workspaceId,
       channel
     });
   }
@@ -159,7 +169,8 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
   }
 
   // Get context for generating response
-  async getResponseContext(member, cardId = null) {
+  async getResponseContext(member, cardId = null, options = {}) {
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || member.workspaceId || getDefaultWorkspaceObjectId());
     const context = {
       member: {
         id: member._id,
@@ -172,35 +183,56 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
     // Get member's current cards
     const cards = await Card.find({
       members: member._id,
+      workspaceId,
       closed: false
-    }).sort({ due: 1, riskLevel: -1 }).limit(10);
+    })
+      .populate('boardId')
+      .populate('listId')
+      .sort({ due: 1, riskLevel: -1 })
+      .limit(10);
 
     context.cards = cards.map(c => ({
       id: c._id,
+      trelloId: c.trelloId,
       name: c.name,
+      boardId: c.boardId?._id || c.boardId,
+      boardName: c.boardId?.name,
+      boardUrl: c.boardId?.url,
+      listId: c.listId?._id || c.listId,
+      listName: c.listId?.name,
       due: c.due,
       riskLevel: c.riskLevel,
       isOverdue: c.isOverdue(),
-      labels: c.labels
+      labels: c.labels,
+      lastActivity: c.lastActivity,
+      updatedAt: c.updatedAt
     }));
 
     // Get specific card if provided
     if (cardId) {
-      const card = await Card.findById(cardId);
+      const card = await Card.findOne({ _id: cardId, workspaceId }).populate('boardId').populate('listId');
       if (card) {
         context.currentCard = {
           id: card._id,
+          trelloId: card.trelloId,
           name: card.name,
           description: card.description,
+          boardId: card.boardId?._id || card.boardId,
+          boardName: card.boardId?.name,
+          boardUrl: card.boardId?.url,
+          listId: card.listId?._id || card.listId,
+          listName: card.listId?.name,
           due: card.due,
           riskLevel: card.riskLevel,
-          members: card.members
+          members: card.members,
+          lastActivity: card.lastActivity,
+          updatedAt: card.updatedAt
         };
       }
     }
 
     // Get performance data
-    const performance = await Performance.getLatest(member._id, 'weekly');
+    const performance = await Performance.getLatest(member._id, 'weekly', workspaceId);
     if (performance) {
       context.performance = {
         score: performance.calculated.performanceScore,
@@ -218,6 +250,11 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
   // Generate response using OpenAI
   async generateResponse(conversation, context) {
     try {
+      if (!this.openai) {
+        logger.warn('OPENAI_API_KEY is not configured. Using Sneup fallback response.');
+        return this.generateFallbackResponse(conversation.intent, context);
+      }
+
       const messages = [
         { role: 'system', content: this.systemPrompt },
         { role: 'system', content: `Context: ${JSON.stringify(context, null, 2)}` },
@@ -314,6 +351,62 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
     return response;
   }
 
+  buildResponseSourceEvidence(context = {}, cardId = null) {
+    const refs = [];
+    const cards = Array.isArray(context.cards) ? context.cards : [];
+    const selectedCards = cardId && context.currentCard
+      ? [context.currentCard]
+      : cards.slice(0, 5);
+
+    for (const card of selectedCards) {
+      refs.push({
+        type: 'card',
+        entityId: card.id,
+        label: card.name || 'Assigned card',
+        url: card.url || card.shortUrl || card.boardUrl,
+        observedAt: card.lastActivity || card.updatedAt || new Date(),
+        data: {
+          reason: cardId && context.currentCard ? 'Current conversation card' : 'Assigned card used for chat response',
+          trelloId: card.trelloId,
+          boardId: card.boardId,
+          boardName: card.boardName,
+          listId: card.listId,
+          listName: card.listName,
+          due: card.due,
+          riskLevel: card.riskLevel,
+          isOverdue: card.isOverdue
+        }
+      });
+    }
+
+    if (context.performance) {
+      refs.push({
+        type: 'analytics',
+        label: 'Latest member performance snapshot',
+        observedAt: new Date(),
+        data: {
+          reason: 'Performance context used for chat response',
+          score: context.performance.score,
+          grade: context.performance.grade,
+          completionRate: context.performance.completionRate,
+          onTimeRate: context.performance.onTimeRate,
+          flags: context.performance.flags || []
+        }
+      });
+    }
+
+    return refs
+      .filter(ref => ref.entityId || ref.label)
+      .map(ref => ({
+        type: ref.type || 'system',
+        entityId: ref.entityId,
+        label: ref.label || ref.type || 'Evidence',
+        url: ref.url,
+        observedAt: ref.observedAt || new Date(),
+        data: ref.data || {}
+      }));
+  }
+
   // Generate performance response
   generatePerformanceResponse(context) {
     if (!context.performance) {
@@ -340,18 +433,21 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
   }
 
   // Execute actions based on intent
-  async executeActions(intent, member, response, cardId) {
+  async executeActions(intent, member, response, cardId, options = {}) {
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || member.workspaceId || getDefaultWorkspaceObjectId());
     try {
       switch (intent) {
         case 'request_reassignment':
           // Trigger workload analysis
-          await teamManager.analyzeTeamWorkload(member.boardId);
+          if (member.boards && member.boards.length > 0) {
+            await teamManager.analyzeTeamWorkload(member.boards[0]._id || member.boards[0], { workspaceId });
+          }
           break;
         
         case 'report_blocker':
           // Add BLOCKED label to card if specified
           if (cardId) {
-            const card = await Card.findById(cardId);
+            const card = await Card.findOne({ _id: cardId, workspaceId });
             if (card) {
               // This would be handled by intervention engine
               logger.info(`Card ${cardId} reported as blocked by ${member.username}`);
@@ -370,9 +466,13 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
   }
 
   // Handle common queries with quick responses
-  async handleQuickQuery(memberId, query) {
-    const member = await Member.findById(memberId);
-    const context = await this.getResponseContext(member);
+  async handleQuickQuery(memberId, query, options = {}) {
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
+    const member = await Member.findOne({ _id: memberId, workspaceId });
+    if (!member) {
+      return null;
+    }
+    const context = await this.getResponseContext(member, null, { workspaceId });
 
     const lowerQuery = query.toLowerCase();
 
@@ -380,23 +480,38 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
     if (lowerQuery.includes('what\'s next') || lowerQuery.includes('what now')) {
       if (context.cards.length > 0) {
         const nextCard = context.cards[0];
-        return `Your next priority is Card #${nextCard.id}: ${nextCard.name}${nextCard.isOverdue ? ' (OVERDUE!)' : ''}`;
+        return {
+          response: `Your next priority is Card #${nextCard.id}: ${nextCard.name}${nextCard.isOverdue ? ' (OVERDUE!)' : ''}`,
+          sourceEvidence: this.buildResponseSourceEvidence({ ...context, cards: [nextCard] })
+        };
       }
-      return `You don't have any pending tasks. Great job!`;
+      return {
+        response: `You don't have any pending tasks. Great job!`,
+        sourceEvidence: []
+      };
     }
 
     // How many cards?
     if (lowerQuery.includes('how many')) {
-      return `You currently have ${context.cards.length} active cards assigned.`;
+      return {
+        response: `You currently have ${context.cards.length} active cards assigned.`,
+        sourceEvidence: this.buildResponseSourceEvidence(context)
+      };
     }
 
     // Am I overdue?
     if (lowerQuery.includes('overdue')) {
       const overdue = context.cards.filter(c => c.isOverdue);
       if (overdue.length > 0) {
-        return `You have ${overdue.length} overdue card(s): ${overdue.map(c => c.name).join(', ')}`;
+        return {
+          response: `You have ${overdue.length} overdue card(s): ${overdue.map(c => c.name).join(', ')}`,
+          sourceEvidence: this.buildResponseSourceEvidence({ ...context, cards: overdue })
+        };
       }
-      return `You have no overdue cards. Good job staying on schedule!`;
+      return {
+        response: `You have no overdue cards. Good job staying on schedule!`,
+        sourceEvidence: this.buildResponseSourceEvidence(context)
+      };
     }
 
     // Default to full AI processing

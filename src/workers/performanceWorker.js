@@ -2,6 +2,8 @@ const schedule = require('node-schedule');
 const logger = require('../utils/logger');
 const performanceTracker = require('../services/performanceTracker');
 const Board = require('../models/Board');
+const jobObservabilityService = require('../services/jobObservabilityService');
+const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId } = require('../services/workspaceScopeService');
 
 class PerformanceWorker {
   constructor() {
@@ -16,7 +18,11 @@ class PerformanceWorker {
     this.jobs.dailyPerformance = schedule.scheduleJob(
       process.env.DAILY_PERFORMANCE_CRON || '0 0 * * *',
       async () => {
-        await this.calculateAllPerformance('daily');
+        await jobObservabilityService.trackJob({
+          jobName: 'performance.daily',
+          jobType: 'performance',
+          triggerType: 'scheduled'
+        }, () => this.calculateAllPerformance('daily'));
       }
     );
 
@@ -24,7 +30,11 @@ class PerformanceWorker {
     this.jobs.weeklyPerformance = schedule.scheduleJob(
       process.env.WEEKLY_PERFORMANCE_CRON || '0 1 * * 1',
       async () => {
-        await this.calculateAllPerformance('weekly');
+        await jobObservabilityService.trackJob({
+          jobName: 'performance.weekly',
+          jobType: 'performance',
+          triggerType: 'scheduled'
+        }, () => this.calculateAllPerformance('weekly'));
       }
     );
 
@@ -32,7 +42,11 @@ class PerformanceWorker {
     this.jobs.monthlyPerformance = schedule.scheduleJob(
       process.env.MONTHLY_PERFORMANCE_CRON || '0 2 1 * *',
       async () => {
-        await this.calculateAllPerformance('monthly');
+        await jobObservabilityService.trackJob({
+          jobName: 'performance.monthly',
+          jobType: 'performance',
+          triggerType: 'scheduled'
+        }, () => this.calculateAllPerformance('monthly'));
       }
     );
 
@@ -44,19 +58,31 @@ class PerformanceWorker {
     try {
       logger.info(`Calculating ${period} performance for all boards...`);
 
-      const boards = await Board.find({ active: true });
+      const workspaceId = getDefaultWorkspaceObjectId();
+      const boards = await Board.find(defaultWorkspaceQuery({ closed: false }));
+      let successCount = 0;
+      let failureCount = 0;
 
       for (const board of boards) {
         try {
-          await performanceTracker.calculateBoardPerformance(board._id, period);
+          await performanceTracker.calculateBoardPerformance(board._id, period, { workspaceId });
+          successCount += 1;
         } catch (error) {
+          failureCount += 1;
           logger.error(`Failed to calculate performance for board ${board._id}:`, error);
         }
       }
 
       logger.info(`Calculated ${period} performance for ${boards.length} boards`);
+      return {
+        processedCount: boards.length,
+        successCount,
+        failureCount,
+        metadata: { period }
+      };
     } catch (error) {
       logger.error(`Failed to calculate ${period} performance:`, error);
+      throw error;
     }
   }
 

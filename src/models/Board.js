@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const boardSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   trelloId: {
     type: String,
     required: true,
@@ -48,7 +53,7 @@ const boardSchema = new mongoose.Schema({
 });
 
 // Indexes for efficient queries
-boardSchema.index({ trelloId: 1 });
+boardSchema.index({ workspaceId: 1, closed: 1 });
 boardSchema.index({ closed: 1 });
 boardSchema.index({ lastSync: 1 });
 

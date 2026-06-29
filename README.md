@@ -4,29 +4,29 @@
 
 ## Features
 
-### 🤖 Autonomous Management
+### Autonomous Management
 - **Automatic Synchronization**: Syncs all Trello boards with configurable intervals
 - **Real-time Updates**: Webhook integration for instant change detection
 - **Self-Learning System**: Learns from patterns and feedback to improve recommendations
 
-### 🧠 Deep Context Understanding
+### Deep Context Understanding
 - **Cross-Board Intelligence**: Identifies relationships between cards across different boards
 - **Workflow Pattern Recognition**: Analyzes and learns workflow patterns
 - **Team Pattern Analysis**: Understands team member specialties and work styles
 
-### 📊 Advanced Analytics
+### Advanced Analytics
 - **Bottleneck Detection**: Automatically identifies workflow bottlenecks with severity levels
 - **Project Health Monitoring**: Continuous assessment of project health and risk factors
 - **Velocity Tracking**: Measures team velocity and cycle time
 - **Predictive Analytics**: Estimates completion dates and identifies risk areas
 
-### 👥 Intelligent Team Management
+### Intelligent Team Management
 - **Workload Balancing**: Analyzes team workload and suggests rebalancing
 - **Smart Task Assignment**: Automatically assigns tasks based on member availability and specialties
 - **At-Risk Card Detection**: Identifies cards at risk and suggests interventions
 - **Team Performance Tracking**: Monitors individual and team performance metrics
 
-### 💬 Natural Language Processing
+### Natural Language Processing
 - **Sentiment Analysis**: Analyzes sentiment in comments and communications
 - **Keyword Extraction**: Identifies key topics and themes
 - **Action Item Detection**: Automatically detects action items in comments
@@ -141,8 +141,70 @@ All components are battle-tested, production-ready open source libraries:
 - `GET /api/team/board/:boardId/auto-assign` - Get auto-assignment suggestions
 - `GET /api/team/board/:boardId/at-risk` - Get at-risk cards
 - `GET /api/team/board/:boardId/report` - Generate team report
-- `POST /api/team/recommendation/execute` - Execute a recommendation
+- `POST /api/team/recommendation/execute` - Queue a workload recommendation for approval
 - `GET /api/team/patterns` - Get team patterns
+
+### Security and Workspace Context
+
+- `GET /api/security/context` - Show the resolved actor, workspace, role, and permission context for the current request
+- `GET /api/workspaces/current` - Show the current workspace and resolved workspace override capability
+- `GET /api/workspaces` - List workspaces for identity administrators
+- `POST /api/workspaces` - Create a workspace
+- `POST /api/workspaces/:workspaceId/update` - Update workspace metadata, plan, status, or settings
+- `GET /api/workspaces/:workspaceId/users` - List workspace users
+- `POST /api/workspaces/:workspaceId/users` - Create a workspace user
+- `POST /api/workspaces/:workspaceId/users/:userId/update` - Update a workspace user
+- `GET /api/workspaces/:workspaceId/users/:userId/sessions` - List hashed user session records
+- `POST /api/workspaces/:workspaceId/users/:userId/session` - Issue a one-time-visible user session token
+- `POST /api/workspaces/:workspaceId/users/:userId/sessions/:sessionId/revoke` - Revoke a user session token
+
+See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, and production migration notes.
+
+### Connectors and Work Signals
+
+- `GET /api/connectors` - List connector catalog entries and linked accounts
+- `GET /api/connectors/accounts` - List linked connector accounts
+- `POST /api/connectors/:connectorId/connect` - Begin an OAuth connector flow
+- `POST /api/connectors/:connectorId/accounts` - Save an API-key, token, manual, basic, or webhook connector account
+- `POST /api/connectors/accounts/:accountId/validate` - Mark a connector account as validated
+- `DELETE /api/connectors/accounts/:accountId` - Remove a linked connector account
+- `GET /api/work-signals/contracts` - List normalized sync adapter contracts for all connectors
+- `GET /api/work-signals` - List normalized cross-tool work signals for the current workspace
+- `POST /api/work-signals/accounts/:accountId/upsert` - Upsert one normalized work signal from a linked connector account
+
+### Operations Ledger and Approvals
+
+- `GET /api/recommendations` - List approval-gated recommendations
+- `GET /api/recommendations/:recommendationId` - Get a recommendation
+- `GET /api/recommendations/:recommendationId/evidence` - Get source, decision, Trello action, follow-up, response, and audit evidence for a recommendation
+- `POST /api/recommendations/:recommendationId/approve` - Approve a recommendation payload
+- `POST /api/recommendations/:recommendationId/reject` - Reject a recommendation
+- `POST /api/recommendations/:recommendationId/change` - Request changes to a recommendation
+- `POST /api/recommendations/:recommendationId/execute-approved` - Execute an approved Trello action and record the attempt
+- `GET /api/decision-queue/robert` - Robert-only high-risk decision queue
+- `GET /api/decision-queue/team` - Team approval queue
+- `GET /api/decision-queue/va` - VA queue scaffold
+- `GET /api/autopilot/operations-brief` - Read-only daily operations brief across decisions, findings, follow-ups, failures, and board health
+- `GET /api/trello-actions` - List Trello write attempts and failures
+- `GET /api/audit` - List audit events
+- `GET /api/follow-ups` - List follow-up plans
+- `GET /api/follow-ups/due` - List due follow-up plans
+- `GET /api/boards/:boardId/operations-ledger` - Board-level recommendation/action/audit ledger
+- `GET /api/boards/:boardId/operating-ledger` - Alias for board-level operating ledger
+- `GET /api/boards/:boardId/decision-queue` - Board-specific decision queue
+- `POST /api/boards/:boardId/analyze` - Safely analyze synced cards and persist findings/health snapshots
+- `GET /api/boards/:boardId/findings` - Board-specific card findings
+- `GET /api/boards/:boardId/health-snapshots` - Board health snapshot history
+- `GET /api/cards/:cardId/operations-ledger` - Card-level recommendation/action/follow-up ledger
+- `GET /api/cards/:cardId/operating-ledger` - Alias for card-level operating ledger
+- `GET /api/cards/:cardId/audit` - Card audit events
+- `GET /api/cards/:cardId/findings` - Card findings and missing next-action/stale/blocked signals
+- `GET /api/findings` - Global card finding list
+- `GET /api/findings/board-health` - Global board health snapshot list
+- `GET /api/jobs` - Job observability dashboard for sync, analytics, intervention, performance, and webhook jobs
+- `GET /api/jobs/health` - Compact job health and stale-data summary
+- `GET /api/jobs/runs` - Recent job run history with duration, counts, and failures
+- `POST /api/interventions/:interventionId/record-response` - Record worker response to an intervention
 
 ### Webhooks
 
@@ -153,36 +215,36 @@ All components are battle-tested, production-ready open source libraries:
 
 ```
 sneup/
-├── src/
-│   ├── models/          # Mongoose data models
-│   │   ├── Board.js
-│   │   ├── List.js
-│   │   ├── Card.js
-│   │   ├── Member.js
-│   │   ├── Comment.js
-│   │   ├── Analytics.js
-│   │   └── Learning.js
-│   ├── services/        # Business logic services
-│   │   ├── trelloClient.js      # Trello API wrapper
-│   │   ├── trelloSync.js        # Synchronization service
-│   │   ├── nlpService.js        # NLP analysis
-│   │   ├── contextAnalyzer.js   # Context intelligence
-│   │   ├── analyticsService.js  # Analytics generation
-│   │   └── teamManager.js       # Team management
-│   ├── routes/          # Express API routes
-│   │   ├── boards.js
-│   │   ├── analytics.js
-│   │   ├── team.js
-│   │   └── webhooks.js
-│   ├── utils/           # Utility functions
-│   │   ├── logger.js
-│   │   └── database.js
-│   └── index.js         # Application entry point
-├── config/              # Configuration files
-├── logs/                # Application logs
-├── .env.example         # Environment template
-├── package.json
-└── README.md
+|-- src/
+|   |-- models/          # Mongoose data models
+|   |   |-- Board.js
+|   |   |-- List.js
+|   |   |-- Card.js
+|   |   |-- Member.js
+|   |   |-- Comment.js
+|   |   |-- Analytics.js
+|   |   `-- Learning.js
+|   |-- services/        # Business logic services
+|   |   |-- trelloClient.js      # Trello API wrapper
+|   |   |-- trelloSync.js        # Synchronization service
+|   |   |-- nlpService.js        # NLP analysis
+|   |   |-- contextAnalyzer.js   # Context intelligence
+|   |   |-- analyticsService.js  # Analytics generation
+|   |   `-- teamManager.js       # Team management
+|   |-- routes/          # Express API routes
+|   |   |-- boards.js
+|   |   |-- analytics.js
+|   |   |-- team.js
+|   |   `-- webhooks.js
+|   |-- utils/           # Utility functions
+|   |   |-- logger.js
+|   |   `-- database.js
+|   `-- index.js         # Application entry point
+|-- config/              # Configuration files
+|-- logs/                # Application logs
+|-- .env.example         # Environment template
+|-- package.json
+`-- README.md
 ```
 
 ## Scheduled Jobs

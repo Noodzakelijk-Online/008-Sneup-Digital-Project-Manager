@@ -1,6 +1,7 @@
 const logger = require('../utils/logger');
 const Card = require('../models/Card');
 const Member = require('../models/Member');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 class PriorityEngine {
   // Calculate priority score for a card
@@ -54,10 +55,12 @@ class PriorityEngine {
   }
 
   // Get prioritized cards for a member
-  async getPrioritizedCards(memberId) {
+  async getPrioritizedCards(memberId, options = {}) {
     try {
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
       const cards = await Card.find({
         members: memberId,
+        workspaceId,
         closed: false
       }).populate('currentList');
 
@@ -95,9 +98,9 @@ class PriorityEngine {
   }
 
   // Get "what to work on right now" recommendation
-  async getImmediatePriority(memberId) {
+  async getImmediatePriority(memberId, options = {}) {
     try {
-      const prioritized = await this.getPrioritizedCards(memberId);
+      const prioritized = await this.getPrioritizedCards(memberId, options);
 
       if (prioritized.all.length === 0) {
         return {
@@ -170,10 +173,11 @@ class PriorityEngine {
   }
 
   // Get daily priorities for a member
-  async getDailyPriorities(memberId) {
+  async getDailyPriorities(memberId, options = {}) {
     try {
-      const prioritized = await this.getPrioritizedCards(memberId);
-      const member = await Member.findById(memberId);
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
+      const prioritized = await this.getPrioritizedCards(memberId, { workspaceId });
+      const member = await Member.findOne({ _id: memberId, workspaceId });
 
       const dailyCapacity = this.estimateDailyCapacity(member);
 

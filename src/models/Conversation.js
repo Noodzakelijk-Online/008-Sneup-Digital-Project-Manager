@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const conversationSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   memberId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Member',
@@ -72,6 +77,8 @@ const conversationSchema = new mongoose.Schema({
 });
 
 // Indexes
+conversationSchema.index({ workspaceId: 1, memberId: 1, createdAt: -1 });
+conversationSchema.index({ workspaceId: 1, resolved: 1, createdAt: -1 });
 conversationSchema.index({ memberId: 1, createdAt: -1 });
 conversationSchema.index({ resolved: 1, createdAt: -1 });
 conversationSchema.index({ intent: 1 });
@@ -79,26 +86,27 @@ conversationSchema.index({ intent: 1 });
 // Static methods
 
 // Get recent conversations for a member
-conversationSchema.statics.getRecentForMember = function(memberId, limit = 10) {
-  return this.find({ memberId })
+conversationSchema.statics.getRecentForMember = function(memberId, limit = 10, workspaceId) {
+  return this.find({ memberId, ...(workspaceId ? { workspaceId } : {}) })
     .sort({ createdAt: -1 })
     .limit(limit)
     .populate('memberId boardId cardId');
 };
 
 // Get unresolved conversations
-conversationSchema.statics.getUnresolved = function() {
-  return this.find({ resolved: false })
+conversationSchema.statics.getUnresolved = function(workspaceId) {
+  return this.find({ resolved: false, ...(workspaceId ? { workspaceId } : {}) })
     .sort({ createdAt: 1 })
     .populate('memberId boardId cardId');
 };
 
 // Get conversations by intent
-conversationSchema.statics.getByIntent = function(intent, days = 7) {
+conversationSchema.statics.getByIntent = function(intent, days = 7, workspaceId) {
   const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   
   return this.find({
     intent,
+    ...(workspaceId ? { workspaceId } : {}),
     createdAt: { $gte: startDate }
   })
     .sort({ createdAt: -1 })
@@ -106,10 +114,11 @@ conversationSchema.statics.getByIntent = function(intent, days = 7) {
 };
 
 // Get conversation statistics
-conversationSchema.statics.getStatistics = async function(days = 30) {
+conversationSchema.statics.getStatistics = async function(days = 30, workspaceId) {
   const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   
   const conversations = await this.find({
+    ...(workspaceId ? { workspaceId } : {}),
     createdAt: { $gte: startDate }
   });
 

@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const learningSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   type: {
     type: String,
     enum: ['pattern', 'feedback', 'prediction', 'recommendation'],
@@ -92,6 +97,8 @@ const learningSchema = new mongoose.Schema({
 });
 
 // Indexes for efficient queries
+learningSchema.index({ workspaceId: 1, type: 1, category: 1 });
+learningSchema.index({ workspaceId: 1, boardId: 1, type: 1 });
 learningSchema.index({ type: 1, category: 1 });
 learningSchema.index({ boardId: 1, type: 1 });
 learningSchema.index({ 'pattern.confidence': -1 });

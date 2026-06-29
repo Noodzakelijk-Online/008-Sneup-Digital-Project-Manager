@@ -2,9 +2,11 @@ const logger = require('../utils/logger');
 const Board = require('../models/Board');
 const Card = require('../models/Card');
 const Member = require('../models/Member');
-const trelloClient = require('./trelloClient');
+const Intervention = require('../models/Intervention');
 const nlpService = require('./nlpService');
 const contextAnalyzer = require('./contextAnalyzer');
+const operationsLedgerService = require('./operationsLedgerService');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 /**
  * Team Manager Service
@@ -12,11 +14,14 @@ const contextAnalyzer = require('./contextAnalyzer');
  */
 
 // Analyze team workload and suggest rebalancing
-const analyzeTeamWorkload = async (boardId) => {
+const resolveWorkspaceId = (workspaceId) => normalizeWorkspaceObjectId(workspaceId || getDefaultWorkspaceObjectId());
+
+const analyzeTeamWorkload = async (boardId, options = {}) => {
   try {
     logger.info(`Analyzing team workload for board: ${boardId}`);
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const board = await Board.findById(boardId).populate('members');
+    const board = await Board.findOne({ _id: boardId, workspaceId }).populate('members');
     if (!board) {
       logger.warn(`Board not found: ${boardId}`);
       return null;
@@ -35,6 +40,7 @@ const analyzeTeamWorkload = async (boardId) => {
     for (const member of board.members) {
       const assignedCards = await Card.find({
         boardId: board._id,
+        workspaceId,
         members: member._id,
         closed: false
       });
@@ -78,6 +84,7 @@ const analyzeTeamWorkload = async (boardId) => {
         // Find cards that could be reassigned
         const cards = await Card.find({
           boardId: board._id,
+          workspaceId,
           members: overloadedMember.memberId,
           closed: false,
           riskLevel: { $in: ['none', 'low'] }
@@ -166,11 +173,12 @@ const findBestMemberForCard = async (card, availableMembers) => {
 };
 
 // Automatically assign unassigned cards
-const autoAssignCards = async (boardId) => {
+const autoAssignCards = async (boardId, options = {}) => {
   try {
     logger.info(`Auto-assigning cards for board: ${boardId}`);
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const board = await Board.findById(boardId).populate('members');
+    const board = await Board.findOne({ _id: boardId, workspaceId }).populate('members');
     if (!board) {
       logger.warn(`Board not found: ${boardId}`);
       return null;
@@ -179,6 +187,7 @@ const autoAssignCards = async (boardId) => {
     // Find unassigned cards
     const unassignedCards = await Card.find({
       boardId: board._id,
+      workspaceId,
       closed: false,
       $or: [
         { members: { $exists: false } },
@@ -196,6 +205,7 @@ const autoAssignCards = async (boardId) => {
       for (const member of board.members) {
         const assignedCount = await Card.countDocuments({
           boardId: board._id,
+          workspaceId,
           members: member._id,
           closed: false
         });
@@ -250,12 +260,13 @@ const autoAssignCards = async (boardId) => {
 };
 
 // Execute team management recommendation
-const executeRecommendation = async (recommendation) => {
+const executeRecommendation = async (recommendation, options = {}) => {
   try {
-    logger.info(`Executing recommendation: ${recommendation.type}`);
+    logger.info(`Queuing team recommendation for approval: ${recommendation.type}`);
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
     if (recommendation.type === 'reassign') {
-      const card = await Card.findById(recommendation.cardId);
+      const card = await Card.findOne({ _id: recommendation.cardId, workspaceId });
       if (!card) {
         logger.warn(`Card not found: ${recommendation.cardId}`);
         return { success: false, error: 'Card not found' };
@@ -267,37 +278,47 @@ const executeRecommendation = async (recommendation) => {
       );
       
       // Add new member
-      const newMember = await Member.findById(recommendation.toMember.id);
+      const newMember = await Member.findOne({ _id: recommendation.toMember.id, workspaceId });
       if (!newMember) {
         logger.warn(`Member not found: ${recommendation.toMember.id}`);
         return { success: false, error: 'Member not found' };
       }
-      
-      card.members.push(newMember._id);
-      await card.save();
-      
-      // Update in Trello
-      try {
-        await trelloClient.cardApi.removeMember(
-          card.trelloId,
-          recommendation.fromMember.id
-        );
-        
-        await trelloClient.cardApi.addMember(
-          card.trelloId,
-          newMember.trelloId
-        );
-        
-        // Add comment explaining the change
-        const comment = `Card reassigned from @${recommendation.fromMember.username} to @${recommendation.toMember.username} by Sneup for workload balancing.`;
-        await trelloClient.cardApi.addComment(card.trelloId, comment);
-        
-        logger.info(`Successfully reassigned card: ${card.name}`);
-        return { success: true };
-      } catch (trelloError) {
-        logger.error('Failed to update Trello:', trelloError);
-        return { success: false, error: 'Failed to update Trello' };
+
+      const currentMember = await Member.findOne({ _id: recommendation.fromMember.id, workspaceId });
+      if (!currentMember) {
+        logger.warn(`Member not found: ${recommendation.fromMember.id}`);
+        return { success: false, error: 'Member not found' };
       }
+
+      const intervention = new Intervention({
+        boardId: card.boardId,
+        workspaceId,
+        cardId: card._id,
+        memberId: currentMember._id,
+        type: 'reassign',
+        trigger: 'member_overloaded',
+        severity: 'medium',
+        action: 'Approve workload rebalance',
+        message: `Card reassignment from @${currentMember.username} to @${newMember.username} is recommended for workload balancing.`,
+        metadata: {
+          reason: recommendation.reason,
+          fromMemberId: currentMember._id,
+          fromMemberTrelloId: currentMember.trelloId,
+          toMemberId: newMember._id,
+          toMemberTrelloId: newMember.trelloId,
+          commentText: `Card reassignment from @${currentMember.username} to @${newMember.username} was approved in Sneup for workload balancing.`,
+          source: 'team_recommendation'
+        }
+      });
+
+      const queuedRecommendation = await operationsLedgerService.createRecommendationFromIntervention(intervention);
+
+      return {
+        success: true,
+        requiresApproval: true,
+        recommendationId: queuedRecommendation._id,
+        message: 'Recommendation queued for approval'
+      };
     }
     
     return { success: false, error: 'Unknown recommendation type' };
@@ -308,11 +329,12 @@ const executeRecommendation = async (recommendation) => {
 };
 
 // Identify at-risk cards and suggest interventions
-const identifyAtRiskCards = async (boardId) => {
+const identifyAtRiskCards = async (boardId, options = {}) => {
   try {
     logger.info(`Identifying at-risk cards for board: ${boardId}`);
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const board = await Board.findById(boardId);
+    const board = await Board.findOne({ _id: boardId, workspaceId });
     if (!board) {
       logger.warn(`Board not found: ${boardId}`);
       return null;
@@ -321,6 +343,7 @@ const identifyAtRiskCards = async (boardId) => {
     // Get all active cards
     const cards = await Card.find({
       boardId: board._id,
+      workspaceId,
       closed: false
     }).populate('listId').populate('members');
     
@@ -405,24 +428,25 @@ const identifyAtRiskCards = async (boardId) => {
 };
 
 // Generate daily team report
-const generateTeamReport = async (boardId) => {
+const generateTeamReport = async (boardId, options = {}) => {
   try {
     logger.info(`Generating team report for board: ${boardId}`);
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const board = await Board.findById(boardId).populate('members');
+    const board = await Board.findOne({ _id: boardId, workspaceId }).populate('members');
     if (!board) {
       logger.warn(`Board not found: ${boardId}`);
       return null;
     }
     
     // Get workload analysis
-    const workloadAnalysis = await analyzeTeamWorkload(boardId);
+    const workloadAnalysis = await analyzeTeamWorkload(boardId, { workspaceId });
     
     // Get at-risk cards
-    const atRiskAnalysis = await identifyAtRiskCards(boardId);
+    const atRiskAnalysis = await identifyAtRiskCards(boardId, { workspaceId });
     
     // Get auto-assignment suggestions
-    const autoAssignments = await autoAssignCards(boardId);
+    const autoAssignments = await autoAssignCards(boardId, { workspaceId });
     
     const report = {
       boardId: board._id,

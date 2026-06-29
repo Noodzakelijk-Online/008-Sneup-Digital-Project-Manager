@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const performanceSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   memberId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Member',
@@ -147,6 +152,8 @@ const performanceSchema = new mongoose.Schema({
 });
 
 // Indexes
+performanceSchema.index({ workspaceId: 1, memberId: 1, period: 1, startDate: -1 });
+performanceSchema.index({ workspaceId: 1, boardId: 1, period: 1, startDate: -1 });
 performanceSchema.index({ memberId: 1, period: 1, startDate: -1 });
 performanceSchema.index({ boardId: 1, period: 1, startDate: -1 });
 performanceSchema.index({ 'calculated.performanceScore': -1 });
@@ -155,33 +162,34 @@ performanceSchema.index({ 'flags.type': 1 });
 // Static methods
 
 // Get latest performance for a member
-performanceSchema.statics.getLatest = function(memberId, period = 'weekly') {
-  return this.findOne({ memberId, period })
+performanceSchema.statics.getLatest = function(memberId, period = 'weekly', workspaceId) {
+  return this.findOne({ memberId, period, ...(workspaceId ? { workspaceId } : {}) })
     .sort({ startDate: -1 })
     .populate('memberId boardId');
 };
 
 // Get performance history
-performanceSchema.statics.getHistory = function(memberId, period = 'weekly', limit = 12) {
-  return this.find({ memberId, period })
+performanceSchema.statics.getHistory = function(memberId, period = 'weekly', limit = 12, workspaceId) {
+  return this.find({ memberId, period, ...(workspaceId ? { workspaceId } : {}) })
     .sort({ startDate: -1 })
     .limit(limit)
     .populate('memberId boardId');
 };
 
 // Get team performance for a board
-performanceSchema.statics.getTeamPerformance = function(boardId, period = 'weekly') {
-  return this.find({ boardId, period })
+performanceSchema.statics.getTeamPerformance = function(boardId, period = 'weekly', workspaceId) {
+  return this.find({ boardId, period, ...(workspaceId ? { workspaceId } : {}) })
     .sort({ startDate: -1, 'calculated.performanceScore': -1 })
     .limit(100)
     .populate('memberId');
 };
 
 // Get underperformers
-performanceSchema.statics.getUnderperformers = function(boardId, period = 'weekly') {
+performanceSchema.statics.getUnderperformers = function(boardId, period = 'weekly', workspaceId) {
   return this.find({
     boardId,
     period,
+    ...(workspaceId ? { workspaceId } : {}),
     'flags.type': 'underperforming'
   })
     .sort({ 'calculated.performanceScore': 1 })
@@ -189,10 +197,11 @@ performanceSchema.statics.getUnderperformers = function(boardId, period = 'weekl
 };
 
 // Get high performers
-performanceSchema.statics.getHighPerformers = function(boardId, period = 'weekly') {
+performanceSchema.statics.getHighPerformers = function(boardId, period = 'weekly', workspaceId) {
   return this.find({
     boardId,
     period,
+    ...(workspaceId ? { workspaceId } : {}),
     'flags.type': 'high_performer'
   })
     .sort({ 'calculated.performanceScore': -1 })
@@ -200,9 +209,10 @@ performanceSchema.statics.getHighPerformers = function(boardId, period = 'weekly
 };
 
 // Get members needing support
-performanceSchema.statics.getNeedingSupport = function(boardId) {
+performanceSchema.statics.getNeedingSupport = function(boardId, workspaceId) {
   return this.find({
     boardId,
+    ...(workspaceId ? { workspaceId } : {}),
     period: 'weekly',
     'flags.type': { $in: ['needs_support', 'overloaded', 'non_responsive'] }
   })

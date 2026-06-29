@@ -1,0 +1,67 @@
+# Sneup Implementation Report
+
+## Connector Coverage
+
+Sneup now includes an account connector marketplace for project-management tools used by human project managers from 2015 through 2026.
+
+- Total connectors: 87
+- Categories: 11
+- Coverage includes work management, software delivery, communication, calendar/email, docs/knowledge, files/assets, whiteboards/design, time/finance/resourcing, CRM/support/stakeholders, automation/data, and incident/quality/monitoring.
+- Major OAuth-ready providers include Jira, Asana, monday.com, ClickUp, Linear, Notion, Microsoft 365, Google Workspace, Slack, GitHub, GitLab, Zoom, Figma, Miro, Dropbox, Box, HubSpot, Salesforce, and Intercom.
+- Token/manual connectors cover Trello, Wrike, Smartsheet, Airtable, Basecamp, Microsoft Project, Planner, Azure DevOps, Bitbucket, Confluence, Coda, Teamwork, Zoho Projects, Shortcut, Pivotal Tracker, Height, Todoist, Airtable, Zapier, Make, Power BI, Tableau, Sentry, PagerDuty, and more.
+
+## Security Work
+
+Fixed or mitigated:
+
+- API access gate for non-local API access.
+- Rate limiting, stricter CORS, request body limits, and local-only default host.
+- Trello webhook HMAC verification.
+- ObjectId and numeric query validation.
+- Encrypted connector credentials and signed OAuth state.
+- OAuth redirect URI host hardening.
+- Regex escaping for card-name dependency searches.
+- Optional OpenAI startup, with local fallback responses.
+
+Remaining hardening:
+
+- Move inline dashboard CSS/JS into external files and remove `unsafe-inline` from CSP.
+- Add a publisher certificate for Windows installer signing.
+- Add per-user/team authorization if Sneup becomes multi-user or internet-facing.
+
+## Resource Usage Work
+
+Reduced avoidable resource use:
+
+- Relationship analysis is now capped by `RELATIONSHIP_ANALYSIS_LIMIT` and runs in targeted card/board modes.
+- Mission-control analytics lookup now batches latest analytics by board.
+- Mission-control card counting now indexes cards by board/list/member instead of repeatedly scanning the whole list.
+- Background workers pause automatically when MongoDB is not connected.
+- OpenAI client is not constructed unless `OPENAI_API_KEY` is present.
+- Duplicate Mongoose index declarations were removed to reduce startup warnings and index churn.
+
+Installer footprint:
+
+- The Windows installer is about 115 MB because it bundles Electron and the app runtime.
+- A smaller future desktop footprint would require a different shell such as Tauri, WebView2-only packaging, or a PWA install path.
+
+## Windows Installer
+
+Added:
+
+- Electron desktop wrapper in `desktop/main.js`.
+- Secure preload bridge in `desktop/preload.js`.
+- `npm run desktop` for local desktop testing.
+- `npm run build:installer` / `npm run dist:win` for Windows NSIS packaging.
+- Generated installer: `release/Sneup-Setup-2.0.0.exe`.
+
+The desktop app starts Sneup on `127.0.0.1`, opens the command center in an app window, and defaults to demo mode when no live database is configured.
+
+## Verification
+
+- Syntax checks passed for changed JavaScript files.
+- `npm run lint` passed with the new Node/ES2022 ESLint config.
+- `npm test -- --runInBand` passed 6 focused security and connector tests.
+- `npm audit --omit=dev` reported 0 vulnerabilities.
+- Local HTTP smoke tests passed for health, connector catalog, and mission control.
+- Browser smoke test loaded the dashboard, opened connectors, filtered the connector marketplace, and observed no console errors.

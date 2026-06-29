@@ -5,6 +5,8 @@ const Card = require('../models/Card');
 const Member = require('../models/Member');
 const Analytics = require('../models/Analytics');
 const schedule = require('node-schedule');
+const jobObservabilityService = require('./jobObservabilityService');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 /**
  * Analytics Service
@@ -20,7 +22,11 @@ const initAnalytics = () => {
     const analyticsCron = process.env.ANALYTICS_CRON || '0 * * * *';
     schedule.scheduleJob(analyticsCron, async () => {
       logger.info('Running scheduled analytics generation');
-      await generateAllAnalytics();
+      await jobObservabilityService.trackJob({
+        jobName: 'analytics.generate_all',
+        jobType: 'analytics',
+        triggerType: 'scheduled'
+      }, () => generateAllAnalytics());
     });
     
     logger.info('Analytics service initialized');
@@ -34,47 +40,61 @@ const initAnalytics = () => {
 const generateAllAnalytics = async () => {
   try {
     logger.info('Generating analytics for all boards');
+    const workspaceId = getDefaultWorkspaceObjectId();
     
-    const boards = await Board.find({ closed: false });
+    const boards = await Board.find({ workspaceId, closed: false });
     
+    let successCount = 0;
+    let failureCount = 0;
+
     for (const board of boards) {
       try {
-        await generateBoardAnalytics(board._id);
+        await generateBoardAnalytics(board._id, { workspaceId });
+        successCount += 1;
       } catch (error) {
+        failureCount += 1;
         logger.error(`Failed to generate analytics for board ${board.name}:`, error);
       }
     }
     
     logger.info('Analytics generation completed');
+    return {
+      processedCount: boards.length,
+      successCount,
+      failureCount
+    };
   } catch (error) {
     logger.error('Failed to generate all analytics:', error);
+    throw error;
   }
 };
 
 // Generate analytics for a specific board
-const generateBoardAnalytics = async (boardId) => {
+const generateBoardAnalytics = async (boardId, options = {}) => {
   try {
     logger.info(`Generating analytics for board: ${boardId}`);
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     
-    const board = await Board.findById(boardId);
+    const board = await Board.findOne({ _id: boardId, workspaceId });
     if (!board) {
       logger.warn(`Board not found: ${boardId}`);
       return null;
     }
     
-    const lists = await List.find({ boardId: board._id, closed: false })
+    const lists = await List.find({ boardId: board._id, workspaceId, closed: false })
       .sort({ position: 1 });
     
-    const cards = await Card.find({ boardId: board._id });
+    const cards = await Card.find({ boardId: board._id, workspaceId });
     const activeCards = cards.filter(card => !card.closed);
     
-    const members = await Member.find({ boards: board._id });
+    const members = await Member.find({ boards: board._id, workspaceId });
     
     // Calculate card counts
     const cardCountByList = [];
     for (const list of lists) {
       const count = await Card.countDocuments({ 
         listId: list._id, 
+        workspaceId,
         closed: false 
       });
       cardCountByList.push({
@@ -100,12 +120,14 @@ const generateBoardAnalytics = async (boardId) => {
     // Count completed cards
     const cardsCompletedLast7Days = await Card.countDocuments({
       boardId: board._id,
+      workspaceId,
       listId: { $in: completedListIds },
       'history.enteredAt': { $gte: sevenDaysAgo }
     });
     
     const cardsCompletedLast30Days = await Card.countDocuments({
       boardId: board._id,
+      workspaceId,
       listId: { $in: completedListIds },
       'history.enteredAt': { $gte: thirtyDaysAgo }
     });
@@ -137,13 +159,14 @@ const generateBoardAnalytics = async (boardId) => {
     const averageCycleTime = cardCount > 0 ? totalCycleTime / cardCount : 0;
     
     // Detect bottlenecks
-    const bottlenecks = await detectBottlenecks(board._id, lists, averageCycleTime);
+    const bottlenecks = await detectBottlenecks(board._id, lists, averageCycleTime, { workspaceId });
     
     // Calculate team performance
     const teamPerformance = await calculateTeamPerformance(
       members, 
       completedListIds, 
-      thirtyDaysAgo
+      thirtyDaysAgo,
+      { workspaceId }
     );
     
     // Calculate project health
@@ -157,6 +180,7 @@ const generateBoardAnalytics = async (boardId) => {
     // Create analytics record
     const analytics = new Analytics({
       boardId: board._id,
+      workspaceId,
       date: now,
       cardCount: {
         total: activeCards.length,
@@ -192,8 +216,9 @@ const generateBoardAnalytics = async (boardId) => {
 };
 
 // Detect bottlenecks in workflow
-const detectBottlenecks = async (boardId, lists, averageCycleTime) => {
+const detectBottlenecks = async (boardId, lists, averageCycleTime, options = {}) => {
   try {
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     const bottlenecks = [];
     
     // Skip if no cycle time data
@@ -212,6 +237,7 @@ const detectBottlenecks = async (boardId, lists, averageCycleTime) => {
       // Calculate average time cards spend in this list
       const cards = await Card.find({ 
         boardId, 
+        workspaceId,
         'history.listId': list._id 
       });
       
@@ -252,6 +278,7 @@ const detectBottlenecks = async (boardId, lists, averageCycleTime) => {
       if (severity) {
         const currentCardCount = await Card.countDocuments({ 
           listId: list._id, 
+          workspaceId,
           closed: false 
         });
         
@@ -275,8 +302,9 @@ const detectBottlenecks = async (boardId, lists, averageCycleTime) => {
 };
 
 // Calculate team performance
-const calculateTeamPerformance = async (members, completedListIds, thirtyDaysAgo) => {
+const calculateTeamPerformance = async (members, completedListIds, thirtyDaysAgo, options = {}) => {
   try {
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     const teamPerformance = {
       overallUtilization: 0,
       memberUtilization: []
@@ -286,12 +314,14 @@ const calculateTeamPerformance = async (members, completedListIds, thirtyDaysAgo
       // Count assigned cards
       const assignedCards = await Card.countDocuments({ 
         members: member._id, 
+        workspaceId,
         closed: false 
       });
       
       // Count completed cards in last 30 days
       const completedCards = await Card.countDocuments({
         members: member._id,
+        workspaceId,
         listId: { $in: completedListIds },
         'history.enteredAt': { $gte: thirtyDaysAgo }
       });
@@ -398,9 +428,9 @@ const calculateProjectHealth = async (boardId, activeCards, bottlenecks, teamPer
 };
 
 // Get latest analytics for a board
-const getLatestAnalytics = async (boardId) => {
+const getLatestAnalytics = async (boardId, options = {}) => {
   try {
-    return await Analytics.getLatest(boardId);
+    return await Analytics.getLatest(boardId, normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId()));
   } catch (error) {
     logger.error(`Failed to get latest analytics for board ${boardId}:`, error);
     return null;
@@ -408,9 +438,9 @@ const getLatestAnalytics = async (boardId) => {
 };
 
 // Get analytics history for a board
-const getAnalyticsHistory = async (boardId, days = 30) => {
+const getAnalyticsHistory = async (boardId, days = 30, options = {}) => {
   try {
-    return await Analytics.getHistory(boardId, days);
+    return await Analytics.getHistory(boardId, days, normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId()));
   } catch (error) {
     logger.error(`Failed to get analytics history for board ${boardId}:`, error);
     return [];

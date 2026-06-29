@@ -241,6 +241,47 @@ const cardApi = {
       logger.error(`Failed to remove member from card ${cardId}:`, error);
       throw error;
     }
+  },
+
+  // Create a label on the card's board and add it to the card
+  async addLabel(cardId, name, color = 'red') {
+    try {
+      const client = getTrelloClient();
+      const label = await client.cards.createCardLabel({
+        id: cardId,
+        name,
+        color
+      });
+      logger.info(`Added label ${name} to card ${cardId}`);
+      return label;
+    } catch (error) {
+      logger.error(`Failed to add label to card ${cardId}:`, error);
+      throw error;
+    }
+  },
+
+  // Add a checklist to a card
+  async addChecklist(cardId, name, checkItems = []) {
+    try {
+      const client = getTrelloClient();
+      const checklist = await client.cards.createCardChecklist({
+        id: cardId,
+        name
+      });
+      const createdItems = [];
+      for (const item of checkItems) {
+        const created = await client.checklists.createChecklistCheckItems({
+          id: checklist.id,
+          name: item
+        });
+        createdItems.push(created);
+      }
+      logger.info(`Added checklist ${name} to card ${cardId}`);
+      return { checklist, checkItems: createdItems };
+    } catch (error) {
+      logger.error(`Failed to add checklist to card ${cardId}:`, error);
+      throw error;
+    }
   }
 };
 
@@ -339,5 +380,11 @@ module.exports = {
   listApi,
   cardApi,
   memberApi,
-  webhookApi
+  webhookApi,
+  addCommentToCard: cardApi.addComment,
+  moveCardToList: cardApi.moveCard,
+  addMemberToCard: cardApi.addMember,
+  removeMemberFromCard: cardApi.removeMember,
+  addLabelToCard: cardApi.addLabel,
+  addChecklistToCard: cardApi.addChecklist
 };

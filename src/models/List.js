@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const listSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   trelloId: {
     type: String,
     required: true,
@@ -54,7 +59,7 @@ const listSchema = new mongoose.Schema({
 });
 
 // Indexes for efficient queries
-listSchema.index({ trelloId: 1 });
+listSchema.index({ workspaceId: 1, boardId: 1, position: 1 });
 listSchema.index({ boardId: 1, position: 1 });
 listSchema.index({ closed: 1 });
 

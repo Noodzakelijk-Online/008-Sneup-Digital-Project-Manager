@@ -3,11 +3,21 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const analyticsService = require('../services/analyticsService');
 const Analytics = require('../models/Analytics');
+const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
+const {
+  clampInteger,
+  requirePermission,
+  validateObjectIdParam
+} = require('../utils/requestSecurity');
+
+router.param('boardId', validateObjectIdParam('boardId'));
 
 // Get latest analytics for a board
 router.get('/board/:boardId/latest', async (req, res) => {
   try {
-    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId);
+    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (!analytics) {
       return res.status(404).json({
@@ -32,8 +42,10 @@ router.get('/board/:boardId/latest', async (req, res) => {
 // Get analytics history for a board
 router.get('/board/:boardId/history', async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
-    const history = await analyticsService.getAnalyticsHistory(req.params.boardId, days);
+    const days = clampInteger(req.query.days, 30, 1, 365);
+    const history = await analyticsService.getAnalyticsHistory(req.params.boardId, days, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     res.json({
       success: true,
@@ -50,9 +62,11 @@ router.get('/board/:boardId/history', async (req, res) => {
 });
 
 // Generate analytics for a board
-router.post('/board/:boardId/generate', async (req, res) => {
+router.post('/board/:boardId/generate', requirePermission('analysis:run'), async (req, res) => {
   try {
-    const analytics = await analyticsService.generateBoardAnalytics(req.params.boardId);
+    const analytics = await analyticsService.generateBoardAnalytics(req.params.boardId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (!analytics) {
       return res.status(404).json({
@@ -78,7 +92,7 @@ router.post('/board/:boardId/generate', async (req, res) => {
 // Get critical boards
 router.get('/critical', async (req, res) => {
   try {
-    const criticalBoards = await Analytics.getCriticalBoards();
+    const criticalBoards = await Analytics.getCriticalBoards(getRequestWorkspaceObjectId(req));
     
     res.json({
       success: true,
@@ -97,7 +111,9 @@ router.get('/critical', async (req, res) => {
 // Get bottlenecks for a board
 router.get('/board/:boardId/bottlenecks', async (req, res) => {
   try {
-    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId);
+    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (!analytics) {
       return res.status(404).json({
@@ -122,7 +138,9 @@ router.get('/board/:boardId/bottlenecks', async (req, res) => {
 // Get project health for a board
 router.get('/board/:boardId/health', async (req, res) => {
   try {
-    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId);
+    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (!analytics) {
       return res.status(404).json({
@@ -147,7 +165,9 @@ router.get('/board/:boardId/health', async (req, res) => {
 // Get velocity metrics for a board
 router.get('/board/:boardId/velocity', async (req, res) => {
   try {
-    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId);
+    const analytics = await analyticsService.getLatestAnalytics(req.params.boardId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (!analytics) {
       return res.status(404).json({

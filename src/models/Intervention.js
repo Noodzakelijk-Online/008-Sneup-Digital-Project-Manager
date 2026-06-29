@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const interventionSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   boardId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Board',
@@ -10,7 +15,6 @@ const interventionSchema = new mongoose.Schema({
   cardId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Card',
-    required: true,
     index: true
   },
   memberId: {
@@ -68,7 +72,7 @@ const interventionSchema = new mongoose.Schema({
   status: {
     type: String,
     required: true,
-    enum: ['pending', 'executed', 'failed', 'cancelled'],
+    enum: ['pending', 'awaiting_approval', 'executing', 'executed', 'failed', 'cancelled'],
     default: 'pending',
     index: true
   },
@@ -113,6 +117,8 @@ const interventionSchema = new mongoose.Schema({
 });
 
 // Indexes for performance
+interventionSchema.index({ workspaceId: 1, status: 1, createdAt: -1 });
+interventionSchema.index({ workspaceId: 1, boardId: 1, createdAt: -1 });
 interventionSchema.index({ createdAt: -1 });
 interventionSchema.index({ boardId: 1, createdAt: -1 });
 interventionSchema.index({ memberId: 1, createdAt: -1 });
@@ -228,7 +234,7 @@ interventionSchema.methods.markExecuted = function(metadata = {}) {
   this.status = 'executed';
   this.executedAt = new Date();
   if (Object.keys(metadata).length > 0) {
-    this.metadata = { ...this.metadata, ...metadata };
+    this.metadata = { ...(this.metadata || {}), ...metadata };
   }
   return this.save();
 };
@@ -267,7 +273,7 @@ interventionSchema.methods.escalate = function(escalatedTo, reason) {
 // Mark as failed
 interventionSchema.methods.markFailed = function(error) {
   this.status = 'failed';
-  this.metadata = { ...this.metadata, error: error.message };
+  this.metadata = { ...(this.metadata || {}), error: error.message };
   return this.save();
 };
 

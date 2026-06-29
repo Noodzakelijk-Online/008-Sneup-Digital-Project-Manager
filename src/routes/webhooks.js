@@ -2,11 +2,19 @@ const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger');
 const trelloSync = require('../services/trelloSync');
+const { verifyTrelloWebhook } = require('../utils/requestSecurity');
 
 // Trello webhook endpoint
-router.post('/trello', async (req, res) => {
+router.post('/trello', verifyTrelloWebhook, async (req, res) => {
   try {
     const event = req.body;
+
+    if (!event || !event.action || !event.model || !event.model.id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid Trello webhook payload'
+      });
+    }
     
     logger.info('Received Trello webhook event');
     

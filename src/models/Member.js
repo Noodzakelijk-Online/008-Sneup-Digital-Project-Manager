@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const memberSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   trelloId: {
     type: String,
     required: true,
@@ -89,9 +94,8 @@ const memberSchema = new mongoose.Schema({
 });
 
 // Indexes for efficient queries
-memberSchema.index({ trelloId: 1 });
-memberSchema.index({ username: 1 });
-memberSchema.index({ workloadLevel: 1 });
+memberSchema.index({ workspaceId: 1, boards: 1 });
+memberSchema.index({ workspaceId: 1, username: 1 });
 memberSchema.index({ boards: 1 });
 
 // Virtual for active assigned cards

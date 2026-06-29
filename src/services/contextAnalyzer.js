@@ -4,6 +4,14 @@ const List = require('../models/List');
 const Card = require('../models/Card');
 const Member = require('../models/Member');
 const Comment = require('../models/Comment');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
+
+const getRelationshipLimit = () => {
+  const configured = Number.parseInt(process.env.RELATIONSHIP_ANALYSIS_LIMIT, 10);
+  return Number.isFinite(configured) ? configured : 750;
+};
+
+const resolveWorkspaceId = (workspaceId) => normalizeWorkspaceObjectId(workspaceId || getDefaultWorkspaceObjectId());
 
 /**
  * Context Analyzer Service
@@ -11,25 +19,60 @@ const Comment = require('../models/Comment');
  */
 
 // Analyze card relationships across boards
-const analyzeCardRelationships = async () => {
+const analyzeCardRelationships = async (options = {}) => {
   try {
     logger.info('Analyzing card relationships across boards');
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    // Get all active cards
-    const cards = await Card.find({ closed: false })
+    const limit = getRelationshipLimit();
+    const populateRelationshipQuery = (query) => query
       .populate('boardId')
       .populate('listId')
       .populate('members')
       .populate('comments');
+
+    let leftCards = [];
+    let rightCards = [];
+
+    if (options.cardId) {
+      const card = await populateRelationshipQuery(Card.findOne({ _id: options.cardId, workspaceId }));
+      if (!card) return [];
+      leftCards = [card];
+      rightCards = await populateRelationshipQuery(
+        Card.find({ workspaceId, closed: false, _id: { $ne: card._id } })
+          .sort({ riskLevel: -1, due: 1, lastActivity: -1 })
+          .limit(limit)
+      );
+    } else if (options.boardId) {
+      leftCards = await populateRelationshipQuery(
+        Card.find({ workspaceId, closed: false, boardId: options.boardId })
+          .sort({ riskLevel: -1, due: 1, lastActivity: -1 })
+          .limit(limit)
+      );
+      rightCards = await populateRelationshipQuery(
+        Card.find({ workspaceId, closed: false, boardId: { $ne: options.boardId } })
+          .sort({ riskLevel: -1, due: 1, lastActivity: -1 })
+          .limit(limit)
+      );
+    } else {
+      leftCards = await populateRelationshipQuery(
+        Card.find({ workspaceId, closed: false })
+          .sort({ riskLevel: -1, due: 1, lastActivity: -1 })
+          .limit(limit)
+      );
+      rightCards = leftCards;
+    }
     
     const relationships = [];
     
-    // Compare cards pairwise
-    for (let i = 0; i < cards.length; i++) {
-      const card1 = cards[i];
+    for (let i = 0; i < leftCards.length; i++) {
+      const card1 = leftCards[i];
       
-      for (let j = i + 1; j < cards.length; j++) {
-        const card2 = cards[j];
+      for (let j = options.boardId || options.cardId ? 0 : i + 1; j < rightCards.length; j++) {
+        const card2 = rightCards[j];
+        if (card1._id.toString() === card2._id.toString()) {
+          continue;
+        }
         
         // Skip cards on same board
         if (card1.boardId._id.toString() === card2.boardId._id.toString()) {
@@ -51,8 +94,8 @@ const analyzeCardRelationships = async () => {
         }
         
         // Similar labels
-        const card1Labels = card1.labels.map(l => l.name.toLowerCase()).filter(Boolean);
-        const card2Labels = card2.labels.map(l => l.name.toLowerCase()).filter(Boolean);
+        const card1Labels = card1.labels.map(l => (l.name || '').toLowerCase()).filter(Boolean);
+        const card2Labels = card2.labels.map(l => (l.name || '').toLowerCase()).filter(Boolean);
         const sharedLabels = card1Labels.filter(l => card2Labels.includes(l));
         
         if (sharedLabels.length > 0) {
@@ -123,20 +166,22 @@ const determineRelationshipType = (factors) => {
 };
 
 // Analyze workflow patterns across boards
-const analyzeWorkflowPatterns = async () => {
+const analyzeWorkflowPatterns = async (options = {}) => {
   try {
     logger.info('Analyzing workflow patterns');
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const boards = await Board.find({ closed: false });
+    const boards = await Board.find({ workspaceId, closed: false });
     const workflowPatterns = [];
     
     for (const board of boards) {
-      const lists = await List.find({ boardId: board._id, closed: false })
+      const lists = await List.find({ boardId: board._id, workspaceId, closed: false })
         .sort({ position: 1 });
       
       if (lists.length < 3) continue;
       
       const cards = await Card.find({
+        workspaceId,
         boardId: board._id,
         'history.1': { $exists: true }
       });
@@ -219,11 +264,12 @@ const analyzeWorkflowPatterns = async () => {
 };
 
 // Analyze team patterns
-const analyzeTeamPatterns = async () => {
+const analyzeTeamPatterns = async (options = {}) => {
   try {
     logger.info('Analyzing team patterns');
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const members = await Member.find({})
+    const members = await Member.find({ workspaceId })
       .populate('boards')
       .populate('assignedCards');
     
@@ -301,11 +347,12 @@ const analyzeTeamPatterns = async () => {
 };
 
 // Get context for a specific card
-const getCardContext = async (cardId) => {
+const getCardContext = async (cardId, options = {}) => {
   try {
     logger.info(`Getting context for card: ${cardId}`);
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const card = await Card.findById(cardId)
+    const card = await Card.findOne({ _id: cardId, workspaceId })
       .populate('boardId')
       .populate('listId')
       .populate('members')
@@ -320,14 +367,14 @@ const getCardContext = async (cardId) => {
     }
     
     // Get relationships
-    const allRelationships = await analyzeCardRelationships();
+    const allRelationships = await analyzeCardRelationships({ cardId, workspaceId });
     const relationships = allRelationships.filter(r => 
       r.card1.id.toString() === cardId.toString() || 
       r.card2.id.toString() === cardId.toString()
     );
     
     // Get workflow context
-    const lists = await List.find({ boardId: card.boardId._id, closed: false })
+    const lists = await List.find({ boardId: card.boardId._id, workspaceId, closed: false })
       .sort({ position: 1 });
     
     const currentStageIndex = lists.findIndex(l => 
@@ -357,6 +404,7 @@ const getCardContext = async (cardId) => {
     for (const member of card.members) {
       const assignedCount = await Card.countDocuments({
         members: member._id,
+        workspaceId,
         closed: false
       });
       
@@ -415,11 +463,12 @@ const getCardContext = async (cardId) => {
 };
 
 // Get context for a specific board
-const getBoardContext = async (boardId) => {
+const getBoardContext = async (boardId, options = {}) => {
   try {
     logger.info(`Getting context for board: ${boardId}`);
+    const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const board = await Board.findById(boardId)
+    const board = await Board.findOne({ _id: boardId, workspaceId })
       .populate('members');
     
     if (!board) {
@@ -427,17 +476,13 @@ const getBoardContext = async (boardId) => {
       return null;
     }
     
-    const lists = await List.find({ boardId: board._id, closed: false })
+    const lists = await List.find({ boardId: board._id, workspaceId, closed: false })
       .sort({ position: 1 });
     
-    const cards = await Card.find({ boardId: board._id, closed: false });
+    const cards = await Card.find({ boardId: board._id, workspaceId, closed: false });
     
     // Get relationships
-    const allRelationships = await analyzeCardRelationships();
-    const cardRelationships = allRelationships.filter(r => 
-      r.card1.boardId.toString() === boardId.toString() || 
-      r.card2.boardId.toString() === boardId.toString()
-    );
+    const cardRelationships = await analyzeCardRelationships({ boardId, workspaceId });
     
     return {
       board: {

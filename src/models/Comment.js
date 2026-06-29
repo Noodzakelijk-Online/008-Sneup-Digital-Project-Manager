@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const commentSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   trelloId: {
     type: String,
     required: true,
@@ -64,7 +69,8 @@ const commentSchema = new mongoose.Schema({
 });
 
 // Indexes for efficient queries
-commentSchema.index({ trelloId: 1 });
+commentSchema.index({ workspaceId: 1, cardId: 1, createdAt: -1 });
+commentSchema.index({ workspaceId: 1, memberId: 1, createdAt: -1 });
 commentSchema.index({ cardId: 1, createdAt: -1 });
 commentSchema.index({ memberId: 1, createdAt: -1 });
 commentSchema.index({ isActionItem: 1 });

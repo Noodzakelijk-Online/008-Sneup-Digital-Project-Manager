@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const analyticsSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   boardId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Board',
@@ -134,13 +139,15 @@ const analyticsSchema = new mongoose.Schema({
 });
 
 // Indexes for efficient queries
+analyticsSchema.index({ workspaceId: 1, boardId: 1, date: -1 });
+analyticsSchema.index({ workspaceId: 1, 'projectHealth.overall': 1 });
 analyticsSchema.index({ boardId: 1, date: -1 });
 analyticsSchema.index({ 'projectHealth.overall': 1 });
 analyticsSchema.index({ date: -1 });
 
 // Static method to get latest analytics for a board
-analyticsSchema.statics.getLatest = function(boardId) {
-  return this.findOne({ boardId })
+analyticsSchema.statics.getLatest = function(boardId, workspaceId) {
+  return this.findOne({ boardId, ...(workspaceId ? { workspaceId } : {}) })
     .sort({ date: -1 })
     .populate('boardId')
     .populate('bottlenecks.listId')
@@ -148,10 +155,11 @@ analyticsSchema.statics.getLatest = function(boardId) {
 };
 
 // Static method to get analytics history for a board
-analyticsSchema.statics.getHistory = function(boardId, days = 30) {
+analyticsSchema.statics.getHistory = function(boardId, days = 30, workspaceId) {
   const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   return this.find({
     boardId,
+    ...(workspaceId ? { workspaceId } : {}),
     date: { $gte: cutoffDate }
   })
   .sort({ date: -1 })
@@ -159,8 +167,9 @@ analyticsSchema.statics.getHistory = function(boardId, days = 30) {
 };
 
 // Static method to get boards with critical health
-analyticsSchema.statics.getCriticalBoards = function() {
+analyticsSchema.statics.getCriticalBoards = function(workspaceId) {
   return this.aggregate([
+    ...(workspaceId ? [{ $match: { workspaceId } }] : []),
     {
       $sort: { date: -1 }
     },

@@ -3,11 +3,17 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const teamManager = require('../services/teamManager');
 const contextAnalyzer = require('../services/contextAnalyzer');
+const { requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
+const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
+
+router.param('boardId', validateObjectIdParam('boardId'));
 
 // Get workload analysis for a board
 router.get('/board/:boardId/workload', async (req, res) => {
   try {
-    const analysis = await teamManager.analyzeTeamWorkload(req.params.boardId);
+    const analysis = await teamManager.analyzeTeamWorkload(req.params.boardId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (!analysis) {
       return res.status(404).json({
@@ -32,7 +38,9 @@ router.get('/board/:boardId/workload', async (req, res) => {
 // Get auto-assignment suggestions
 router.get('/board/:boardId/auto-assign', async (req, res) => {
   try {
-    const suggestions = await teamManager.autoAssignCards(req.params.boardId);
+    const suggestions = await teamManager.autoAssignCards(req.params.boardId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (!suggestions) {
       return res.status(404).json({
@@ -57,7 +65,9 @@ router.get('/board/:boardId/auto-assign', async (req, res) => {
 // Get at-risk cards
 router.get('/board/:boardId/at-risk', async (req, res) => {
   try {
-    const analysis = await teamManager.identifyAtRiskCards(req.params.boardId);
+    const analysis = await teamManager.identifyAtRiskCards(req.params.boardId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (!analysis) {
       return res.status(404).json({
@@ -82,7 +92,9 @@ router.get('/board/:boardId/at-risk', async (req, res) => {
 // Generate team report
 router.get('/board/:boardId/report', async (req, res) => {
   try {
-    const report = await teamManager.generateTeamReport(req.params.boardId);
+    const report = await teamManager.generateTeamReport(req.params.boardId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (!report) {
       return res.status(404).json({
@@ -105,22 +117,38 @@ router.get('/board/:boardId/report', async (req, res) => {
 });
 
 // Execute a recommendation
-router.post('/recommendation/execute', async (req, res) => {
+router.post('/recommendation/execute', requirePermission('approvals:decide'), async (req, res) => {
   try {
     const { recommendation } = req.body;
     
-    if (!recommendation) {
+    if (!recommendation || recommendation.type !== 'reassign') {
       return res.status(400).json({
         success: false,
-        error: 'Recommendation data required'
+        error: 'Supported recommendation data required'
+      });
+    }
+
+    const requiredIds = [
+      recommendation.cardId,
+      recommendation.fromMember?.id,
+      recommendation.toMember?.id
+    ];
+    if (requiredIds.some(id => !id || !/^[a-f\d]{24}$/i.test(String(id)))) {
+      return res.status(400).json({
+        success: false,
+        error: 'Recommendation contains invalid identifiers'
       });
     }
     
-    const result = await teamManager.executeRecommendation(recommendation);
+    const result = await teamManager.executeRecommendation(recommendation, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     res.json({
       success: result.success,
-      message: result.success ? 'Recommendation executed successfully' : 'Failed to execute recommendation',
+      requiresApproval: result.requiresApproval || false,
+      recommendationId: result.recommendationId,
+      message: result.message || (result.success ? 'Recommendation queued successfully' : 'Failed to queue recommendation'),
       error: result.error
     });
   } catch (error) {
@@ -135,7 +163,9 @@ router.post('/recommendation/execute', async (req, res) => {
 // Get team patterns
 router.get('/patterns', async (req, res) => {
   try {
-    const patterns = await contextAnalyzer.analyzeTeamPatterns();
+    const patterns = await contextAnalyzer.analyzeTeamPatterns({
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     res.json({
       success: true,

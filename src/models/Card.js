@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const cardSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    index: true
+  },
   trelloId: {
     type: String,
     required: true,
@@ -118,11 +123,10 @@ const cardSchema = new mongoose.Schema({
 });
 
 // Indexes for efficient queries
-cardSchema.index({ trelloId: 1 });
+cardSchema.index({ workspaceId: 1, boardId: 1, listId: 1 });
 cardSchema.index({ boardId: 1, listId: 1 });
 cardSchema.index({ closed: 1, due: 1 });
 cardSchema.index({ members: 1, closed: 1 });
-cardSchema.index({ riskLevel: 1 });
 cardSchema.index({ 'labels.name': 1 });
 
 // Virtual for completion percentage

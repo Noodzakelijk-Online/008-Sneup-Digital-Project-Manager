@@ -3,6 +3,7 @@ const logger = require('../utils/logger');
 const Card = require('../models/Card');
 const Comment = require('../models/Comment');
 const Member = require('../models/Member');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 // Initialize NLP components
 const tokenizer = new natural.WordTokenizer();
@@ -16,12 +17,13 @@ const analyzer = new natural.SentimentAnalyzer('English', natural.PorterStemmer,
  */
 
 // Analyze card content
-const analyzeCardContent = async (cardId) => {
+const analyzeCardContent = async (cardId, options = {}) => {
   try {
     logger.info(`Analyzing content for card: ${cardId}`);
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     
     // Get card with comments
-    const card = await Card.findById(cardId)
+    const card = await Card.findOne({ _id: cardId, workspaceId })
       .populate({
         path: 'comments',
         populate: { path: 'memberId' }
@@ -270,12 +272,13 @@ const detectActionItem = (text) => {
 };
 
 // Analyze communication patterns
-const analyzeCommunicationPatterns = async () => {
+const analyzeCommunicationPatterns = async (options = {}) => {
   try {
     logger.info('Analyzing communication patterns');
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     
     // Get all comments with populated references
-    const comments = await Comment.find({})
+    const comments = await Comment.find({ workspaceId })
       .populate('memberId')
       .populate('cardId');
     
@@ -301,7 +304,7 @@ const analyzeCommunicationPatterns = async () => {
       
       for (const mention of mentions) {
         const mentionedUsername = mention.substring(1);
-        const mentionedMember = await Member.findOne({ username: mentionedUsername });
+        const mentionedMember = await Member.findOne({ username: mentionedUsername, workspaceId });
         
         if (mentionedMember && mentionedMember._id.toString() !== commenterId) {
           const mentionedId = mentionedMember._id.toString();
@@ -337,12 +340,13 @@ const analyzeCommunicationPatterns = async () => {
 };
 
 // Analyze member language patterns
-const analyzeMemberLanguagePatterns = async (memberId) => {
+const analyzeMemberLanguagePatterns = async (memberId, options = {}) => {
   try {
     logger.info(`Analyzing language patterns for member: ${memberId}`);
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     
     // Get all comments by this member
-    const comments = await Comment.find({ memberId });
+    const comments = await Comment.find({ memberId, workspaceId });
     
     if (comments.length === 0) {
       return null;
@@ -397,7 +401,7 @@ const analyzeMemberLanguagePatterns = async (memberId) => {
     const usesMentions = commentTexts.some(text => text.includes('@'));
     
     // Update member's communication style
-    const member = await Member.findById(memberId);
+    const member = await Member.findOne({ _id: memberId, workspaceId });
     if (member) {
       member.communicationStyle = {
         formality: calculateFormality(fullText),

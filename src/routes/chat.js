@@ -4,26 +4,56 @@ const logger = require('../utils/logger');
 const conversationalAI = require('../services/conversationalAI');
 const priorityEngine = require('../services/priorityEngine');
 const Conversation = require('../models/Conversation');
+const { getRequestWorkspaceObjectId, scopeQuery } = require('../services/workspaceScopeService');
+const {
+  clampInteger,
+  requirePermission,
+  validateObjectIdParam
+} = require('../utils/requestSecurity');
+
+router.param('memberId', validateObjectIdParam('memberId'));
+router.param('conversationId', validateObjectIdParam('conversationId'));
 
 // Send message to Sneup
-router.post('/message', async (req, res) => {
+router.post('/message', requirePermission('chat:write'), async (req, res) => {
   try {
     const { memberId, message, channel, cardId } = req.body;
 
-    if (!memberId || !message) {
+    if (!memberId || !message || typeof message !== 'string') {
       return res.status(400).json({
         success: false,
         error: 'memberId and message are required'
       });
     }
 
+    if (!/^[a-f\d]{24}$/i.test(String(memberId)) || (cardId && !/^[a-f\d]{24}$/i.test(String(cardId)))) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid memberId or cardId'
+      });
+    }
+
+    if (message.length > 4000) {
+      return res.status(413).json({
+        success: false,
+        error: 'Message is too long'
+      });
+    }
+
     // Check for quick query first
-    const quickResponse = await conversationalAI.handleQuickQuery(memberId, message);
+    const quickResponse = await conversationalAI.handleQuickQuery(memberId, message, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
     
     if (quickResponse) {
+      const quickPayload = typeof quickResponse === 'string'
+        ? { response: quickResponse, sourceEvidence: [] }
+        : quickResponse;
+
       return res.json({
         success: true,
-        response: quickResponse,
+        response: quickPayload.response,
+        sourceEvidence: quickPayload.sourceEvidence || [],
         quick: true
       });
     }
@@ -33,7 +63,8 @@ router.post('/message', async (req, res) => {
       memberId,
       message,
       channel || 'web_chat',
-      cardId
+      cardId,
+      { workspaceId: getRequestWorkspaceObjectId(req) }
     );
 
     res.json({
@@ -53,9 +84,9 @@ router.post('/message', async (req, res) => {
 router.get('/conversations/:memberId', async (req, res) => {
   try {
     const { memberId } = req.params;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = clampInteger(req.query.limit, 10, 1, 50);
 
-    const conversations = await Conversation.getRecentForMember(memberId, limit);
+    const conversations = await Conversation.getRecentForMember(memberId, limit, getRequestWorkspaceObjectId(req));
 
     res.json({
       success: true,
@@ -74,7 +105,7 @@ router.get('/conversations/:memberId', async (req, res) => {
 // Get specific conversation
 router.get('/conversation/:conversationId', async (req, res) => {
   try {
-    const conversation = await Conversation.findById(req.params.conversationId)
+    const conversation = await Conversation.findOne(scopeQuery(req, { _id: req.params.conversationId }))
       .populate('memberId boardId cardId');
 
     if (!conversation) {
@@ -98,10 +129,10 @@ router.get('/conversation/:conversationId', async (req, res) => {
 });
 
 // Mark conversation as resolved
-router.post('/conversation/:conversationId/resolve', async (req, res) => {
+router.post('/conversation/:conversationId/resolve', requirePermission('chat:write'), async (req, res) => {
   try {
     const { resolution } = req.body;
-    const conversation = await Conversation.findById(req.params.conversationId);
+    const conversation = await Conversation.findOne(scopeQuery(req, { _id: req.params.conversationId }));
 
     if (!conversation) {
       return res.status(404).json({
@@ -127,10 +158,16 @@ router.post('/conversation/:conversationId/resolve', async (req, res) => {
 });
 
 // Rate conversation
-router.post('/conversation/:conversationId/rate', async (req, res) => {
+router.post('/conversation/:conversationId/rate', requirePermission('chat:write'), async (req, res) => {
   try {
-    const { rating } = req.body;
-    const conversation = await Conversation.findById(req.params.conversationId);
+    const rating = clampInteger(req.body.rating, 0, 1, 5);
+    if (rating === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'rating must be between 1 and 5'
+      });
+    }
+    const conversation = await Conversation.findOne(scopeQuery(req, { _id: req.params.conversationId }));
 
     if (!conversation) {
       return res.status(404).json({
@@ -158,7 +195,9 @@ router.post('/conversation/:conversationId/rate', async (req, res) => {
 // Get priorities for a member
 router.get('/priorities/:memberId', async (req, res) => {
   try {
-    const priorities = await priorityEngine.getPrioritizedCards(req.params.memberId);
+    const priorities = await priorityEngine.getPrioritizedCards(req.params.memberId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
 
     res.json({
       success: true,
@@ -176,7 +215,9 @@ router.get('/priorities/:memberId', async (req, res) => {
 // Get immediate priority (what to work on right now)
 router.get('/priorities/:memberId/immediate', async (req, res) => {
   try {
-    const priority = await priorityEngine.getImmediatePriority(req.params.memberId);
+    const priority = await priorityEngine.getImmediatePriority(req.params.memberId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
 
     res.json({
       success: true,
@@ -194,7 +235,9 @@ router.get('/priorities/:memberId/immediate', async (req, res) => {
 // Get daily priorities
 router.get('/priorities/:memberId/daily', async (req, res) => {
   try {
-    const dailyPriorities = await priorityEngine.getDailyPriorities(req.params.memberId);
+    const dailyPriorities = await priorityEngine.getDailyPriorities(req.params.memberId, {
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
 
     res.json({
       success: true,
@@ -212,8 +255,8 @@ router.get('/priorities/:memberId/daily', async (req, res) => {
 // Get conversation statistics
 router.get('/stats', async (req, res) => {
   try {
-    const days = parseInt(req.query.days) || 30;
-    const stats = await Conversation.getStatistics(days);
+    const days = clampInteger(req.query.days, 30, 1, 365);
+    const stats = await Conversation.getStatistics(days, getRequestWorkspaceObjectId(req));
 
     res.json({
       success: true,

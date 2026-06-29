@@ -4,23 +4,27 @@ const Member = require('../models/Member');
 const Card = require('../models/Card');
 const Intervention = require('../models/Intervention');
 const Comment = require('../models/Comment');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 class PerformanceTracker {
   // Calculate performance for a member
-  async calculateMemberPerformance(memberId, period = 'weekly') {
+  async calculateMemberPerformance(memberId, period = 'weekly', options = {}) {
     try {
       const { startDate, endDate } = this.getPeriodDates(period);
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
       
-      const member = await Member.findById(memberId).populate('boardId');
+      const member = await Member.findOne({ _id: memberId, workspaceId }).populate('boards');
       if (!member) {
         throw new Error('Member not found');
       }
+      const boardId = options.boardId || member.boards?.[0]?._id || member.boards?.[0];
 
       logger.info(`Calculating ${period} performance for member ${member.username}`);
 
       // Get all cards for this member in the period
       const cards = await Card.find({
         members: memberId,
+        workspaceId,
         createdAt: { $lte: endDate }
       });
 
@@ -32,12 +36,14 @@ class PerformanceTracker {
       // Get interventions for this member
       const interventions = await Intervention.find({
         memberId,
+        workspaceId,
         createdAt: { $gte: startDate, $lte: endDate }
       });
 
       // Get comments by this member
       const comments = await Comment.find({
         memberId,
+        workspaceId,
         createdAt: { $gte: startDate, $lte: endDate }
       });
 
@@ -54,15 +60,16 @@ class PerformanceTracker {
         interventionsIgnored: interventions.filter(i => !i.response || !i.response.respondedAt).length,
         escalationsReceived: interventions.filter(i => i.escalation && i.escalation.escalated).length,
         commentsPosted: comments.length,
-        averageResponseTime: await this.calculateAverageResponseTime(memberId, startDate, endDate)
+        averageResponseTime: await this.calculateAverageResponseTime(memberId, startDate, endDate, { workspaceId })
       };
 
       // Get team averages for comparison
-      const teamAverage = await this.calculateTeamAverage(member.boardId, startDate, endDate);
+      const teamAverage = await this.calculateTeamAverage(boardId, startDate, endDate, { workspaceId });
 
       // Create or update performance record
       let performance = await Performance.findOne({
         memberId,
+        workspaceId,
         period,
         startDate
       });
@@ -70,7 +77,8 @@ class PerformanceTracker {
       if (!performance) {
         performance = new Performance({
           memberId,
-          boardId: member.boardId,
+          workspaceId,
+          boardId,
           period,
           startDate,
           endDate,
@@ -104,13 +112,14 @@ class PerformanceTracker {
   }
 
   // Calculate performance for all members on a board
-  async calculateBoardPerformance(boardId, period = 'weekly') {
+  async calculateBoardPerformance(boardId, period = 'weekly', options = {}) {
     try {
-      const members = await Member.find({ boardId });
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
+      const members = await Member.find({ boards: boardId, workspaceId });
       const performances = [];
 
       for (const member of members) {
-        const performance = await this.calculateMemberPerformance(member._id, period);
+        const performance = await this.calculateMemberPerformance(member._id, period, { boardId, workspaceId });
         performances.push(performance);
       }
 
@@ -136,10 +145,12 @@ class PerformanceTracker {
   }
 
   // Calculate average response time to comments/mentions
-  async calculateAverageResponseTime(memberId, startDate, endDate) {
+  async calculateAverageResponseTime(memberId, startDate, endDate, options = {}) {
     try {
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
       const interventions = await Intervention.find({
         memberId,
+        workspaceId,
         type: { $in: ['comment', 'follow_up'] },
         'response.respondedAt': { $exists: true },
         createdAt: { $gte: startDate, $lte: endDate }
@@ -159,9 +170,10 @@ class PerformanceTracker {
   }
 
   // Calculate team average metrics
-  async calculateTeamAverage(boardId, startDate, endDate) {
+  async calculateTeamAverage(boardId, startDate, endDate, options = {}) {
     try {
-      const members = await Member.find({ boardId });
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
+      const members = await Member.find({ boards: boardId, workspaceId });
       
       if (members.length === 0) {
         return { cardsCompleted: 0, cycleTime: 0, onTimeRate: 0 };
@@ -175,6 +187,7 @@ class PerformanceTracker {
       for (const member of members) {
         const cards = await Card.find({
           members: member._id,
+          workspaceId,
           closed: true,
           closedAt: { $gte: startDate, $lte: endDate }
         });
@@ -202,6 +215,7 @@ class PerformanceTracker {
   async calculateRankAndPercentile(performance) {
     try {
       const allPerformances = await Performance.find({
+        workspaceId: performance.workspaceId,
         boardId: performance.boardId,
         period: performance.period,
         startDate: performance.startDate
@@ -255,15 +269,16 @@ class PerformanceTracker {
   }
 
   // Generate performance report for a member
-  async generateMemberReport(memberId, period = 'weekly') {
+  async generateMemberReport(memberId, period = 'weekly', options = {}) {
     try {
-      const performance = await Performance.getLatest(memberId, period);
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
+      const performance = await Performance.getLatest(memberId, period, workspaceId);
       
       if (!performance) {
         throw new Error('No performance data found');
       }
 
-      const history = await Performance.getHistory(memberId, period, 12);
+      const history = await Performance.getHistory(memberId, period, 12, workspaceId);
       
       return {
         current: performance.generateSummary(),
@@ -376,9 +391,10 @@ class PerformanceTracker {
   }
 
   // Generate "who's not pulling weight" report
-  async generateAccountabilityReport(boardId, period = 'weekly') {
+  async generateAccountabilityReport(boardId, period = 'weekly', options = {}) {
     try {
-      const performances = await Performance.getTeamPerformance(boardId, period);
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
+      const performances = await Performance.getTeamPerformance(boardId, period, workspaceId);
       
       const underperformers = performances.filter(p => 
         parseFloat(p.calculated.performanceScore) < 60

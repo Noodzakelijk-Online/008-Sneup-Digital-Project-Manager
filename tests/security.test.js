@@ -1,0 +1,1185 @@
+const crypto = require('crypto');
+const fs = require('fs');
+const mongoose = require('mongoose');
+const path = require('path');
+
+const {
+  getPermissionsForRoles,
+  hasPermission,
+  requireApiAccess,
+  requirePermission,
+  verifyTrelloWebhook
+} = require('../src/utils/requestSecurity');
+
+const accountConnectorService = require('../src/services/accountConnectorService');
+const enhancementBacklog = require('../src/services/enhancementBacklog');
+const { getCategories, getConnectors } = require('../src/services/connectorRegistry');
+
+const createResponse = () => ({
+  statusCode: 200,
+  body: null,
+  status(code) {
+    this.statusCode = code;
+    return this;
+  },
+  json(payload) {
+    this.body = payload;
+    return this;
+  }
+});
+
+const createRequest = (overrides = {}) => ({
+  path: '/api/connectors',
+  method: 'GET',
+  ip: '203.0.113.10',
+  connection: { remoteAddress: '203.0.113.10' },
+  socket: { remoteAddress: '203.0.113.10' },
+  get: () => undefined,
+  ...overrides
+});
+
+describe('request security boundaries', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    jest.dontMock('../src/utils/database');
+    jest.dontMock('../src/models/ApiToken');
+    jest.dontMock('../src/models/SessionToken');
+    jest.dontMock('../src/models/DecisionQueueItem');
+    jest.dontMock('../src/models/Recommendation');
+    jest.dontMock('../src/models/TrelloActionAttempt');
+    jest.dontMock('../src/models/FollowUpPlan');
+    jest.dontMock('../src/models/CardFinding');
+    jest.dontMock('../src/models/BoardHealthSnapshot');
+    jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/services/teamManager');
+    jest.dontMock('mongoose');
+  });
+
+  test('blocks remote API access when no API key is configured', async () => {
+    delete process.env.SNEUP_API_KEY;
+    process.env.SNEUP_REQUIRE_API_KEY = 'false';
+
+    const req = createRequest();
+    const res = createResponse();
+    const next = jest.fn();
+
+    await requireApiAccess(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(503);
+    expect(res.body.error).toContain('SNEUP_API_KEY');
+  });
+
+  test('allows a valid configured API key and attaches service identity', async () => {
+    process.env.SNEUP_API_KEY = 'test-api-key';
+    process.env.SNEUP_DEFAULT_WORKSPACE_ID = 'workspace-main';
+    process.env.SNEUP_DEFAULT_WORKSPACE_NAME = 'Main Ops';
+    process.env.SNEUP_SERVICE_ACTOR = 'service-sneup';
+
+    const req = createRequest({
+      get: header => (header.toLowerCase() === 'x-sneup-api-key' ? 'test-api-key' : undefined)
+    });
+    const res = createResponse();
+    const next = jest.fn();
+
+    await requireApiAccess(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+    expect(req.auth).toMatchObject({
+      authenticated: true,
+      authMethod: 'api_key',
+      actorType: 'service',
+      actorId: 'service-sneup',
+      workspaceId: 'workspace-main',
+      workspaceName: 'Main Ops',
+      roles: ['service']
+    });
+    expect(req.auth.permissions).toEqual(expect.arrayContaining(['audit:read', 'trello-actions:execute-approved']));
+  });
+
+  test('allows service contexts to select a workspace for dashboard operations', async () => {
+    process.env.SNEUP_API_KEY = 'test-api-key';
+    process.env.SNEUP_DEFAULT_WORKSPACE_ID = 'workspace-main';
+
+    const req = createRequest({
+      get: header => {
+        const normalized = header.toLowerCase();
+        if (normalized === 'x-sneup-api-key') return 'test-api-key';
+        if (normalized === 'x-sneup-workspace-id') return 'tenant-b';
+        return undefined;
+      }
+    });
+    const res = createResponse();
+    const next = jest.fn();
+
+    await requireApiAccess(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.auth.workspaceId).toBe('tenant-b');
+    expect(req.auth.workspaceOverrideAllowed).toBe(true);
+  });
+
+  test('local API bypass still attaches an auditable owner identity', async () => {
+    delete process.env.SNEUP_API_KEY;
+    process.env.SNEUP_REQUIRE_API_KEY = 'false';
+
+    const req = createRequest({
+      ip: '127.0.0.1',
+      connection: { remoteAddress: '127.0.0.1' },
+      socket: { remoteAddress: '127.0.0.1' }
+    });
+    const res = createResponse();
+    const next = jest.fn();
+
+    await requireApiAccess(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.auth).toMatchObject({
+      authenticated: true,
+      authMethod: 'local_bypass',
+      actorType: 'local_user',
+      actorId: 'local-user',
+      roles: ['owner'],
+      workspaceId: 'default'
+    });
+  });
+
+  test('resolves an active database API token into user and workspace context', async () => {
+    jest.resetModules();
+
+    const candidate = {
+      _id: 'token-1',
+      name: 'Ops token',
+      role: 'operator',
+      scopes: [],
+      workspaceId: { _id: 'workspace-1', name: 'Ops Workspace' },
+      userId: { _id: 'user-1', displayName: 'Operations Lead', role: 'manager', status: 'active' },
+      isUsable: jest.fn(() => true),
+      matches: jest.fn(() => true),
+      save: jest.fn().mockResolvedValue(null)
+    };
+    const query = {
+      select: jest.fn(() => query),
+      populate: jest.fn()
+    };
+    query.populate.mockReturnValueOnce(query).mockResolvedValueOnce(candidate);
+
+    jest.doMock('../src/utils/database', () => ({ isDatabaseConnected: () => true }));
+    jest.doMock('../src/models/ApiToken', () => ({
+      prefixFor: jest.fn(token => String(token).slice(0, 10)),
+      findOne: jest.fn(() => query)
+    }));
+
+    const { requireApiAccess } = require('../src/utils/requestSecurity');
+    delete process.env.SNEUP_API_KEY;
+
+    const req = createRequest({
+      get: header => {
+        const normalized = header.toLowerCase();
+        if (normalized === 'x-sneup-api-key') return 'db-secret-token';
+        if (normalized === 'x-sneup-workspace-id') return 'tenant-b';
+        return undefined;
+      }
+    });
+    const res = createResponse();
+    const next = jest.fn();
+
+    await requireApiAccess(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.auth).toMatchObject({
+      authenticated: true,
+      authMethod: 'database_api_token',
+      actorType: 'user',
+      actorId: 'user-1',
+      displayName: 'Operations Lead',
+      workspaceId: 'workspace-1',
+      workspaceName: 'Ops Workspace',
+      roles: ['manager'],
+      tokenId: 'token-1',
+      userId: 'user-1'
+    });
+    expect(req.auth.permissions).toEqual(expect.arrayContaining(['approvals:decide']));
+    expect(req.auth.workspaceOverrideAllowed).toBe(false);
+    expect(candidate.save).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejects database API tokens attached to disabled users', async () => {
+    jest.resetModules();
+
+    const candidate = {
+      _id: 'token-2',
+      name: 'Disabled token',
+      role: 'admin',
+      scopes: [],
+      workspaceId: { _id: 'workspace-1', name: 'Ops Workspace' },
+      userId: { _id: 'user-2', displayName: 'Disabled User', role: 'admin', status: 'disabled' },
+      isUsable: jest.fn(() => true),
+      matches: jest.fn(() => true),
+      save: jest.fn().mockResolvedValue(null)
+    };
+    const query = {
+      select: jest.fn(() => query),
+      populate: jest.fn()
+    };
+    query.populate.mockReturnValueOnce(query).mockResolvedValueOnce(candidate);
+
+    jest.doMock('../src/utils/database', () => ({ isDatabaseConnected: () => true }));
+    jest.doMock('../src/models/ApiToken', () => ({
+      prefixFor: jest.fn(token => String(token).slice(0, 10)),
+      findOne: jest.fn(() => query)
+    }));
+
+    const { resolveDatabaseApiToken } = require('../src/utils/requestSecurity');
+
+    await expect(resolveDatabaseApiToken('db-secret-token')).resolves.toBeNull();
+    expect(candidate.save).not.toHaveBeenCalled();
+  });
+
+  test('resolves an active database session token into user workspace context', async () => {
+    jest.resetModules();
+
+    const now = new Date('2026-06-29T09:00:00Z');
+    const rawSessionToken = 'sneup_session_test-secret';
+    const candidate = {
+      _id: 'session-1',
+      name: 'Robert laptop',
+      workspaceId: { _id: 'workspace-1', name: 'Ops Workspace' },
+      userId: {
+        _id: 'user-1',
+        displayName: 'Robert',
+        email: 'robert@example.test',
+        role: 'admin',
+        status: 'active',
+        save: jest.fn().mockResolvedValue(null)
+      },
+      isUsable: jest.fn(() => true),
+      matches: jest.fn(() => true),
+      save: jest.fn().mockResolvedValue(null)
+    };
+    const query = {
+      select: jest.fn(() => query),
+      populate: jest.fn()
+    };
+    query.populate.mockReturnValueOnce(query).mockResolvedValueOnce(candidate);
+
+    jest.doMock('../src/utils/database', () => ({ isDatabaseConnected: () => true }));
+    jest.doMock('../src/models/SessionToken', () => ({
+      prefixFor: jest.fn(token => String(token).slice(0, 18)),
+      findOne: jest.fn(() => query)
+    }));
+
+    const { resolveDatabaseSessionToken } = require('../src/utils/requestSecurity');
+
+    await expect(resolveDatabaseSessionToken(rawSessionToken, now)).resolves.toMatchObject({
+      context: {
+        authMethod: 'database_session',
+        actorType: 'user',
+        actorId: 'user-1',
+        displayName: 'Robert',
+        workspaceId: 'workspace-1',
+        workspaceName: 'Ops Workspace',
+        roles: ['admin'],
+        tokenId: 'session-1',
+        userId: 'user-1'
+      }
+    });
+    expect(candidate.lastUsedAt).toBe(now);
+    expect(candidate.userId.lastSeenAt).toBe(now);
+    expect(candidate.save).toHaveBeenCalledTimes(1);
+    expect(candidate.userId.save).toHaveBeenCalledTimes(1);
+  });
+
+  test('enforces role permissions before write handlers run', () => {
+    expect(getPermissionsForRoles(['viewer'])).toEqual(expect.arrayContaining(['api:read', 'audit:read']));
+    expect(getPermissionsForRoles(['viewer'])).not.toContain('trello-actions:execute-approved');
+    expect(getPermissionsForRoles(['manager'])).not.toContain('identity:manage');
+    expect(getPermissionsForRoles(['admin'])).toContain('identity:manage');
+    expect(hasPermission({ roles: ['manager'] }, 'approvals:decide')).toBe(true);
+    expect(hasPermission({ roles: ['operator'] }, 'approvals:decide')).toBe(false);
+
+    const allowedReq = createRequest({
+      auth: { authenticated: true, roles: ['manager'], permissions: [] }
+    });
+    const allowedRes = createResponse();
+    const allowedNext = jest.fn();
+
+    requirePermission('approvals:decide')(allowedReq, allowedRes, allowedNext);
+
+    expect(allowedNext).toHaveBeenCalledTimes(1);
+    expect(allowedRes.statusCode).toBe(200);
+
+    const blockedReq = createRequest({
+      auth: { authenticated: true, roles: ['viewer'], permissions: [] }
+    });
+    const blockedRes = createResponse();
+    const blockedNext = jest.fn();
+
+    requirePermission('approvals:decide')(blockedReq, blockedRes, blockedNext);
+
+    expect(blockedNext).not.toHaveBeenCalled();
+    expect(blockedRes.statusCode).toBe(403);
+    expect(blockedRes.body).toMatchObject({
+      success: false,
+      requiredPermission: 'approvals:decide'
+    });
+  });
+
+  test('verifies Trello webhook signatures', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.TRELLO_WEBHOOK_SECRET = 'trello-secret';
+    process.env.WEBHOOK_CALLBACK_URL = 'https://example.com/api/webhooks/trello';
+
+    const rawBody = Buffer.from(JSON.stringify({ action: { id: '1' }, model: { id: '2' } }));
+    const signature = crypto
+      .createHmac('sha1', process.env.TRELLO_WEBHOOK_SECRET)
+      .update(Buffer.concat([rawBody, Buffer.from(process.env.WEBHOOK_CALLBACK_URL)]))
+      .digest('base64');
+
+    const req = createRequest({
+      path: '/api/webhooks/trello',
+      rawBody,
+      get: header => (header.toLowerCase() === 'x-trello-webhook' ? signature : undefined)
+    });
+    const res = createResponse();
+    const next = jest.fn();
+
+    verifyTrelloWebhook(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+  });
+
+  test('does not trust request host for OAuth redirect URIs by default', () => {
+    delete process.env.SNEUP_PUBLIC_URL;
+    delete process.env.APP_BASE_URL;
+    process.env.SNEUP_TRUST_REQUEST_HOST = 'false';
+    process.env.PORT = '3000';
+
+    expect(accountConnectorService.getRedirectUri('github', 'https://evil.example')).toBe(
+      'http://127.0.0.1:3000/api/connectors/github/callback'
+    );
+  });
+});
+
+describe('dashboard content security policy', () => {
+  test('serves dashboard behavior from external assets without inline script or style allowances', () => {
+    const rootDir = path.join(__dirname, '..');
+    const html = fs.readFileSync(path.join(rootDir, 'public', 'index.html'), 'utf8');
+    const appJs = fs.readFileSync(path.join(rootDir, 'public', 'app.js'), 'utf8');
+    const styles = fs.readFileSync(path.join(rootDir, 'public', 'styles.css'), 'utf8');
+    const server = fs.readFileSync(path.join(rootDir, 'src', 'index.js'), 'utf8');
+    const recommendationRoutes = fs.readFileSync(path.join(rootDir, 'src', 'routes', 'recommendations.js'), 'utf8');
+
+    expect(html).toContain('<link rel="stylesheet" href="/styles.css">');
+    expect(html).toContain('<script src="/app.js" defer></script>');
+    expect(html).toContain('id="signalsView"');
+    expect(html).toContain('id="workSignalList"');
+    expect(appJs).toContain("fetchApi('/api/work-signals?limit=100')");
+    expect(appJs).toContain('data-recommendation-evidence');
+    expect(appJs).toContain('/api/recommendations/${recommendationId}/evidence');
+    expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
+    expect(recommendationRoutes).toContain("router.get('/:recommendationId/evidence'");
+    expect(html).not.toMatch(/<style[\s>]/i);
+    expect(html).not.toMatch(/<script>\s*[\s\S]*?<\/script>/i);
+    expect(html).not.toMatch(/\sstyle=/i);
+    expect(appJs).not.toMatch(/\sstyle=/i);
+    expect(styles.length).toBeGreaterThan(1000);
+    expect(appJs.length).toBeGreaterThan(1000);
+    expect(server).not.toContain("'unsafe-inline'");
+  });
+});
+
+describe('workspace identity models', () => {
+  test('define workspace-scoped users, boards, cards, connector accounts, and hashed credentials', () => {
+    const ApiToken = require('../src/models/ApiToken');
+    const SessionToken = require('../src/models/SessionToken');
+    const Analytics = require('../src/models/Analytics');
+    const Board = require('../src/models/Board');
+    const Card = require('../src/models/Card');
+    const Comment = require('../src/models/Comment');
+    const ConnectorAccount = require('../src/models/ConnectorAccount');
+    const Conversation = require('../src/models/Conversation');
+    const Approval = require('../src/models/Approval');
+    const AuditEvent = require('../src/models/AuditEvent');
+    const BoardHealthSnapshot = require('../src/models/BoardHealthSnapshot');
+    const CardFinding = require('../src/models/CardFinding');
+    const DecisionQueueItem = require('../src/models/DecisionQueueItem');
+    const FollowUpPlan = require('../src/models/FollowUpPlan');
+    const Intervention = require('../src/models/Intervention');
+    const Learning = require('../src/models/Learning');
+    const List = require('../src/models/List');
+    const Member = require('../src/models/Member');
+    const Performance = require('../src/models/Performance');
+    const Recommendation = require('../src/models/Recommendation');
+    const TrelloActionAttempt = require('../src/models/TrelloActionAttempt');
+    const WorkerResponse = require('../src/models/WorkerResponse');
+    const WorkSignal = require('../src/models/WorkSignal');
+    const User = require('../src/models/User');
+    const Workspace = require('../src/models/Workspace');
+
+    const rawToken = 'sneup_test_secret_token';
+    const hash = ApiToken.hashToken(rawToken);
+    const token = new ApiToken({
+      name: 'Automation token',
+      tokenPrefix: ApiToken.prefixFor(rawToken),
+      tokenHash: hash,
+      role: 'service'
+    });
+    const rawSessionToken = SessionToken.generateRawToken();
+    const sessionHash = SessionToken.hashToken(rawSessionToken);
+    const session = new SessionToken({
+      workspaceId: new mongoose.Types.ObjectId(),
+      userId: new mongoose.Types.ObjectId(),
+      tokenPrefix: SessionToken.prefixFor(rawSessionToken),
+      tokenHash: sessionHash,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+    });
+
+    expect(hash).not.toBe(rawToken);
+    expect(hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(ApiToken.buildSecretRecord(rawToken, { name: 'Seed token' })).toMatchObject({
+      name: 'Seed token',
+      tokenPrefix: 'sneup_test',
+      tokenHash: hash
+    });
+    expect(token.matches(rawToken)).toBe(true);
+    expect(token.matches('wrong-token')).toBe(false);
+    expect(token.isUsable()).toBe(true);
+    expect(rawSessionToken).toMatch(/^sneup_session_/);
+    expect(sessionHash).not.toBe(rawSessionToken);
+    expect(sessionHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(session.matches(rawSessionToken)).toBe(true);
+    expect(session.matches('wrong-token')).toBe(false);
+    expect(session.isUsable()).toBe(true);
+    expect(SessionToken.schema.path('tokenHash').options.select).toBe(false);
+    expect(Workspace.schema.path('slug')).toBeTruthy();
+    expect(User.schema.path('role').enumValues).toEqual(expect.arrayContaining(['owner', 'admin', 'manager', 'operator', 'viewer', 'service']));
+    expect(Board.schema.path('workspaceId')).toBeTruthy();
+    expect(Card.schema.path('workspaceId')).toBeTruthy();
+    expect(ConnectorAccount.schema.path('workspaceId')).toBeTruthy();
+    for (const Model of [
+      Approval,
+      Analytics,
+      AuditEvent,
+      BoardHealthSnapshot,
+      CardFinding,
+      Comment,
+      Conversation,
+      DecisionQueueItem,
+      FollowUpPlan,
+      Intervention,
+      Learning,
+      List,
+      Member,
+      Performance,
+      Recommendation,
+      TrelloActionAttempt,
+      WorkSignal,
+      WorkerResponse
+    ]) {
+      expect(Model.schema.path('workspaceId')).toBeTruthy();
+    }
+  });
+
+  test('derives stable workspace object ids and scoped queries from request auth', () => {
+    const workspaceScopeService = require('../src/services/workspaceScopeService');
+    process.env.SNEUP_DEFAULT_WORKSPACE_ID = 'workspace-main';
+
+    const first = workspaceScopeService.getDefaultWorkspaceObjectId();
+    const second = workspaceScopeService.getDefaultWorkspaceObjectId();
+    const tenant = workspaceScopeService.getRequestWorkspaceObjectId({
+      auth: { workspaceId: 'tenant-a' }
+    });
+    const query = workspaceScopeService.scopeQuery({ auth: { workspaceId: 'tenant-a' } }, { closed: false });
+
+    expect(String(first)).toMatch(/^[a-f0-9]{24}$/);
+    expect(String(first)).toBe(String(second));
+    expect(String(tenant)).toBe(String(workspaceScopeService.objectIdFromWorkspaceKey('tenant-a')));
+    expect(query).toMatchObject({ closed: false });
+    expect(String(query.workspaceId)).toBe(String(tenant));
+    expect(workspaceScopeService.slugifyWorkspaceKey('Main Ops Workspace')).toBe('main-ops-workspace');
+  });
+
+  test('operations ledger service adds workspace filters to shared queries', () => {
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const workspaceScopeService = require('../src/services/workspaceScopeService');
+
+    const scoped = operationsLedgerService.workspaceQuery({ workspaceId: 'tenant-a' }, { status: 'open' });
+
+    expect(scoped.status).toBe('open');
+    expect(String(scoped.workspaceId)).toBe(String(workspaceScopeService.objectIdFromWorkspaceKey('tenant-a')));
+  });
+});
+describe('connector registry', () => {
+  test('covers the modern project manager tool stack', () => {
+    expect(getConnectors()).toHaveLength(87);
+    expect(Object.keys(getCategories())).toHaveLength(11);
+    expect(getConnectors().map(connector => connector.id)).toEqual(
+      expect.arrayContaining(['trello', 'jira_software', 'asana', 'slack', 'github', 'notion', 'microsoft_365'])
+    );
+  });
+});
+
+describe('work signal normalization', () => {
+  test('defines adapter contracts and normalizes provider payloads into WorkSignal fields', () => {
+    const workSignalService = require('../src/services/workSignalService');
+    const workspaceId = new mongoose.Types.ObjectId();
+    const accountId = new mongoose.Types.ObjectId();
+    const account = {
+      _id: accountId,
+      workspaceId,
+      connectorId: 'github'
+    };
+
+    const normalized = workSignalService.normalizeSignalPayload(account, {
+      id: 'issue-42',
+      summary: 'Fix webhook retry leak',
+      type: 'bug',
+      state: 'closed',
+      severity: 'urgent',
+      assignees: ['Ana', 'Robert'],
+      tags: ['backend', 'webhooks'],
+      htmlUrl: 'https://github.example/issues/42',
+      due: '2026-07-01T10:00:00Z'
+    });
+    const contract = workSignalService.buildAdapterContract('github');
+
+    expect(String(normalized.workspaceId)).toBe(String(workspaceId));
+    expect(String(normalized.connectorAccountId)).toBe(String(accountId));
+    expect(normalized).toMatchObject({
+      provider: 'github',
+      externalId: 'issue-42',
+      sourceType: 'issue',
+      title: 'Fix webhook retry leak',
+      status: 'done',
+      priority: 'critical',
+      owners: ['Ana', 'Robert'],
+      labels: ['backend', 'webhooks'],
+      url: 'https://github.example/issues/42'
+    });
+    expect(normalized.dueAt.toISOString()).toBe('2026-07-01T10:00:00.000Z');
+    expect(contract).toMatchObject({
+      connectorId: 'github',
+      outputModel: 'WorkSignal',
+      requiredFields: ['externalId', 'title']
+    });
+    expect(workSignalService.getAdapterContracts()).toHaveLength(87);
+  });
+});
+
+describe('mission-control evidence references', () => {
+  test('attaches source evidence to focus, command, and risk items', () => {
+    const autopilotService = require('../src/services/autopilotService');
+    const boardId = new mongoose.Types.ObjectId();
+    const listId = new mongoose.Types.ObjectId();
+    const cardId = new mongoose.Types.ObjectId();
+    const memberId = new mongoose.Types.ObjectId();
+    const card = {
+      _id: cardId,
+      trelloId: 'trello-card-1',
+      name: 'Recover overdue onboarding card',
+      boardId: { _id: boardId, name: 'Client Launches', url: 'https://trello.example/board' },
+      listId: { _id: listId, name: 'Review' },
+      members: [{ _id: memberId, username: 'nina' }],
+      due: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      dueComplete: false,
+      closed: false,
+      riskLevel: 'critical',
+      riskFactors: ['Client launch is blocked'],
+      lastActivity: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      labels: [{ name: 'Blocked' }]
+    };
+
+    const focus = autopilotService.buildFocusQueue([card]);
+    const risks = autopilotService.buildRiskRadar([card], {});
+    const commands = autopilotService.buildCommandQueue({
+      cards: [card],
+      boardSummaries: [],
+      teamLoad: [{
+        id: memberId,
+        username: 'nina',
+        fullName: 'Nina Jacobs',
+        assignedCards: 12,
+        urgentCards: 4,
+        overdueCards: 2,
+        capacityState: 'overloaded'
+      }],
+      interventions: []
+    });
+
+    expect(focus[0].sourceEvidence[0]).toMatchObject({
+      type: 'card',
+      entityId: cardId,
+      label: 'Recover overdue onboarding card',
+      data: expect.objectContaining({
+        reason: 'Priority score and focus queue position',
+        trelloId: 'trello-card-1',
+        boardName: 'Client Launches',
+        listName: 'Review'
+      })
+    });
+    expect(commands.find(command => command.type === 'escalate_overdue').sourceEvidence[0].data.reason).toBe('Overdue open card');
+    expect(commands.find(command => command.type === 'rebalance_workload').sourceEvidence[0]).toMatchObject({
+      type: 'member',
+      label: 'Nina Jacobs'
+    });
+    expect(risks.find(risk => risk.type === 'delivery_risk').sourceEvidence[0].data.reason).toBe('High delivery risk');
+  });
+});
+
+describe('chat source evidence', () => {
+  test('builds card and analytics evidence for worker responses', () => {
+    jest.resetModules();
+    jest.doMock('../src/services/teamManager', () => ({
+      analyzeTeamWorkload: jest.fn()
+    }));
+    const conversationalAI = require('../src/services/conversationalAI');
+    const cardId = new mongoose.Types.ObjectId();
+    const evidence = conversationalAI.buildResponseSourceEvidence({
+      cards: [{
+        id: cardId,
+        trelloId: 'trello-card-2',
+        name: 'Ship dashboard evidence modal',
+        boardId: 'board-1',
+        boardName: 'Sneup Product',
+        listId: 'list-1',
+        listName: 'Build',
+        due: new Date('2026-07-01T10:00:00Z'),
+        riskLevel: 'high',
+        isOverdue: false
+      }],
+      performance: {
+        score: 82,
+        grade: 'B',
+        completionRate: 75,
+        onTimeRate: 80,
+        flags: ['stable']
+      }
+    });
+
+    expect(evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'card',
+        entityId: cardId,
+        label: 'Ship dashboard evidence modal',
+        data: expect.objectContaining({
+          reason: 'Assigned card used for chat response',
+          trelloId: 'trello-card-2',
+          boardName: 'Sneup Product',
+          listName: 'Build'
+        })
+      }),
+      expect.objectContaining({
+        type: 'analytics',
+        label: 'Latest member performance snapshot',
+        data: expect.objectContaining({
+          reason: 'Performance context used for chat response',
+          score: 82
+        })
+      })
+    ]));
+  });
+});
+
+describe('enhancement backlog', () => {
+  test('prioritizes actionable product and engineering findings', () => {
+    const enhancements = enhancementBacklog.listEnhancements();
+    const summary = enhancementBacklog.getSummary(enhancements);
+
+    expect(enhancements).toHaveLength(12);
+    expect(enhancements[0].priority).toBe('P0');
+    expect(summary.byPriority.P0).toBe(3);
+    expect(enhancementBacklog.getEnhancement('ENH-001').title).toContain('provider sync adapters');
+  });
+});
+
+describe('operations ledger intervention policy', () => {
+  test('requires approval for Trello write actions', () => {
+    const interventionPolicy = require('../src/services/interventionPolicy');
+
+    expect(interventionPolicy.classifyAction('comment', { severity: 'medium' })).toMatchObject({
+      riskLevel: 'medium',
+      requiresApproval: true,
+      ownerType: 'team'
+    });
+
+    expect(interventionPolicy.classifyAction('move_card', { severity: 'high' })).toMatchObject({
+      riskLevel: 'high',
+      requiresApproval: true,
+      ownerType: 'robert'
+    });
+
+    expect(interventionPolicy.classifyAction('analysis')).toMatchObject({
+      riskLevel: 'low',
+      requiresApproval: false,
+      ownerType: 'system'
+    });
+  });
+
+  test('intervention execution queues approval instead of writing directly to Trello', async () => {
+    jest.resetModules();
+
+    const recommendation = { _id: 'recommendation-1' };
+    const createRecommendationFromIntervention = jest.fn().mockResolvedValue(recommendation);
+    const trelloClient = {
+      addCommentToCard: jest.fn(),
+      removeMemberFromCard: jest.fn(),
+      addMemberToCard: jest.fn(),
+      moveCardToList: jest.fn(),
+      addLabelToCard: jest.fn()
+    };
+
+    jest.doMock('../src/services/operationsLedgerService', () => ({
+      createRecommendationFromIntervention
+    }));
+    jest.doMock('../src/services/trelloClient', () => trelloClient);
+
+    const interventionEngine = require('../src/services/interventionEngine');
+    const intervention = {
+      _id: 'intervention-1',
+      type: 'comment',
+      severity: 'medium',
+      action: 'Request status update',
+      message: 'Please update this card.',
+      metadata: {},
+      save: jest.fn().mockResolvedValue(null),
+      markFailed: jest.fn()
+    };
+    intervention.save.mockResolvedValue(intervention);
+
+    const result = await interventionEngine.executeIntervention(intervention);
+
+    expect(result).toMatchObject({
+      executed: false,
+      requiresApproval: true,
+      recommendation
+    });
+    expect(createRecommendationFromIntervention).toHaveBeenCalledTimes(1);
+    expect(trelloClient.addCommentToCard).not.toHaveBeenCalled();
+    expect(trelloClient.removeMemberFromCard).not.toHaveBeenCalled();
+    expect(trelloClient.addMemberToCard).not.toHaveBeenCalled();
+    expect(trelloClient.moveCardToList).not.toHaveBeenCalled();
+    expect(trelloClient.addLabelToCard).not.toHaveBeenCalled();
+  });
+});
+
+describe('operating ledger analyzer', () => {
+  test('detects stale, blocked, Robert-required, and missing-next-action findings without Trello writes', () => {
+    const analyzer = require('../src/services/operatingLedgerAnalyzer');
+    const board = {
+      _id: 'board-1',
+      name: 'Client Launches',
+      url: 'https://trello.example/board'
+    };
+    const card = {
+      _id: 'card-1',
+      name: 'Client contract blocked',
+      description: 'Waiting on client contract signature before launch.',
+      labels: [{ name: 'BLOCKED' }],
+      members: [],
+      checklists: [],
+      due: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      dueComplete: false,
+      closed: false,
+      lastActivity: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(),
+      isOverdue: () => true,
+      isStuck: () => false
+    };
+
+    const findings = analyzer.detectCardFindings(board, card);
+    const types = findings.map(finding => finding.findingType);
+
+    expect(types).toEqual(expect.arrayContaining([
+      'overdue',
+      'unassigned',
+      'stale',
+      'missing_next_action',
+      'blocked',
+      'robert_required',
+      'external_waiting'
+    ]));
+    expect(findings.find(finding => finding.findingType === 'robert_required').waitingOn).toBe('robert');
+    expect(findings.find(finding => finding.findingType === 'blocked').severity).toBe('critical');
+  });
+
+  test('maps finding owners into supported decision queue owner types', () => {
+    const analyzer = require('../src/services/operatingLedgerAnalyzer');
+
+    expect(analyzer.ownerTypeForFinding({ waitingOn: 'robert' })).toBe('robert');
+    expect(analyzer.ownerTypeForFinding({ waitingOn: 'va' })).toBe('va');
+    expect(analyzer.ownerTypeForFinding({ waitingOn: 'worker' })).toBe('team');
+    expect(analyzer.ownerTypeForFinding({ waitingOn: 'external' })).toBe('team');
+    expect(analyzer.ownerTypeForFinding({ waitingOn: 'unknown' })).toBe('team');
+  });
+});
+
+describe('operations daily brief', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.dontMock('mongoose');
+    jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/models/DecisionQueueItem');
+    jest.dontMock('../src/models/Recommendation');
+    jest.dontMock('../src/models/TrelloActionAttempt');
+    jest.dontMock('../src/models/FollowUpPlan');
+    jest.dontMock('../src/models/CardFinding');
+    jest.dontMock('../src/models/BoardHealthSnapshot');
+    jest.resetModules();
+  });
+
+  test('scopes live operations brief queries to the request workspace', async () => {
+    jest.resetModules();
+
+    const queryLog = {};
+    const makeModel = (name) => ({
+      find: jest.fn((query) => {
+        queryLog[name] = query;
+        const chain = {
+          populate: jest.fn(() => chain),
+          sort: jest.fn(() => chain),
+          limit: jest.fn().mockResolvedValue([])
+        };
+        return chain;
+      })
+    });
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(() => 'workspace-object-id')
+    }));
+    jest.doMock('../src/models/DecisionQueueItem', () => makeModel('DecisionQueueItem'));
+    jest.doMock('../src/models/Recommendation', () => makeModel('Recommendation'));
+    jest.doMock('../src/models/TrelloActionAttempt', () => makeModel('TrelloActionAttempt'));
+    jest.doMock('../src/models/FollowUpPlan', () => makeModel('FollowUpPlan'));
+    jest.doMock('../src/models/CardFinding', () => makeModel('CardFinding'));
+    jest.doMock('../src/models/BoardHealthSnapshot', () => makeModel('BoardHealthSnapshot'));
+
+    const operationsBriefService = require('../src/services/operationsBriefService');
+    jest.spyOn(operationsBriefService, 'buildBrief').mockReturnValue({ mode: 'live' });
+
+    await expect(operationsBriefService.getDailyBrief({
+      workspaceId: 'tenant-a',
+      limit: 5
+    })).resolves.toEqual({ mode: 'live' });
+
+    expect(queryLog.DecisionQueueItem).toMatchObject({ workspaceId: 'workspace-object-id' });
+    expect(queryLog.Recommendation).toMatchObject({ workspaceId: 'workspace-object-id' });
+    expect(queryLog.TrelloActionAttempt).toMatchObject({ workspaceId: 'workspace-object-id' });
+    expect(queryLog.FollowUpPlan).toMatchObject({ workspaceId: 'workspace-object-id' });
+    expect(queryLog.CardFinding).toMatchObject({ workspaceId: 'workspace-object-id' });
+    expect(queryLog.BoardHealthSnapshot).toMatchObject({ workspaceId: 'workspace-object-id' });
+  });
+
+  test('prioritizes failed actions and separates Robert, VA, and team queues', () => {
+    const operationsBriefService = require('../src/services/operationsBriefService');
+
+    const brief = operationsBriefService.buildBrief({
+      mode: 'live',
+      generatedAt: new Date('2026-06-29T08:00:00Z'),
+      decisions: [
+        {
+          _id: 'decision-robert',
+          ownerType: 'robert',
+          question: 'Approve client launch escalation: Yes/No.',
+          reason: 'Client launch is blocked.',
+          riskLevel: 'critical',
+          status: 'open'
+        },
+        {
+          _id: 'decision-team',
+          ownerType: 'team',
+          question: 'Ask worker for update: Yes/No.',
+          reason: 'No activity for 8 days.',
+          riskLevel: 'medium',
+          status: 'open'
+        }
+      ],
+      recommendations: [
+        {
+          _id: 'recommendation-1',
+          status: 'pending',
+          riskLevel: 'high',
+          recommendedAction: 'Post follow-up comment'
+        }
+      ],
+      failedActions: [
+        {
+          _id: 'failed-action-1',
+          actionType: 'comment',
+          status: 'failed',
+          errorMessage: 'Trello token rejected'
+        }
+      ],
+      dueFollowUps: [
+        {
+          _id: 'follow-up-1',
+          reason: 'Verify worker response',
+          status: 'due',
+          dueAt: new Date('2026-06-29T07:00:00Z')
+        }
+      ],
+      findings: [
+        {
+          _id: 'finding-va',
+          title: 'Card is VA-ready',
+          waitingOn: 'va',
+          severity: 'high',
+          status: 'open'
+        },
+        {
+          _id: 'finding-worker',
+          title: 'Worker follow-up needed',
+          waitingOn: 'worker',
+          severity: 'medium',
+          status: 'open'
+        }
+      ],
+      healthSnapshots: [
+        {
+          _id: 'health-1',
+          boardId: { _id: 'board-1', name: 'Growth Experiments' },
+          healthStatus: 'critical',
+          healthScore: 38,
+          summary: 'Blocked dependencies'
+        }
+      ]
+    });
+
+    expect(brief.readonly).toBe(true);
+    expect(brief.headline).toContain('failed Trello action');
+    expect(brief.nextDecision).toBe('Approve client launch escalation: Yes/No.');
+    expect(brief.counts).toMatchObject({
+      robertDecisions: 1,
+      vaReady: 1,
+      teamQueue: 2,
+      failedActions: 1,
+      dueFollowUps: 1,
+      boardsAtRisk: 1
+    });
+    expect(brief.robertDecisions[0]).toMatchObject({
+      type: 'robert_decision',
+      riskLevel: 'critical'
+    });
+    expect(brief.vaReady[0].title).toBe('Card is VA-ready');
+    expect(brief.teamQueue.map(item => item.title)).toEqual(expect.arrayContaining([
+      'Ask worker for update: Yes/No.',
+      'Worker follow-up needed'
+    ]));
+    expect(brief.morningPlan[0]).toContain('failed Trello action');
+  });
+});
+
+describe('autopilot command approval queue', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+  });
+
+  test('maps autopilot update commands into executable approval-gated Trello comment drafts', () => {
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const boardId = new mongoose.Types.ObjectId();
+    const cardId = new mongoose.Types.ObjectId();
+    const card = {
+      _id: cardId,
+      boardId,
+      trelloId: 'trello-card-1',
+      name: 'Clear copy approvals',
+      url: 'https://trello.example/card',
+      updatedAt: new Date('2026-06-29T07:00:00Z')
+    };
+    const command = operationsLedgerService.normalizeAutopilotCommand({
+      id: 'request_update-trello-card-1',
+      type: 'request_update',
+      severity: 'medium',
+      title: 'Request a crisp update: Clear copy approvals',
+      target: 'Growth Experiments',
+      owner: 'milan',
+      reason: 'No activity for 6 days',
+      automatable: true,
+      minutesSaved: 8,
+      payload: { cardId, trelloId: 'trello-card-1' }
+    });
+
+    const spec = operationsLedgerService.buildAutopilotActionSpec(command, card);
+
+    expect(spec).toMatchObject({
+      actionType: 'comment',
+      recommendedAction: 'Post a Trello status request for "Request a crisp update: Clear copy approvals".',
+      confidence: 0.72
+    });
+    expect(spec.actionPayload).toMatchObject({
+      commandId: 'request_update-trello-card-1',
+      executable: true,
+      draftOnly: false,
+      cardTrelloId: 'trello-card-1'
+    });
+    expect(spec.actionPayload.commentText).toContain('next concrete action');
+  });
+
+  test('marks autopilot commands that need human payload selection as non-executable drafts', () => {
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const command = operationsLedgerService.normalizeAutopilotCommand({
+      id: 'assign_owner-card-1',
+      type: 'assign_owner',
+      severity: 'high',
+      title: 'Assign an owner: Analytics webhook rollout',
+      target: 'Growth Experiments',
+      owner: 'Sneup',
+      reason: 'Unowned work has no accountable path to completion',
+      automatable: true,
+      payload: { cardId: 'not-a-mongo-id' }
+    });
+
+    const spec = operationsLedgerService.buildAutopilotActionSpec(command);
+
+    expect(spec).toMatchObject({
+      actionType: 'reassign',
+      ownerType: 'robert'
+    });
+    expect(spec.actionPayload).toMatchObject({
+      executable: false,
+      draftOnly: true,
+      requiredChange: 'Select toMemberId and toMemberTrelloId before execution.'
+    });
+    expect(operationsLedgerService.isExecutableRecommendation({
+      actionType: spec.actionType,
+      actionPayload: spec.actionPayload
+    })).toBe(false);
+  });
+
+  test('blocks approved manual-review autopilot decisions from Trello execution', () => {
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+
+    expect(operationsLedgerService.isExecutableRecommendation({
+      actionType: 'manual_review',
+      actionPayload: { executable: false, draftOnly: true }
+    })).toBe(false);
+
+    expect(operationsLedgerService.isExecutableRecommendation({
+      actionType: 'comment',
+      actionPayload: { executable: true, cardTrelloId: 'card-1', commentText: 'Status?' }
+    })).toBe(true);
+  });
+  test('models support snooze, delegate, and payload-edit approval states', () => {
+    const DecisionQueueItem = require('../src/models/DecisionQueueItem');
+    const Recommendation = require('../src/models/Recommendation');
+
+    expect(DecisionQueueItem.schema.path('status').enumValues).toEqual(expect.arrayContaining([
+      'snoozed',
+      'delegated'
+    ]));
+    expect(DecisionQueueItem.schema.path('recommendedAnswer').enumValues).toEqual(expect.arrayContaining(['snooze', 'delegate']));
+    expect(Recommendation.schema.path('status').enumValues).toEqual(expect.arrayContaining(['snoozed', 'delegated']));
+    expect(DecisionQueueItem.schema.path('snoozedUntil')).toBeTruthy();
+    expect(DecisionQueueItem.schema.path('delegatedTo')).toBeTruthy();
+  });
+});
+
+describe('job observability', () => {
+  test('builds job health with stale and failed classifications', () => {
+    const jobObservabilityService = require('../src/services/jobObservabilityService');
+    const now = new Date('2026-06-29T08:00:00Z');
+    const runs = [
+      {
+        _id: 'run-1',
+        jobName: 'trello.incremental_sync',
+        jobType: 'sync',
+        triggerType: 'scheduled',
+        status: 'succeeded',
+        startedAt: new Date('2026-06-29T07:50:00Z'),
+        finishedAt: new Date('2026-06-29T07:51:00Z'),
+        durationMs: 60000,
+        processedCount: 4,
+        successCount: 4,
+        failureCount: 0
+      },
+      {
+        _id: 'run-2',
+        jobName: 'analytics.generate_all',
+        jobType: 'analytics',
+        triggerType: 'scheduled',
+        status: 'failed',
+        startedAt: new Date('2026-06-29T07:45:00Z'),
+        finishedAt: new Date('2026-06-29T07:46:00Z'),
+        durationMs: 60000,
+        processedCount: 1,
+        successCount: 0,
+        failureCount: 1,
+        errorMessage: 'Analytics failed'
+      },
+      {
+        _id: 'run-3',
+        jobName: 'interventions.process_all',
+        jobType: 'intervention',
+        triggerType: 'scheduled',
+        status: 'succeeded',
+        startedAt: new Date('2026-06-29T04:00:00Z'),
+        finishedAt: new Date('2026-06-29T04:01:00Z'),
+        durationMs: 60000,
+        processedCount: 2,
+        successCount: 2,
+        failureCount: 0
+      }
+    ];
+
+    const dashboard = jobObservabilityService.buildDashboard(runs, now);
+    const incrementalSync = dashboard.health.find(job => job.jobName === 'trello.incremental_sync');
+    const analytics = dashboard.health.find(job => job.jobName === 'analytics.generate_all');
+    const interventions = dashboard.health.find(job => job.jobName === 'interventions.process_all');
+
+    expect(incrementalSync.status).toBe('healthy');
+    expect(analytics.status).toBe('failed');
+    expect(interventions.status).toBe('stale');
+    expect(dashboard.summary.failedRuns).toBe(1);
+    expect(dashboard.recentRuns[0]).toMatchObject({
+      jobName: 'trello.incremental_sync',
+      status: 'succeeded'
+    });
+  });
+
+  test('tracks jobs without MongoDB and preserves failure propagation', async () => {
+    const jobObservabilityService = require('../src/services/jobObservabilityService');
+
+    await expect(jobObservabilityService.trackJob({
+      jobName: 'test.no_db',
+      jobType: 'system',
+      triggerType: 'worker'
+    }, async () => ({
+      processedCount: 1,
+      successCount: 1,
+      failureCount: 0
+    }))).resolves.toMatchObject({
+      processedCount: 1,
+      successCount: 1
+    });
+
+    await expect(jobObservabilityService.trackJob({
+      jobName: 'test.no_db_failure',
+      jobType: 'system',
+      triggerType: 'worker'
+    }, async () => {
+      throw new Error('job failed');
+    })).rejects.toThrow('job failed');
+  });
+});
+
+describe('optional AI startup', () => {
+  test('loads without OPENAI_API_KEY', () => {
+    delete process.env.OPENAI_API_KEY;
+    jest.resetModules();
+    jest.doMock('../src/services/teamManager', () => ({
+      analyzeTeamWorkload: jest.fn()
+    }));
+
+    expect(() => {
+      jest.isolateModules(() => {
+        require('../src/services/conversationalAI');
+      });
+    }).not.toThrow();
+  });
+});

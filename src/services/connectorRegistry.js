@@ -1,0 +1,458 @@
+const CATEGORIES = {
+  work_management: 'Project and work management',
+  software_delivery: 'Software delivery',
+  communication: 'Communication',
+  calendar_email: 'Calendar and email',
+  docs_knowledge: 'Docs and knowledge',
+  files_assets: 'Files and assets',
+  whiteboard_design: 'Whiteboard and design',
+  time_finance: 'Time, finance, and resourcing',
+  crm_support: 'CRM, support, and stakeholders',
+  automation_data: 'Automation, forms, and data',
+  incident_quality: 'Incident, quality, and monitoring'
+};
+
+const oauth2 = (overrides) => ({
+  type: 'oauth2',
+  scopes: [],
+  tokenAuth: 'body',
+  ...overrides
+});
+
+const apiKey = (overrides = {}) => ({
+  type: 'api_key',
+  fields: [
+    {
+      name: 'apiKey',
+      label: 'API key',
+      secret: true,
+      required: true
+    }
+  ],
+  ...overrides
+});
+
+const pat = (overrides = {}) => ({
+  type: 'personal_access_token',
+  fields: [
+    {
+      name: 'token',
+      label: 'Personal access token',
+      secret: true,
+      required: true
+    }
+  ],
+  ...overrides
+});
+
+const manual = (overrides = {}) => ({
+  type: 'manual',
+  fields: [
+    {
+      name: 'workspaceUrl',
+      label: 'Workspace URL',
+      secret: false,
+      required: true
+    }
+  ],
+  ...overrides
+});
+
+const CONNECTORS = [
+  {
+    id: 'trello',
+    name: 'Trello',
+    category: 'work_management',
+    description: 'Boards, lists, cards, members, labels, comments, checklists, due dates, and webhooks.',
+    auth: apiKey({
+      docsUrl: 'https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/',
+      fields: [
+        { name: 'apiKey', label: 'API key', secret: true, required: true },
+        { name: 'apiToken', label: 'API token', secret: true, required: true }
+      ]
+    }),
+    sync: ['boards', 'lists', 'cards', 'members', 'comments', 'webhooks']
+  },
+  {
+    id: 'jira_software',
+    name: 'Jira Software',
+    category: 'software_delivery',
+    description: 'Epics, issues, sprints, releases, dependencies, comments, changelogs, and project health.',
+    auth: oauth2({
+      envPrefix: 'JIRA',
+      authorizationUrl: 'https://auth.atlassian.com/authorize',
+      tokenUrl: 'https://auth.atlassian.com/oauth/token',
+      audience: 'api.atlassian.com',
+      scopes: ['read:jira-work', 'read:jira-user', 'write:jira-work', 'offline_access'],
+      docsUrl: 'https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/'
+    }),
+    sync: ['projects', 'issues', 'sprints', 'versions', 'comments', 'users']
+  },
+  {
+    id: 'asana',
+    name: 'Asana',
+    category: 'work_management',
+    description: 'Portfolios, projects, tasks, sections, goals, teams, custom fields, and status updates.',
+    auth: oauth2({
+      envPrefix: 'ASANA',
+      authorizationUrl: 'https://app.asana.com/-/oauth_authorize',
+      tokenUrl: 'https://app.asana.com/-/oauth_token',
+      scopes: ['default'],
+      docsUrl: 'https://developers.asana.com/docs/oauth'
+    }),
+    sync: ['workspaces', 'portfolios', 'projects', 'tasks', 'goals', 'users']
+  },
+  {
+    id: 'monday',
+    name: 'monday.com',
+    category: 'work_management',
+    description: 'Boards, groups, items, columns, updates, automations, users, and workspaces.',
+    auth: oauth2({
+      envPrefix: 'MONDAY',
+      authorizationUrl: 'https://auth.monday.com/oauth2/authorize',
+      tokenUrl: 'https://auth.monday.com/oauth2/token',
+      scopes: ['account:read', 'boards:read', 'boards:write', 'users:read', 'updates:read', 'updates:write'],
+      docsUrl: 'https://developer.monday.com/apps/docs/oauth'
+    }),
+    sync: ['boards', 'items', 'columns', 'updates', 'users']
+  },
+  {
+    id: 'clickup',
+    name: 'ClickUp',
+    category: 'work_management',
+    description: 'Workspaces, spaces, folders, lists, tasks, docs, goals, comments, and time entries.',
+    auth: oauth2({
+      envPrefix: 'CLICKUP',
+      authorizationUrl: 'https://app.clickup.com/api',
+      tokenUrl: 'https://api.clickup.com/api/v2/oauth/token',
+      scopes: [],
+      docsUrl: 'https://developer.clickup.com/docs/authentication'
+    }),
+    sync: ['teams', 'spaces', 'lists', 'tasks', 'docs', 'goals', 'time']
+  },
+  {
+    id: 'linear',
+    name: 'Linear',
+    category: 'software_delivery',
+    description: 'Teams, issues, cycles, projects, initiatives, roadmaps, comments, and labels.',
+    auth: oauth2({
+      envPrefix: 'LINEAR',
+      authorizationUrl: 'https://linear.app/oauth/authorize',
+      tokenUrl: 'https://api.linear.app/oauth/token',
+      scopes: ['read', 'write', 'issues:create'],
+      docsUrl: 'https://linear.app/developers/oauth-2-0-authentication'
+    }),
+    sync: ['teams', 'issues', 'projects', 'cycles', 'initiatives', 'comments']
+  },
+  {
+    id: 'notion',
+    name: 'Notion',
+    category: 'docs_knowledge',
+    description: 'Pages, databases, project trackers, docs, owners, comments, and knowledge bases.',
+    auth: oauth2({
+      envPrefix: 'NOTION',
+      authorizationUrl: 'https://api.notion.com/v1/oauth/authorize',
+      tokenUrl: 'https://api.notion.com/v1/oauth/token',
+      tokenAuth: 'basic',
+      scopes: [],
+      extraAuthParams: { owner: 'user' },
+      docsUrl: 'https://developers.notion.com/docs/authorization'
+    }),
+    sync: ['pages', 'databases', 'comments', 'users']
+  },
+  {
+    id: 'microsoft_365',
+    name: 'Microsoft 365',
+    category: 'calendar_email',
+    description: 'Outlook, Teams, Planner, To Do, OneDrive, SharePoint, calendars, mail, files, and users through Microsoft Graph.',
+    auth: oauth2({
+      envPrefix: 'MICROSOFT',
+      authorizationUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+      tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+      scopes: [
+        'offline_access',
+        'User.Read',
+        'Mail.Read',
+        'Calendars.ReadWrite',
+        'Files.Read.All',
+        'Sites.Read.All',
+        'Tasks.ReadWrite'
+      ],
+      docsUrl: 'https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc'
+    }),
+    sync: ['mail', 'calendar', 'files', 'planner', 'todo', 'sharepoint', 'users']
+  },
+  {
+    id: 'google_workspace',
+    name: 'Google Workspace',
+    category: 'calendar_email',
+    description: 'Gmail, Calendar, Drive, Docs, Sheets, Slides, Meet artifacts, and directory data through Google APIs.',
+    auth: oauth2({
+      envPrefix: 'GOOGLE',
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+      tokenUrl: 'https://oauth2.googleapis.com/token',
+      scopes: [
+        'openid',
+        'email',
+        'profile',
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/drive.metadata.readonly',
+        'https://www.googleapis.com/auth/gmail.readonly'
+      ],
+      extraAuthParams: { access_type: 'offline', prompt: 'consent' },
+      docsUrl: 'https://developers.google.com/identity/protocols/oauth2/web-server'
+    }),
+    sync: ['mail', 'calendar', 'drive', 'docs', 'sheets', 'slides', 'users']
+  },
+  {
+    id: 'slack',
+    name: 'Slack',
+    category: 'communication',
+    description: 'Channels, messages, users, files, huddles metadata, project signals, and workflow notifications.',
+    auth: oauth2({
+      envPrefix: 'SLACK',
+      authorizationUrl: 'https://slack.com/oauth/v2/authorize',
+      tokenUrl: 'https://slack.com/api/oauth.v2.access',
+      scopes: ['channels:read', 'groups:read', 'chat:write', 'users:read', 'files:read', 'team:read'],
+      docsUrl: 'https://api.slack.com/authentication/oauth-v2'
+    }),
+    sync: ['channels', 'messages', 'users', 'files', 'notifications']
+  },
+  {
+    id: 'github',
+    name: 'GitHub',
+    category: 'software_delivery',
+    description: 'Repositories, issues, pull requests, projects, milestones, discussions, actions, and releases.',
+    auth: oauth2({
+      envPrefix: 'GITHUB',
+      authorizationUrl: 'https://github.com/login/oauth/authorize',
+      tokenUrl: 'https://github.com/login/oauth/access_token',
+      scopes: ['repo', 'read:org', 'project', 'workflow'],
+      docsUrl: 'https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps'
+    }),
+    sync: ['repositories', 'issues', 'pull_requests', 'projects', 'actions', 'releases']
+  },
+  {
+    id: 'gitlab',
+    name: 'GitLab',
+    category: 'software_delivery',
+    description: 'Groups, projects, issues, epics, merge requests, milestones, pipelines, and releases.',
+    auth: oauth2({
+      envPrefix: 'GITLAB',
+      authorizationUrl: 'https://gitlab.com/oauth/authorize',
+      tokenUrl: 'https://gitlab.com/oauth/token',
+      scopes: ['api', 'read_user'],
+      docsUrl: 'https://docs.gitlab.com/integration/oauth_provider/'
+    }),
+    sync: ['groups', 'projects', 'issues', 'epics', 'merge_requests', 'pipelines']
+  },
+  {
+    id: 'zoom',
+    name: 'Zoom',
+    category: 'communication',
+    description: 'Meetings, recordings, webinars, users, transcripts, and stakeholder meeting cadence.',
+    auth: oauth2({
+      envPrefix: 'ZOOM',
+      authorizationUrl: 'https://zoom.us/oauth/authorize',
+      tokenUrl: 'https://zoom.us/oauth/token',
+      tokenAuth: 'basic',
+      scopes: ['meeting:read', 'meeting:write', 'recording:read', 'user:read'],
+      docsUrl: 'https://developers.zoom.us/docs/integrations/'
+    }),
+    sync: ['meetings', 'recordings', 'webinars', 'users']
+  },
+  {
+    id: 'figma',
+    name: 'Figma',
+    category: 'whiteboard_design',
+    description: 'Design files, projects, teams, comments, branches, prototypes, and design review status.',
+    auth: oauth2({
+      envPrefix: 'FIGMA',
+      authorizationUrl: 'https://www.figma.com/oauth',
+      tokenUrl: 'https://api.figma.com/v1/oauth/token',
+      scopes: ['files:read'],
+      docsUrl: 'https://www.figma.com/developers/api#oauth2'
+    }),
+    sync: ['files', 'projects', 'comments', 'users']
+  },
+  {
+    id: 'miro',
+    name: 'Miro',
+    category: 'whiteboard_design',
+    description: 'Boards, frames, cards, sticky notes, diagrams, comments, and workshop artifacts.',
+    auth: oauth2({
+      envPrefix: 'MIRO',
+      authorizationUrl: 'https://miro.com/oauth/authorize',
+      tokenUrl: 'https://api.miro.com/v1/oauth/token',
+      scopes: ['boards:read', 'boards:write', 'identity:read'],
+      docsUrl: 'https://developers.miro.com/docs/getting-started-with-oauth'
+    }),
+    sync: ['boards', 'items', 'comments', 'users']
+  },
+  {
+    id: 'dropbox',
+    name: 'Dropbox',
+    category: 'files_assets',
+    description: 'Files, folders, shared links, paper docs, approvals, and client deliverable assets.',
+    auth: oauth2({
+      envPrefix: 'DROPBOX',
+      authorizationUrl: 'https://www.dropbox.com/oauth2/authorize',
+      tokenUrl: 'https://api.dropboxapi.com/oauth2/token',
+      scopes: ['files.metadata.read', 'files.content.read', 'sharing.read'],
+      docsUrl: 'https://developers.dropbox.com/oauth-guide'
+    }),
+    sync: ['files', 'folders', 'shared_links']
+  },
+  {
+    id: 'box',
+    name: 'Box',
+    category: 'files_assets',
+    description: 'Enterprise content, folders, files, comments, tasks, approvals, and retention-aware project assets.',
+    auth: oauth2({
+      envPrefix: 'BOX',
+      authorizationUrl: 'https://account.box.com/api/oauth2/authorize',
+      tokenUrl: 'https://api.box.com/oauth2/token',
+      scopes: [],
+      docsUrl: 'https://developer.box.com/guides/authentication/oauth2/'
+    }),
+    sync: ['files', 'folders', 'comments', 'tasks']
+  },
+  {
+    id: 'hubspot',
+    name: 'HubSpot',
+    category: 'crm_support',
+    description: 'Deals, companies, contacts, tickets, tasks, notes, timelines, and customer-facing project signals.',
+    auth: oauth2({
+      envPrefix: 'HUBSPOT',
+      authorizationUrl: 'https://app.hubspot.com/oauth/authorize',
+      tokenUrl: 'https://api.hubapi.com/oauth/v1/token',
+      scopes: ['crm.objects.contacts.read', 'crm.objects.companies.read', 'crm.objects.deals.read', 'tickets'],
+      docsUrl: 'https://developers.hubspot.com/docs/api/oauth-quickstart-guide'
+    }),
+    sync: ['contacts', 'companies', 'deals', 'tickets', 'tasks']
+  },
+  {
+    id: 'salesforce',
+    name: 'Salesforce',
+    category: 'crm_support',
+    description: 'Accounts, opportunities, contacts, cases, tasks, events, and executive stakeholder context.',
+    auth: oauth2({
+      envPrefix: 'SALESFORCE',
+      authorizationUrl: 'https://login.salesforce.com/services/oauth2/authorize',
+      tokenUrl: 'https://login.salesforce.com/services/oauth2/token',
+      scopes: ['api', 'refresh_token'],
+      docsUrl: 'https://help.salesforce.com/s/articleView?id=sf.remoteaccess_oauth_web_server_flow.htm'
+    }),
+    sync: ['accounts', 'opportunities', 'contacts', 'cases', 'tasks', 'events']
+  },
+  {
+    id: 'intercom',
+    name: 'Intercom',
+    category: 'crm_support',
+    description: 'Companies, contacts, conversations, tickets, SLAs, and customer escalation context.',
+    auth: oauth2({
+      envPrefix: 'INTERCOM',
+      authorizationUrl: 'https://app.intercom.com/oauth',
+      tokenUrl: 'https://api.intercom.io/auth/eagle/token',
+      scopes: [],
+      docsUrl: 'https://developers.intercom.com/docs/references/rest-api/api.intercom.io/authentication/'
+    }),
+    sync: ['contacts', 'companies', 'conversations', 'tickets']
+  },
+
+  // High-value token/API-key connectors used by project managers across 2015-2026.
+  { id: 'wrike', name: 'Wrike', category: 'work_management', description: 'Folders, projects, tasks, custom fields, workload, time logs, and comments.', auth: pat({ docsUrl: 'https://developers.wrike.com/' }), sync: ['projects', 'tasks', 'comments', 'time'] },
+  { id: 'smartsheet', name: 'Smartsheet', category: 'work_management', description: 'Sheets, workspaces, rows, attachments, conversations, automations, and dashboards.', auth: pat({ docsUrl: 'https://smartsheet.redoc.ly/' }), sync: ['sheets', 'rows', 'attachments', 'conversations'] },
+  { id: 'airtable', name: 'Airtable', category: 'automation_data', description: 'Bases, tables, records, interfaces, forms, approvals, and lightweight PM databases.', auth: pat({ docsUrl: 'https://airtable.com/developers/web/api/authentication' }), sync: ['bases', 'tables', 'records', 'webhooks'] },
+  { id: 'basecamp', name: 'Basecamp', category: 'work_management', description: 'Projects, to-dos, messages, schedules, docs, files, hill charts, and clients.', auth: manual({ docsUrl: 'https://github.com/basecamp/api' }), sync: ['projects', 'todos', 'messages', 'schedules', 'files'] },
+  { id: 'microsoft_project', name: 'Microsoft Project', category: 'work_management', description: 'Project plans, schedules, resource assignments, milestones, and portfolio reporting.', auth: manual({ docsUrl: 'https://learn.microsoft.com/en-us/project/' }), sync: ['projects', 'schedules', 'resources', 'milestones'] },
+  { id: 'microsoft_planner', name: 'Microsoft Planner', category: 'work_management', description: 'Plans, buckets, tasks, assignments, checklist items, labels, and due dates through Graph.', auth: manual({ docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/planner-overview' }), sync: ['plans', 'buckets', 'tasks', 'assignments'] },
+  { id: 'azure_devops', name: 'Azure DevOps', category: 'software_delivery', description: 'Boards, repos, work items, sprints, pull requests, pipelines, test plans, and releases.', auth: pat({ docsUrl: 'https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/authentication-guidance' }), sync: ['work_items', 'boards', 'repos', 'pull_requests', 'pipelines'] },
+  { id: 'bitbucket', name: 'Bitbucket', category: 'software_delivery', description: 'Repositories, pull requests, issues, deployments, branches, and release work.', auth: pat({ docsUrl: 'https://developer.atlassian.com/cloud/bitbucket/rest/intro/' }), sync: ['repositories', 'pull_requests', 'issues', 'deployments'] },
+  { id: 'confluence', name: 'Confluence', category: 'docs_knowledge', description: 'Spaces, pages, decisions, meeting notes, comments, owners, and project knowledge.', auth: manual({ docsUrl: 'https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/' }), sync: ['spaces', 'pages', 'comments', 'attachments'] },
+  { id: 'coda', name: 'Coda', category: 'docs_knowledge', description: 'Docs, tables, rows, packs, project trackers, approvals, and team operating docs.', auth: pat({ docsUrl: 'https://coda.io/developers/apis/v1' }), sync: ['docs', 'tables', 'rows', 'pages'] },
+  { id: 'quip', name: 'Quip', category: 'docs_knowledge', description: 'Documents, spreadsheets, folders, threads, and Salesforce-connected collaboration.', auth: pat({ docsUrl: 'https://quip.com/dev/automation/documentation' }), sync: ['documents', 'folders', 'threads'] },
+  { id: 'evernote', name: 'Evernote', category: 'docs_knowledge', description: 'Notes, notebooks, tags, meeting notes, research, and lightweight project memory.', auth: manual({ docsUrl: 'https://dev.evernote.com/doc/' }), sync: ['notes', 'notebooks', 'tags'] },
+  { id: 'teamwork', name: 'Teamwork', category: 'work_management', description: 'Projects, task lists, tasks, milestones, time, companies, and client work.', auth: pat({ docsUrl: 'https://apidocs.teamwork.com/' }), sync: ['projects', 'tasks', 'milestones', 'time', 'companies'] },
+  { id: 'zoho_projects', name: 'Zoho Projects', category: 'work_management', description: 'Projects, milestones, task lists, tasks, issues, timesheets, and documents.', auth: pat({ docsUrl: 'https://www.zoho.com/projects/help/rest-api/' }), sync: ['projects', 'milestones', 'tasks', 'issues', 'time'] },
+  { id: 'shortcut', name: 'Shortcut', category: 'software_delivery', description: 'Stories, epics, iterations, objectives, workflows, comments, and roadmaps.', auth: pat({ docsUrl: 'https://developer.shortcut.com/api/rest/v3' }), sync: ['stories', 'epics', 'iterations', 'objectives'] },
+  { id: 'pivotal_tracker', name: 'Pivotal Tracker', category: 'software_delivery', description: 'Projects, stories, epics, iterations, labels, comments, and velocity.', auth: pat({ docsUrl: 'https://www.pivotaltracker.com/help/api/rest/v5' }), sync: ['projects', 'stories', 'epics', 'iterations'] },
+  { id: 'height', name: 'Height', category: 'work_management', description: 'Tasks, lists, projects, chat-native collaboration, status, and automation rules.', auth: pat({ docsUrl: 'https://height.app/api' }), sync: ['tasks', 'lists', 'projects', 'comments'] },
+  { id: 'todoist', name: 'Todoist', category: 'work_management', description: 'Projects, tasks, sections, labels, comments, due dates, and personal priority flow.', auth: pat({ docsUrl: 'https://developer.todoist.com/rest/v2/' }), sync: ['projects', 'tasks', 'sections', 'labels'] },
+  { id: 'meistertask', name: 'MeisterTask', category: 'work_management', description: 'Projects, sections, tasks, checklists, comments, attachments, and automations.', auth: pat({ docsUrl: 'https://developers.meistertask.com/' }), sync: ['projects', 'tasks', 'sections', 'comments'] },
+  { id: 'proofhub', name: 'ProofHub', category: 'work_management', description: 'Projects, tasks, discussions, notes, files, timesheets, and approvals.', auth: apiKey({ docsUrl: 'https://github.com/proofhub/api' }), sync: ['projects', 'tasks', 'discussions', 'time'] },
+  { id: 'freedcamp', name: 'Freedcamp', category: 'work_management', description: 'Projects, tasks, discussions, milestones, files, time, and issue tracking.', auth: apiKey({ docsUrl: 'https://freedcamp.com/Freedcamp_LxR/Freedcamp_Devel_yOf/wiki/wiki_public/view/6Yxab' }), sync: ['projects', 'tasks', 'milestones', 'files'] },
+  { id: 'workfront', name: 'Adobe Workfront', category: 'work_management', description: 'Programs, portfolios, projects, tasks, approvals, proofs, resources, and enterprise PMO reporting.', auth: apiKey({ docsUrl: 'https://developer.adobe.com/workfront/api-explorer/' }), sync: ['programs', 'projects', 'tasks', 'approvals', 'resources'] },
+  { id: 'lucid', name: 'Lucidchart / Lucidspark', category: 'whiteboard_design', description: 'Diagrams, boards, org charts, process maps, comments, and workshop decisions.', auth: manual({ docsUrl: 'https://lucid.readme.io/' }), sync: ['documents', 'boards', 'comments'] },
+  { id: 'mural', name: 'Mural', category: 'whiteboard_design', description: 'Murals, rooms, facilitation artifacts, comments, templates, and workshop outputs.', auth: manual({ docsUrl: 'https://developers.mural.co/' }), sync: ['murals', 'rooms', 'comments'] },
+  { id: 'canva', name: 'Canva', category: 'whiteboard_design', description: 'Brand assets, designs, approvals, folders, and creative deliverables.', auth: manual({ docsUrl: 'https://www.canva.dev/docs/connect/' }), sync: ['designs', 'folders', 'assets'] },
+  { id: 'adobe_creative_cloud', name: 'Adobe Creative Cloud', category: 'files_assets', description: 'Creative assets, libraries, links, comments, and reviewable deliverables.', auth: manual({ docsUrl: 'https://developer.adobe.com/' }), sync: ['assets', 'libraries', 'comments'] },
+  { id: 'sharepoint', name: 'SharePoint', category: 'files_assets', description: 'Sites, libraries, files, pages, permissions, and document-heavy project work.', auth: manual({ docsUrl: 'https://learn.microsoft.com/en-us/graph/api/resources/sharepoint' }), sync: ['sites', 'libraries', 'files', 'pages'] },
+  { id: 'onedrive', name: 'OneDrive', category: 'files_assets', description: 'Files, folders, shared links, versions, and personal project deliverables.', auth: manual({ docsUrl: 'https://learn.microsoft.com/en-us/onedrive/developer/' }), sync: ['files', 'folders', 'shared_links'] },
+  { id: 'google_drive', name: 'Google Drive', category: 'files_assets', description: 'Files, folders, shared drives, permissions, and project deliverable inventory.', auth: manual({ docsUrl: 'https://developers.google.com/drive/api/guides/about-sdk' }), sync: ['files', 'folders', 'shared_drives'] },
+  { id: 'teams', name: 'Microsoft Teams', category: 'communication', description: 'Teams, channels, chats, meetings, files, tabs, and project notifications.', auth: manual({ docsUrl: 'https://learn.microsoft.com/en-us/graph/teams-concept-overview' }), sync: ['teams', 'channels', 'messages', 'meetings'] },
+  { id: 'discord', name: 'Discord', category: 'communication', description: 'Servers, channels, messages, members, and community/project operations.', auth: pat({ docsUrl: 'https://discord.com/developers/docs/intro' }), sync: ['guilds', 'channels', 'messages', 'members'] },
+  { id: 'mattermost', name: 'Mattermost', category: 'communication', description: 'Teams, channels, messages, users, files, and self-hosted project communication.', auth: pat({ docsUrl: 'https://api.mattermost.com/' }), sync: ['teams', 'channels', 'messages', 'users'] },
+  { id: 'webex', name: 'Webex', category: 'communication', description: 'Meetings, messages, spaces, people, recordings, and stakeholder sessions.', auth: pat({ docsUrl: 'https://developer.webex.com/docs/api/getting-started' }), sync: ['meetings', 'messages', 'spaces', 'people'] },
+  { id: 'calendly', name: 'Calendly', category: 'calendar_email', description: 'Event types, scheduled events, invitees, routing forms, and stakeholder booking signals.', auth: pat({ docsUrl: 'https://developer.calendly.com/' }), sync: ['events', 'event_types', 'invitees'] },
+  { id: 'gmail', name: 'Gmail', category: 'calendar_email', description: 'Threads, messages, labels, project follow-ups, client requests, and stakeholder context.', auth: manual({ docsUrl: 'https://developers.google.com/gmail/api/guides' }), sync: ['threads', 'messages', 'labels'] },
+  { id: 'outlook', name: 'Outlook', category: 'calendar_email', description: 'Mail, calendar, contacts, meeting cadence, and stakeholder communication.', auth: manual({ docsUrl: 'https://learn.microsoft.com/en-us/graph/outlook-mail-concept-overview' }), sync: ['mail', 'calendar', 'contacts'] },
+  { id: 'harvest', name: 'Harvest', category: 'time_finance', description: 'Time entries, projects, clients, invoices, budgets, and team utilization.', auth: pat({ docsUrl: 'https://help.getharvest.com/api-v2/' }), sync: ['time_entries', 'projects', 'clients', 'invoices'] },
+  { id: 'toggl_track', name: 'Toggl Track', category: 'time_finance', description: 'Time entries, projects, clients, tags, billable tracking, and utilization.', auth: apiKey({ docsUrl: 'https://developers.track.toggl.com/' }), sync: ['time_entries', 'projects', 'clients', 'tags'] },
+  { id: 'clockify', name: 'Clockify', category: 'time_finance', description: 'Workspaces, projects, tasks, time entries, users, and utilization reports.', auth: apiKey({ docsUrl: 'https://docs.clockify.me/' }), sync: ['workspaces', 'projects', 'tasks', 'time_entries'] },
+  { id: 'everhour', name: 'Everhour', category: 'time_finance', description: 'Time, estimates, budgets, expenses, invoices, and project profitability.', auth: apiKey({ docsUrl: 'https://everhour.docs.apiary.io/' }), sync: ['time', 'budgets', 'projects', 'expenses'] },
+  { id: 'float', name: 'Float', category: 'time_finance', description: 'Resource schedules, people, projects, allocations, capacity, and time off.', auth: apiKey({ docsUrl: 'https://developer.float.com/' }), sync: ['people', 'projects', 'allocations', 'time_off'] },
+  { id: 'resource_guru', name: 'Resource Guru', category: 'time_finance', description: 'Resources, bookings, schedules, availability, and utilization.', auth: apiKey({ docsUrl: 'https://developers.resourceguruapp.com/' }), sync: ['resources', 'bookings', 'availability'] },
+  { id: 'quickbooks', name: 'QuickBooks', category: 'time_finance', description: 'Customers, invoices, estimates, projects, expenses, and project financial context.', auth: manual({ docsUrl: 'https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization' }), sync: ['customers', 'invoices', 'estimates', 'expenses'] },
+  { id: 'xero', name: 'Xero', category: 'time_finance', description: 'Contacts, invoices, projects, quotes, expenses, and financial delivery status.', auth: manual({ docsUrl: 'https://developer.xero.com/documentation/guides/oauth2/overview/' }), sync: ['contacts', 'invoices', 'projects', 'quotes'] },
+  { id: 'zendesk', name: 'Zendesk', category: 'crm_support', description: 'Tickets, organizations, users, SLAs, macros, and support-driven project inputs.', auth: apiKey({ docsUrl: 'https://developer.zendesk.com/api-reference/ticketing/introduction/', fields: [{ name: 'subdomain', label: 'Zendesk subdomain', required: true }, { name: 'email', label: 'Agent email', required: true }, { name: 'apiToken', label: 'API token', secret: true, required: true }] }), sync: ['tickets', 'organizations', 'users', 'slas'] },
+  { id: 'freshdesk', name: 'Freshdesk', category: 'crm_support', description: 'Tickets, contacts, companies, SLAs, agents, and support escalations.', auth: apiKey({ docsUrl: 'https://developers.freshdesk.com/api/' }), sync: ['tickets', 'contacts', 'companies', 'agents'] },
+  { id: 'servicenow', name: 'ServiceNow', category: 'crm_support', description: 'Incidents, changes, requests, tasks, approvals, CMDB context, and enterprise workflows.', auth: manual({ docsUrl: 'https://developer.servicenow.com/dev.do' }), sync: ['incidents', 'changes', 'requests', 'tasks'] },
+  { id: 'pipedrive', name: 'Pipedrive', category: 'crm_support', description: 'Deals, activities, organizations, people, notes, and client delivery commitments.', auth: apiKey({ docsUrl: 'https://developers.pipedrive.com/docs/api/v1' }), sync: ['deals', 'activities', 'organizations', 'people'] },
+  { id: 'typeform', name: 'Typeform', category: 'automation_data', description: 'Forms, responses, surveys, intake requests, research signals, and stakeholder feedback.', auth: pat({ docsUrl: 'https://www.typeform.com/developers/' }), sync: ['forms', 'responses', 'webhooks'] },
+  { id: 'google_forms', name: 'Google Forms', category: 'automation_data', description: 'Forms, responses, intake, feedback, and lightweight project request capture.', auth: manual({ docsUrl: 'https://developers.google.com/forms/api' }), sync: ['forms', 'responses'] },
+  { id: 'survey_monkey', name: 'SurveyMonkey', category: 'automation_data', description: 'Surveys, collectors, responses, customer feedback, and research programs.', auth: pat({ docsUrl: 'https://developer.surveymonkey.com/api/v3/' }), sync: ['surveys', 'collectors', 'responses'] },
+  { id: 'zapier', name: 'Zapier', category: 'automation_data', description: 'Zaps, webhooks, cross-app automations, handoffs, and event triggers.', auth: manual({ docsUrl: 'https://platform.zapier.com/docs' }), sync: ['webhooks', 'automations'] },
+  { id: 'make', name: 'Make',
+    category: 'automation_data',
+    description: 'Scenarios, webhooks, integrations, automations, and operational workflows.',
+    auth: apiKey({ docsUrl: 'https://www.make.com/en/api-documentation' }),
+    sync: ['scenarios', 'webhooks', 'executions']
+  },
+  { id: 'n8n', name: 'n8n', category: 'automation_data', description: 'Workflows, credentials, executions, triggers, and self-hosted automation.', auth: apiKey({ docsUrl: 'https://docs.n8n.io/api/' }), sync: ['workflows', 'executions', 'credentials'] },
+  { id: 'power_bi', name: 'Power BI', category: 'automation_data', description: 'Workspaces, datasets, reports, dashboards, and project performance reporting.', auth: manual({ docsUrl: 'https://learn.microsoft.com/en-us/rest/api/power-bi/' }), sync: ['workspaces', 'datasets', 'reports', 'dashboards'] },
+  { id: 'tableau', name: 'Tableau', category: 'automation_data', description: 'Sites, projects, workbooks, views, dashboards, and executive reporting.', auth: pat({ docsUrl: 'https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_auth.htm' }), sync: ['sites', 'projects', 'workbooks', 'views'] },
+  { id: 'looker_studio', name: 'Looker Studio', category: 'automation_data', description: 'Reports, dashboards, data sources, and stakeholder reporting artifacts.', auth: manual({ docsUrl: 'https://developers.google.com/looker-studio' }), sync: ['reports', 'data_sources'] },
+  { id: 'sentry', name: 'Sentry', category: 'incident_quality', description: 'Issues, releases, alerts, projects, ownership, and product quality risk.', auth: pat({ docsUrl: 'https://docs.sentry.io/api/auth/' }), sync: ['issues', 'projects', 'releases', 'alerts'] },
+  { id: 'datadog', name: 'Datadog', category: 'incident_quality', description: 'Monitors, incidents, dashboards, services, SLOs, and delivery reliability signals.', auth: apiKey({ docsUrl: 'https://docs.datadoghq.com/api/latest/authentication/' }), sync: ['monitors', 'incidents', 'dashboards', 'slos'] },
+  { id: 'new_relic', name: 'New Relic', category: 'incident_quality', description: 'Alerts, incidents, services, deployments, dashboards, and reliability status.', auth: apiKey({ docsUrl: 'https://docs.newrelic.com/docs/apis/intro-apis/new-relic-api-keys/' }), sync: ['alerts', 'incidents', 'services', 'deployments'] },
+  { id: 'pagerduty', name: 'PagerDuty', category: 'incident_quality', description: 'Incidents, services, schedules, escalation policies, on-call, and operational risk.', auth: pat({ docsUrl: 'https://developer.pagerduty.com/docs/rest-api-v2/authentication/' }), sync: ['incidents', 'services', 'schedules', 'escalations'] },
+  { id: 'opsgenie', name: 'Opsgenie', category: 'incident_quality', description: 'Alerts, incidents, schedules, teams, escalation policies, and service ownership.', auth: apiKey({ docsUrl: 'https://docs.opsgenie.com/docs/api-overview' }), sync: ['alerts', 'incidents', 'schedules', 'teams'] },
+  { id: 'testRail', name: 'TestRail', category: 'incident_quality', description: 'Test cases, runs, plans, milestones, defects, and QA delivery status.', auth: apiKey({ docsUrl: 'https://support.testrail.com/hc/en-us/articles/7077039051284-Accessing-the-TestRail-API' }), sync: ['test_cases', 'runs', 'plans', 'milestones'] },
+  { id: 'browserstack', name: 'BrowserStack', category: 'incident_quality', description: 'Builds, sessions, test observability, browser coverage, and QA evidence.', auth: apiKey({ docsUrl: 'https://www.browserstack.com/docs/api' }), sync: ['builds', 'sessions', 'projects'] },
+  { id: 'statuspage', name: 'Atlassian Statuspage', category: 'incident_quality', description: 'Components, incidents, subscribers, maintenance windows, and customer-facing status.', auth: apiKey({ docsUrl: 'https://developer.statuspage.io/' }), sync: ['components', 'incidents', 'maintenance'] },
+  { id: 'webhook_generic', name: 'Generic Webhook', category: 'automation_data', description: 'Catch events from any tool with outbound webhooks and map them into Sneup signals.', auth: manual({ fields: [{ name: 'sourceName', label: 'Source name', required: true }, { name: 'signingSecret', label: 'Signing secret', secret: true, required: false }] }), sync: ['events'] },
+  { id: 'rest_api_generic', name: 'Generic REST API', category: 'automation_data', description: 'Connect any project tool with a REST API, bearer token, and JSON endpoints.', auth: apiKey({ fields: [{ name: 'baseUrl', label: 'Base URL', required: true }, { name: 'apiKey', label: 'Bearer token or API key', secret: true, required: true }] }), sync: ['custom_resources'] }
+];
+
+const CONNECTORS_BY_ID = CONNECTORS.reduce((index, connector) => {
+  index[connector.id] = connector;
+  return index;
+}, {});
+
+const getConnectors = () => CONNECTORS;
+
+const getConnector = (id) => CONNECTORS_BY_ID[id];
+
+const getCategories = () => Object.entries(CATEGORIES).map(([id, name]) => ({
+  id,
+  name,
+  count: CONNECTORS.filter(connector => connector.category === id).length
+}));
+
+module.exports = {
+  CATEGORIES,
+  getCategories,
+  getConnector,
+  getConnectors
+};

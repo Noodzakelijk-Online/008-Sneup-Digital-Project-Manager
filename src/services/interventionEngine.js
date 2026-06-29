@@ -4,6 +4,11 @@ const Card = require('../models/Card');
 const Member = require('../models/Member');
 const Board = require('../models/Board');
 const trelloClient = require('./trelloClient');
+const operationsLedgerService = require('./operationsLedgerService');
+const interventionPolicy = require('./interventionPolicy');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
+
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 class InterventionEngine {
   constructor() {
@@ -47,17 +52,18 @@ class InterventionEngine {
   }
 
   // Main intervention detection and execution
-  async processInterventions(boardId) {
+  async processInterventions(boardId, options = {}) {
     try {
       logger.info(`Processing interventions for board ${boardId}`);
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
 
-      const board = await Board.findById(boardId).populate('members');
+      const board = await Board.findOne({ _id: boardId, workspaceId }).populate('members');
       if (!board) {
         logger.error(`Board ${boardId} not found`);
         return;
       }
 
-      const cards = await Card.find({ boardId, closed: false });
+      const cards = await Card.find({ boardId, workspaceId, closed: false });
       const interventions = [];
 
       // Check each card for intervention triggers
@@ -91,6 +97,7 @@ class InterventionEngine {
     if (await this.isCardStuck(card)) {
       interventions.push(await this.createIntervention({
         boardId: board._id,
+        workspaceId: board.workspaceId,
         cardId: card._id,
         memberId: card.members[0],
         type: 'comment',
@@ -105,6 +112,7 @@ class InterventionEngine {
     if (await this.hasNoRecentActivity(card)) {
       interventions.push(await this.createIntervention({
         boardId: board._id,
+        workspaceId: board.workspaceId,
         cardId: card._id,
         memberId: card.members[0],
         type: 'comment',
@@ -119,6 +127,7 @@ class InterventionEngine {
     if (card.isOverdue()) {
       interventions.push(await this.createIntervention({
         boardId: board._id,
+        workspaceId: board.workspaceId,
         cardId: card._id,
         memberId: card.members[0],
         type: 'comment',
@@ -134,6 +143,7 @@ class InterventionEngine {
     if (blockingCount >= 2) {
       interventions.push(await this.createIntervention({
         boardId: board._id,
+        workspaceId: board.workspaceId,
         cardId: card._id,
         memberId: card.members[0],
         type: 'comment',
@@ -150,17 +160,19 @@ class InterventionEngine {
   // Check team-level interventions
   async checkTeamInterventions(board) {
     const interventions = [];
-    const members = await Member.find({ boardId: board._id });
+    const members = await Member.find({ boards: board._id, workspaceId: board.workspaceId });
 
     // Calculate team average workload
-    const totalCards = members.reduce((sum, m) => sum + (m.assignedCards || 0), 0);
+    const totalCards = members.reduce((sum, m) => sum + ((m.assignedCards || []).length), 0);
     const teamAverage = totalCards / members.length;
 
     for (const member of members) {
       // Check if member is overloaded
-      if (member.assignedCards > teamAverage * 1.5) {
+      const assignedCardCount = (member.assignedCards || []).length;
+      if (assignedCardCount > teamAverage * 1.5) {
         interventions.push(await this.createIntervention({
           boardId: board._id,
+          workspaceId: board.workspaceId,
           cardId: null,
           memberId: member._id,
           type: 'reassign',
@@ -168,7 +180,7 @@ class InterventionEngine {
           severity: 'medium',
           action: 'Rebalance workload',
           message: this.generateOverloadedMessage(member, teamAverage),
-          metadata: { teamAverage, memberCards: member.assignedCards }
+          metadata: { teamAverage, memberCards: assignedCardCount }
         }));
       }
     }
@@ -177,9 +189,27 @@ class InterventionEngine {
   }
 
   // Execute an intervention
-  async executeIntervention(intervention) {
+  async executeIntervention(intervention, options = {}) {
     try {
       const saved = await intervention.save();
+      const policy = interventionPolicy.classifyIntervention(saved);
+
+      if (policy.requiresApproval) {
+        if (options.approvedRecommendationId) {
+          return operationsLedgerService.executeApprovedRecommendation(options.approvedRecommendationId, options);
+        }
+
+        const recommendation = await operationsLedgerService.createRecommendationFromIntervention(saved, policy);
+        logger.info(`Queued intervention ${saved._id} for approval as recommendation ${recommendation._id}`);
+        return {
+          executed: false,
+          requiresApproval: true,
+          recommendation
+        };
+      }
+
+      saved.status = 'executing';
+      await saved.save();
 
       switch (intervention.type) {
         case 'comment':
@@ -203,16 +233,26 @@ class InterventionEngine {
 
       await saved.markExecuted();
       logger.info(`Executed intervention ${saved._id}: ${saved.action}`);
+      return {
+        executed: true,
+        requiresApproval: false,
+        intervention: saved
+      };
     } catch (error) {
       logger.error(`Failed to execute intervention ${intervention._id}:`, error);
       await intervention.markFailed(error);
+      return {
+        executed: false,
+        error: error.message,
+        intervention
+      };
     }
   }
 
   // Execute comment intervention
   async executeComment(intervention) {
-    const card = await Card.findById(intervention.cardId);
-    const member = await Member.findById(intervention.memberId);
+    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
+    const member = await Member.findOne({ _id: intervention.memberId, workspaceId: intervention.workspaceId });
 
     if (!card || !member) {
       throw new Error('Card or member not found');
@@ -227,8 +267,8 @@ class InterventionEngine {
 
   // Execute reassignment intervention
   async executeReassignment(intervention) {
-    const card = await Card.findById(intervention.cardId);
-    const member = await Member.findById(intervention.memberId);
+    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
+    const member = await Member.findOne({ _id: intervention.memberId, workspaceId: intervention.workspaceId });
 
     if (!card || !member) {
       throw new Error('Card or member not found');
@@ -260,9 +300,9 @@ class InterventionEngine {
 
   // Execute escalation intervention
   async executeEscalation(intervention) {
-    const card = await Card.findById(intervention.cardId);
-    const member = await Member.findById(intervention.memberId);
-    const board = await Board.findById(intervention.boardId);
+    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
+    const member = await Member.findOne({ _id: intervention.memberId, workspaceId: intervention.workspaceId });
+    const board = await Board.findOne({ _id: intervention.boardId, workspaceId: intervention.workspaceId });
 
     if (!card || !board) {
       throw new Error('Card or board not found');
@@ -270,7 +310,8 @@ class InterventionEngine {
 
     // Find team lead (member with role 'admin' or 'lead')
     const teamLead = await Member.findOne({
-      boardId: board._id,
+      boards: board._id,
+      workspaceId: intervention.workspaceId,
       role: { $in: ['admin', 'lead'] }
     });
 
@@ -294,7 +335,7 @@ class InterventionEngine {
 
   // Execute move card intervention
   async executeMoveCard(intervention) {
-    const card = await Card.findById(intervention.cardId);
+    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
     
     if (!card) {
       throw new Error('Card not found');
@@ -308,7 +349,7 @@ class InterventionEngine {
 
   // Execute add label intervention
   async executeAddLabel(intervention) {
-    const card = await Card.findById(intervention.cardId);
+    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
     
     if (!card) {
       throw new Error('Card not found');
@@ -348,9 +389,10 @@ class InterventionEngine {
     // This is a simplified version - in production, you'd track dependencies explicitly
     const blockingCards = await Card.find({
       boardId: card.boardId,
+      workspaceId: card.workspaceId,
       closed: false,
       'labels.name': 'BLOCKED',
-      description: new RegExp(card.name, 'i')
+      description: new RegExp(escapeRegExp(card.name).slice(0, 200), 'i')
     });
 
     return blockingCards.length;
@@ -359,7 +401,8 @@ class InterventionEngine {
   // Helper: Find best member to reassign card to
   async findBestReassignmentTarget(card, currentMember) {
     const members = await Member.find({
-      boardId: card.boardId,
+      boards: card.boardId,
+      workspaceId: card.workspaceId,
       _id: { $ne: currentMember._id }
     }).sort({ assignedCards: 1 });
 
@@ -383,7 +426,10 @@ class InterventionEngine {
 
   // Helper: Create intervention
   async createIntervention(data) {
-    return new Intervention(data);
+    return new Intervention({
+      ...data,
+      workspaceId: normalizeWorkspaceObjectId(data.workspaceId || getDefaultWorkspaceObjectId())
+    });
   }
 
   // Message generators
@@ -419,6 +465,7 @@ class InterventionEngine {
         // Create follow-up intervention
         const followUp = await this.createIntervention({
           boardId: intervention.boardId,
+          workspaceId: intervention.workspaceId,
           cardId: intervention.cardId,
           memberId: intervention.memberId,
           type: 'follow_up',
@@ -449,6 +496,7 @@ class InterventionEngine {
         // Create escalation intervention
         const escalation = await this.createIntervention({
           boardId: intervention.boardId,
+          workspaceId: intervention.workspaceId,
           cardId: intervention.cardId,
           memberId: intervention.memberId,
           type: 'escalate',

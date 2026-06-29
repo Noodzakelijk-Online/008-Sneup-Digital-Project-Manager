@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Environment variables
 .env
@@ -50,6 +49,9 @@ jspm_packages/
 
 # Optional npm cache directory
 .npm
+.npm-cache/
+.electron-cache/
+.electron-builder-cache/
 
 # Optional eslint cache
 .eslintcache
@@ -80,6 +82,9 @@ out
 # Nuxt.js build / generate output
 .nuxt
 dist
+release/
+/artifacts/
+.codex-git-index*
 
 # Gatsby files
 .cache/
