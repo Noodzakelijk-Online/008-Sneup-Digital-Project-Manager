@@ -197,6 +197,38 @@ const enhancements = [
       'Each report includes risks, decisions needed, owners, dates, and source evidence.',
       'Reports can be generated from live data or demo data.'
     ]
+  },
+  {
+    id: 'ENH-013',
+    priority: 'P2',
+    area: 'connectors',
+    title: 'Finalize the PM connector catalog baseline',
+    evidence: 'Connector registry coverage now includes Trello, Jira Software/Service Management, Asana, monday.com, ClickUp, Slack, GitHub, Google, Microsoft, and a broad set of planning, comms, docs, files, finance, incident, and stakeholder tools.',
+    impact: 'Gives PM teams a practical starting point for mixed-tool adoption and reduces onboarding friction.',
+    effort: 'M',
+    status: 'done',
+    nextStep: 'Add provider-specific adapter implementations and production-ready sync workers for each newly added catalog item.',
+    acceptanceCriteria: [
+      'Connector catalog metadata remains valid and validated across OAuth, API-key, manual, and webhook auth types.',
+      'Provider sync jobs can be enabled in a controlled rollout without schema churn.',
+      'Connector health reports include onboarding state and last sync result.'
+    ]
+  },
+  {
+    id: 'ENH-014',
+    priority: 'P2',
+    area: 'resource',
+    title: 'Bound in-memory API rate limiting state',
+    evidence: 'The API rate bucket map had a fixed cleanup cutoff but no bound on total bucket cardinality under sustained high-cardinality traffic.',
+    impact: 'Prevents avoidable memory pressure while preserving request rate enforcement semantics.',
+    effort: 'S',
+    status: 'done',
+    nextStep: 'Expose metrics for rate-bucket counts and tune `SNEUP_RATE_LIMIT_MAX_BUCKETS`/`SNEUP_RATE_LIMIT_PRUNE_SLACK` per deployment profile.',
+    acceptanceCriteria: [
+      'Rate limiter memory growth is capped even under attack-like path diversity.',
+      'Rate limiting behavior stays stable while stale bucket cleanup and LRU-style pruning run.',
+      'Operational docs explain tuning values and their safety envelope.'
+    ]
   }
 ];
 

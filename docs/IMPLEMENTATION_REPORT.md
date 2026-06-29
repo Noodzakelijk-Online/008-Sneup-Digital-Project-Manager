@@ -4,7 +4,7 @@
 
 Sneup now includes an account connector marketplace for project-management tools used by human project managers from 2015 through 2026.
 
-- Total connectors: 87
+- Total connectors: 94
 - Categories: 11
 - Coverage includes work management, software delivery, communication, calendar/email, docs/knowledge, files/assets, whiteboards/design, time/finance/resourcing, CRM/support/stakeholders, automation/data, and incident/quality/monitoring.
 - Major OAuth-ready providers include Jira, Asana, monday.com, ClickUp, Linear, Notion, Microsoft 365, Google Workspace, Slack, GitHub, GitLab, Zoom, Figma, Miro, Dropbox, Box, HubSpot, Salesforce, and Intercom.
@@ -28,6 +28,8 @@ Remaining hardening:
 - Move inline dashboard CSS/JS into external files and remove `unsafe-inline` from CSP.
 - Add a publisher certificate for Windows installer signing.
 - Add per-user/team authorization if Sneup becomes multi-user or internet-facing.
+
+- Harden API rate limiting bucket lifecycle so in-memory state is bounded under high-cardinality request flows.
 
 ## Resource Usage Work
 

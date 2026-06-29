@@ -89,6 +89,105 @@ const CONNECTORS = [
     sync: ['projects', 'issues', 'sprints', 'versions', 'comments', 'users']
   },
   {
+    id: 'jira_service_management',
+    name: 'Jira Service Management',
+    category: 'software_delivery',
+    description: 'Service requests, incidents, change requests, queues, SLAs, and customer outcomes through Atlassian service products.',
+    auth: oauth2({
+      envPrefix: 'JIRA_SERVICE',
+      authorizationUrl: 'https://auth.atlassian.com/authorize',
+      tokenUrl: 'https://auth.atlassian.com/oauth/token',
+      audience: 'api.atlassian.com',
+      scopes: ['read:jira-work', 'write:jira-work', 'read:servicedesk-data', 'offline_access'],
+      docsUrl: 'https://developer.atlassian.com/cloud/jira/service-desk/rest/api-group-servicedesk/'
+    }),
+    sync: ['projects', 'queues', 'requests', 'incidents', 'customers', 'users']
+  },
+  {
+    id: 'rally',
+    name: 'Rally',
+    category: 'software_delivery',
+    description: 'Backlog items, features, defects, tasks, sprints, release plans, and dependencies for agile portfolios.',
+    auth: apiKey({
+      docsUrl: 'https://help.rallydev.com/rally-api',
+      fields: [
+        { name: 'baseUrl', label: 'Rally base URL', required: true },
+        { name: 'apiKey', label: 'API key', secret: true, required: true }
+      ]
+    }),
+    sync: ['projects', 'workspaces', 'iterations', 'user_stories', 'defects', 'users']
+  },
+  {
+    id: 'redmine',
+    name: 'Redmine',
+    category: 'work_management',
+    description: 'Projects, issues, trackers, versions, forums, wiki pages, and activity streams.',
+    auth: apiKey({
+      docsUrl: 'https://www.redmine.org/projects/redmine/wiki/Rest_api',
+      fields: [
+        { name: 'baseUrl', label: 'Redmine base URL', required: true },
+        { name: 'apiKey', label: 'API key', secret: true, required: true }
+      ]
+    }),
+    sync: ['projects', 'issues', 'versions', 'time_entries', 'wiki', 'users']
+  },
+  {
+    id: 'backlog',
+    name: 'Backlog',
+    category: 'work_management',
+    description: 'Epics, stories, bugs, sprints, releases, users, and burndown signals from Nulab Backlog.',
+    auth: apiKey({
+      docsUrl: 'https://developer.nulab.com/docs/backlog/',
+      fields: [
+        { name: 'spaceId', label: 'Nulab space ID', required: true },
+        { name: 'apiKey', label: 'API key', secret: true, required: true }
+      ]
+    }),
+    sync: ['projects', 'issues', 'milestones', 'wiki', 'users']
+  },
+  {
+    id: 'taiga',
+    name: 'Taiga',
+    category: 'work_management',
+    description: 'Projects, epics, user stories, milestones, sprints, tasks, and workflow policies.',
+    auth: apiKey({
+      docsUrl: 'https://docs.taiga.io/api/',
+      fields: [
+        { name: 'baseUrl', label: 'Taiga base URL', required: true },
+        { name: 'token', label: 'Access token', secret: true, required: true }
+      ]
+    }),
+    sync: ['projects', 'epics', 'user_stories', 'tasks', 'sprints', 'users']
+  },
+  {
+    id: 'youtrack',
+    name: 'YouTrack',
+    category: 'software_delivery',
+    description: 'Projects, issues, agile boards, sprints, users, comments, and release planning data.',
+    auth: apiKey({
+      docsUrl: 'https://www.jetbrains.com/help/youtrack/server/api.html',
+      fields: [
+        { name: 'baseUrl', label: 'YouTrack base URL', required: true },
+        { name: 'token', label: 'Permanent token', secret: true, required: true }
+      ]
+    }),
+    sync: ['projects', 'issues', 'users', 'agiles', 'boards', 'comments']
+  },
+  {
+    id: 'podio',
+    name: 'Podio',
+    category: 'work_management',
+    description: 'Workspaces, apps, items, tasks, and project workflows from Podio team operations.',
+    auth: apiKey({
+      docsUrl: 'https://developers.podio.com/api/',
+      fields: [
+        { name: 'baseUrl', label: 'Podio API URL', required: true },
+        { name: 'apiKey', label: 'Client API key', secret: true, required: true }
+      ]
+    }),
+    sync: ['workspaces', 'apps', 'items', 'tasks', 'users']
+  },
+  {
     id: 'asana',
     name: 'Asana',
     category: 'work_management',

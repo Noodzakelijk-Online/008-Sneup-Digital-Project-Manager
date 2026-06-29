@@ -4,6 +4,37 @@ const logger = require('./logger');
 const { isDatabaseConnected } = require('./database');
 
 const rateBuckets = new Map();
+const MAX_RATE_BUCKETS = Number(process.env.SNEUP_RATE_LIMIT_MAX_BUCKETS || 10000);
+const RATE_BUCKET_PRUNE_SLACK = Number(process.env.SNEUP_RATE_LIMIT_PRUNE_SLACK || 2500);
+
+const pruneRateBuckets = (now = Date.now()) => {
+  if (rateBuckets.size <= MAX_RATE_BUCKETS) {
+    return;
+  }
+
+  for (const [bucketKey, value] of rateBuckets.entries()) {
+    if (value.resetAt <= now) {
+      rateBuckets.delete(bucketKey);
+    }
+  }
+
+  if (rateBuckets.size <= MAX_RATE_BUCKETS) {
+    return;
+  }
+
+  const sorted = [...rateBuckets.entries()]
+    .map(([bucketKey, value]) => ({
+      bucketKey,
+      lastSeenAt: value.lastSeenAt || value.resetAt || 0
+    }))
+    .sort((left, right) => left.lastSeenAt - right.lastSeenAt);
+
+  const targetSize = Math.max(128, MAX_RATE_BUCKETS - RATE_BUCKET_PRUNE_SLACK);
+  const removeCount = Math.max(1, rateBuckets.size - targetSize);
+  sorted.slice(0, removeCount).forEach((entry) => {
+    rateBuckets.delete(entry.bucketKey);
+  });
+};
 
 const localAddresses = new Set([
   '127.0.0.1',
@@ -333,11 +364,13 @@ const apiRateLimit = (req, res, next) => {
   const bucket = rateBuckets.get(key);
 
   if (!bucket || bucket.resetAt <= now) {
-    rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    rateBuckets.set(key, { count: 1, resetAt: now + windowMs, lastSeenAt: now });
+    pruneRateBuckets(now);
     return next();
   }
 
   bucket.count += 1;
+  bucket.lastSeenAt = now;
   if (bucket.count > maxRequests) {
     return res.status(429).json({
       success: false,
@@ -345,12 +378,8 @@ const apiRateLimit = (req, res, next) => {
     });
   }
 
-  if (rateBuckets.size > 10000) {
-    for (const [bucketKey, value] of rateBuckets.entries()) {
-      if (value.resetAt <= now) {
-        rateBuckets.delete(bucketKey);
-      }
-    }
+  if (rateBuckets.size > MAX_RATE_BUCKETS) {
+    pruneRateBuckets(now);
   }
 
   return next();

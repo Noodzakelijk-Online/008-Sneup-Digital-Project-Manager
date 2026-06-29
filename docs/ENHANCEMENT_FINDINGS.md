@@ -6,7 +6,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 
 - P0: 3 findings that block serious production use.
 - P1: 4 findings that materially improve trust, operability, and desktop adoption.
-- P2: 4 findings that harden scale, quality, and workflow reach.
+- P2: 6 findings that harden scale, quality, and workflow reach.
 - P3: 1 reporting enhancement with fast user-visible value.
 
 ## Findings
@@ -25,6 +25,8 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 | ENH-010 | P2 | Notifications | Risks and commands need delivery into team channels. | Add notification policies and Slack, Teams, email, and webhook senders. |
 | ENH-011 | P2 | Data model | Trello-first schemas need a cross-tool work graph. | Add normalized WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent models. |
 | ENH-012 | P3 | Reporting | Stakeholder-ready exports are missing. | Add Markdown/PDF reports for standups, weekly status, risk registers, and client updates. |
+| ENH-013 | P2 | Connectors | PM connectors are onboarded but many providers still need adapter sync implementations. | Finish the production-safe connector onboarding baseline, validate metadata consistency, and ship first-wave adapters for the added catalog providers. |
+| ENH-014 | P2 | Resource | In-memory rate limiting can still grow under extreme unique traffic. | Bound rate bucket cardinality and expose operational tuning guidance and metrics. |
 
 ## Recommended Build Order
 
@@ -33,4 +35,3 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 3. ENH-002 and ENH-004, because autonomy should be reviewable and evidence-backed.
 4. ENH-007, because production sync needs operational visibility.
 5. ENH-006, ENH-008, ENH-009, ENH-010, ENH-012 as polish and workflow expansion.
-
