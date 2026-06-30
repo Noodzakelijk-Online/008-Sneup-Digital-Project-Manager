@@ -1393,11 +1393,21 @@ function renderWorkSignals() {
   const graphDecisionNotice = graphCandidates.length
     ? `<div class="notice">Graph decisions: ${escapeHtml(countByOwner(graphCandidates, 'robert'))} Robert, ${escapeHtml(countByOwner(graphCandidates, 'va'))} VA, ${escapeHtml(countByOwner(graphCandidates, 'team'))} team.</div>`
     : '';
-  els.workSignalList.innerHTML = notice + graphNotice + graphDecisionNotice + listOrEmpty(filteredSignals, renderWorkSignal);
+  const graphDecisionCards = graphCandidates.length
+    ? `<div class="list graph-decision-list">${graphCandidates.map(renderGraphDecisionCandidate).join('')}</div>`
+    : '';
+  els.workSignalList.innerHTML = notice + graphNotice + graphDecisionNotice + graphDecisionCards + listOrEmpty(filteredSignals, renderWorkSignal);
   els.workSignalContracts.innerHTML = listOrEmpty(
     connectedContracts.length > 0 ? connectedContracts : contracts.slice(0, 12),
     contract => renderWorkSignalContract(contract, connectedProviderIds.has(contract.connectorId))
   );
+
+  document.querySelectorAll('[data-graph-detail]').forEach((button) => {
+    button.addEventListener('click', () => openGraphItemDetail(button.dataset.graphDetail));
+  });
+  document.querySelectorAll('[data-graph-queue]').forEach((button) => {
+    button.addEventListener('click', () => queueGraphDecision(button.dataset.graphQueue));
+  });
 }
 
 function countByOwner(items, ownerType) {
@@ -1422,6 +1432,194 @@ function renderWorkSignal(signal) {
       <div class="meta">${escapeHtml(signal.description || 'No description captured yet.')}</div>
       ${evidence.length > 0 ? `<div class="meta">${evidence.slice(0, 3).map(item => escapeHtml(item.label || item.type || item.externalId || 'evidence')).join(' | ')}</div>` : ''}
       ${signal.url ? `<div class="meta"><a href="${escapeHtml(signal.url)}" rel="noreferrer" target="_blank">Open source</a></div>` : ''}
+    </div>
+  `;
+}
+
+function renderGraphDecisionCandidate(candidate) {
+  const dependencySummary = candidate.dependencySummary || candidate.actionPayload?.dependencySummary || {};
+  const itemId = candidate.workItemId || candidate.actionPayload?.workItemId;
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(candidate.title || candidate.recommendedAction || 'Graph decision')}</strong>
+        <span class="pill ${severityClass(candidate.riskLevel)}">${escapeHtml(candidate.ownerType || 'team')}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(candidate.sourceProvider || candidate.actionPayload?.sourceProvider || 'work graph')}</span>
+        <span>${escapeHtml(candidate.findingType || 'decision')}</span>
+        <span>${escapeHtml(candidate.riskLevel || 'medium')} risk</span>
+        <span>${Math.round(candidate.graphScore || 0)} graph score</span>
+      </div>
+      <div class="meta">${escapeHtml(candidate.description || candidate.recommendedAction || 'Review graph evidence before queuing.')}</div>
+      ${renderDependencySummary(dependencySummary)}
+      <div class="item-actions">
+        <button class="button" data-graph-detail="${escapeHtml(itemId)}" type="button" ${itemId ? '' : 'disabled'}>Inspect graph</button>
+        <button class="button primary" data-graph-queue="${escapeHtml(itemId)}" type="button" ${itemId ? '' : 'disabled'}>Queue Yes/No</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderDependencySummary(summary = {}) {
+  const total = Number(summary.dependencyCount) || 0;
+  if (!total) return '';
+  return `
+    <div class="meta">
+      <span>${total} dependencies</span>
+      <span>${Number(summary.blockingCount) || 0} blocking downstream</span>
+      <span>${Number(summary.blockedByCount) || 0} blockers</span>
+      <span>${Number(summary.relatedCount) || 0} related</span>
+    </div>
+  `;
+}
+
+async function openGraphItemDetail(itemId) {
+  if (!itemId) return;
+
+  try {
+    const data = await fetchApi(`/api/work-signals/graph/items/${itemId}`);
+    renderGraphItemDetailModal(data.detail);
+  } catch (error) {
+    openNotice('Graph detail unavailable', error.message);
+  }
+}
+
+async function queueGraphDecision(itemId) {
+  if (!itemId) return;
+
+  try {
+    const data = await fetchApi(`/api/work-signals/graph/items/${itemId}/queue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actor: 'robert' })
+    });
+    openNotice('Graph decision queued', data.message || 'Graph decision queued for approval.');
+    await Promise.all([loadWorkSignals(), loadOperationsLedger()]);
+  } catch (error) {
+    openNotice('Graph queue failed', error.message);
+  }
+}
+
+function renderGraphItemDetailModal(detail = {}) {
+  const item = detail.item || {};
+  const candidate = detail.candidate || null;
+  const recommendations = detail.recommendations || [];
+  els.modalTitle.textContent = 'Work graph detail';
+  els.modalBody.innerHTML = `
+    <div class="notice-stack">
+      <div class="item">
+        <div class="item-title">
+          <strong>${escapeHtml(item.title || 'Work item')}</strong>
+          <span class="pill ${signalClass(item)}">${escapeHtml(item.priority || item.status || 'unknown')}</span>
+        </div>
+        <div class="meta">
+          <span>${escapeHtml(item.sourceProvider || 'provider')}</span>
+          <span>${escapeHtml(item.externalId || item.canonicalKey || 'no external id')}</span>
+          <span>${escapeHtml(item.status || 'unknown')}</span>
+          <span>Due ${formatDate(item.dueAt)}</span>
+        </div>
+        <div class="meta">${escapeHtml(item.description || 'No description captured yet.')}</div>
+        ${item.url ? `<div class="meta"><a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Open source item</a></div>` : ''}
+        ${renderDependencySummary(detail.dependencySummary)}
+      </div>
+      ${renderGraphDetailSection('Decision Candidate', candidate ? [candidate] : [], renderGraphCandidateDetail)}
+      ${renderGraphDetailSection('Dependency Edges', detail.dependencies || [], renderGraphDependency)}
+      ${renderGraphDetailSection('Queued Recommendation History', recommendations, renderGraphRecommendationHistory)}
+      ${renderGraphDetailSection('Recent Graph Events', detail.events || [], renderGraphEvent)}
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="graphDetailQueue" ${item.id ? '' : 'disabled'}>Queue Yes/No</button>
+        <button class="button primary" type="button" id="graphDetailClose">Done</button>
+      </div>
+    </div>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('graphDetailClose').addEventListener('click', closeModal);
+  document.getElementById('graphDetailQueue').addEventListener('click', () => queueGraphDecision(item.id));
+}
+
+function renderGraphDetailSection(title, items, renderer) {
+  return `
+    <section>
+      <div class="panel-head evidence-head">
+        <h2>${escapeHtml(title)}</h2>
+        <span class="pill review">${items.length}</span>
+      </div>
+      <div class="list">${listOrEmpty(items.slice(0, 8), renderer)}</div>
+    </section>
+  `;
+}
+
+function renderGraphCandidateDetail(candidate) {
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(candidate.title || candidate.recommendedAction || 'Decision candidate')}</strong>
+        <span class="pill ${severityClass(candidate.riskLevel)}">${escapeHtml(candidate.ownerType || 'team')}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(candidate.findingType || 'graph_decision')}</span>
+        <span>${escapeHtml(candidate.actionType || 'manual_review')}</span>
+        <span>${Math.round(candidate.graphScore || 0)} score</span>
+        <span>${Math.round((candidate.confidence || 0) * 100)}% confidence</span>
+      </div>
+      <div class="meta">${escapeHtml(candidate.approvalReason || candidate.description || candidate.recommendedAction || 'Review required.')}</div>
+      ${renderDependencySummary(candidate.dependencySummary)}
+    </div>
+  `;
+}
+
+function renderGraphDependency(dependency) {
+  const peer = dependency.peerItem || {};
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(peer.title || dependency.externalId || 'Linked work item')}</strong>
+        <span class="pill review">${escapeHtml(dependency.dependencyType || 'unknown')}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(dependency.direction || 'related')}</span>
+        <span>${escapeHtml(dependency.relationship || 'Dependency relationship')}</span>
+        <span>${Math.round((dependency.confidence || 0) * 100)}% confidence</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(peer.sourceProvider || dependency.sourceProvider || 'provider')}</span>
+        <span>${escapeHtml(peer.externalId || 'no external id')}</span>
+        <span>${escapeHtml(peer.status || 'unknown')}</span>
+      </div>
+      ${peer.url ? `<div class="meta"><a href="${escapeHtml(peer.url)}" target="_blank" rel="noreferrer">Open linked item</a></div>` : ''}
+    </div>
+  `;
+}
+
+function renderGraphRecommendationHistory(recommendation) {
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(recommendation.title || recommendation.recommendedAction || 'Recommendation')}</strong>
+        <span class="pill ${severityClass(recommendation.riskLevel)}">${escapeHtml(recommendation.status || 'pending')}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(recommendation.actionType || 'manual_review')}</span>
+        <span>${escapeHtml(recommendation.ownerType || 'team')}</span>
+        <span>${formatDate(recommendation.createdAt)}</span>
+      </div>
+      <div class="meta">${escapeHtml(recommendation.approvalReason || recommendation.recommendedAction || 'Review queued recommendation.')}</div>
+    </div>
+  `;
+}
+
+function renderGraphEvent(event) {
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(event.summary || event.eventType || 'Graph event')}</strong>
+        <span class="pill review">${escapeHtml(event.eventType || 'synced')}</span>
+      </div>
+      <div class="meta">
+        <span>${formatDate(event.occurredAt)}</span>
+        <span>${escapeHtml(event.sourceProvider || 'provider')}</span>
+      </div>
     </div>
   `;
 }

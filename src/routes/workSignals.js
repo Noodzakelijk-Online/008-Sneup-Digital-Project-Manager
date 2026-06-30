@@ -106,6 +106,26 @@ router.get('/graph/decisions', async (req, res) => {
   }
 });
 
+router.get('/graph/items/:itemId', async (req, res) => {
+  try {
+    const detail = await workGraphService.getItemDetail(req.params.itemId, requestOptions(req));
+    if (!detail) {
+      return res.status(404).json({
+        success: false,
+        error: 'Work graph item not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      detail
+    });
+  } catch (error) {
+    logger.error('Failed to get work graph item detail:', error);
+    return sendError(res, error);
+  }
+});
+
 router.post('/graph/items/:itemId/queue', requirePermission('autopilot:queue'), async (req, res) => {
   try {
     const result = await operationsLedgerService.createRecommendationFromWorkItem(req.params.itemId, {

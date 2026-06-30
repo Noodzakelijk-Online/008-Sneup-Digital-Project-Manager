@@ -5,6 +5,7 @@ const WorkContainer = require('../models/WorkContainer');
 const WorkDependency = require('../models/WorkDependency');
 const WorkEvent = require('../models/WorkEvent');
 const WorkItem = require('../models/WorkItem');
+const Recommendation = require('../models/Recommendation');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const slugify = (value) => String(value || '')
@@ -335,6 +336,64 @@ class WorkGraphService {
       count: candidates.length,
       candidates
     };
+  }
+
+  async getItemDetail(itemId, options = {}) {
+    this.requireDatabase();
+
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const item = await WorkItem.findOne({ _id: itemId, workspaceId });
+    if (!item) return null;
+
+    const [dependencies, container, actors, events, recommendations] = await Promise.all([
+      WorkDependency.find({
+        workspaceId,
+        $or: [
+          { sourceItemId: item._id },
+          { targetItemId: item._id }
+        ]
+      }).populate('sourceItemId targetItemId').sort({ updatedAt: -1 }).limit(50),
+      WorkContainer.findOne({
+        workspaceId,
+        sourceProvider: item.sourceProvider,
+        externalId: item.containerKey
+      }),
+      WorkActor.find({
+        workspaceId,
+        sourceProvider: item.sourceProvider,
+        externalId: { $in: this.actorExternalIdsForItem(item) }
+      }).sort({ displayName: 1 }).limit(25),
+      WorkEvent.find({ workspaceId, workItemId: item._id }).sort({ occurredAt: -1 }).limit(25),
+      Recommendation.find({
+        workspaceId,
+        'actionPayload.workItemId': String(item._id)
+      }).sort({ createdAt: -1 }).limit(25)
+    ]);
+
+    const dependencySummary = this.dependencySummaryByItem([item._id], dependencies).get(String(item._id));
+
+    return {
+      item: this.sanitizeItem(item),
+      container: container ? this.sanitizeContainer(container) : null,
+      actors: actors.map(actor => this.sanitizeActor(actor)),
+      dependencySummary: this.normalizeDependencySummary(dependencySummary),
+      dependencies: dependencies.map(dependency => this.sanitizeDependencyDetail(dependency, item._id)),
+      events: events.map(event => this.sanitizeEvent(event)),
+      recommendations: recommendations.map(recommendation => this.sanitizeGraphRecommendation(recommendation)),
+      candidate: this.buildDecisionCandidate(item, dependencySummary)
+    };
+  }
+
+  async dependencySummaryForItem(item, workspaceId) {
+    if (!item?._id) return this.normalizeDependencySummary();
+    const dependencies = await WorkDependency.find({
+      workspaceId,
+      $or: [
+        { sourceItemId: item._id },
+        { targetItemId: item._id }
+      ]
+    }).limit(100);
+    return this.dependencySummaryByItem([item._id], dependencies).get(String(item._id));
   }
 
   emptySummary() {
@@ -884,6 +943,101 @@ class WorkGraphService {
       createdAt: dependency.createdAt,
       updatedAt: dependency.updatedAt
     };
+  }
+
+  sanitizeDependencyDetail(dependency, currentItemId) {
+    const sourceId = String(dependency.sourceItemId?._id || dependency.sourceItemId || '');
+    const targetId = String(dependency.targetItemId?._id || dependency.targetItemId || '');
+    const currentId = String(currentItemId);
+    const direction = sourceId === currentId ? 'outgoing' : targetId === currentId ? 'incoming' : 'related';
+    const peerItem = direction === 'outgoing' ? dependency.targetItemId : dependency.sourceItemId;
+
+    return {
+      ...this.sanitizeDependency(dependency),
+      direction,
+      peerItem: peerItem && typeof peerItem === 'object' && peerItem._id
+        ? this.sanitizeItem(peerItem)
+        : null,
+      relationship: this.dependencyRelationshipLabel(dependency.dependencyType, direction)
+    };
+  }
+
+  sanitizeContainer(container) {
+    return {
+      id: String(container._id),
+      sourceProvider: container.sourceProvider,
+      externalId: container.externalId,
+      name: container.name,
+      containerType: container.containerType,
+      url: container.url || null,
+      lastSeenAt: container.lastSeenAt,
+      createdAt: container.createdAt,
+      updatedAt: container.updatedAt
+    };
+  }
+
+  sanitizeActor(actor) {
+    return {
+      id: String(actor._id),
+      sourceProvider: actor.sourceProvider,
+      externalId: actor.externalId,
+      displayName: actor.displayName,
+      actorType: actor.actorType,
+      lastSeenAt: actor.lastSeenAt
+    };
+  }
+
+  sanitizeEvent(event) {
+    return {
+      id: String(event._id),
+      sourceProvider: event.sourceProvider,
+      externalId: event.externalId,
+      eventType: event.eventType,
+      occurredAt: event.occurredAt,
+      summary: event.summary,
+      metadata: event.metadata || {}
+    };
+  }
+
+  sanitizeGraphRecommendation(recommendation) {
+    return {
+      id: String(recommendation._id),
+      title: recommendation.title,
+      findingType: recommendation.findingType,
+      recommendedAction: recommendation.recommendedAction,
+      actionType: recommendation.actionType,
+      riskLevel: recommendation.riskLevel,
+      ownerType: recommendation.ownerType,
+      status: recommendation.status,
+      requiresApproval: recommendation.requiresApproval,
+      approvalReason: recommendation.approvalReason,
+      confidence: recommendation.confidence,
+      createdAt: recommendation.createdAt,
+      updatedAt: recommendation.updatedAt
+    };
+  }
+
+  actorExternalIdsForItem(item) {
+    return (item.ownerKeys || [])
+      .map(key => String(key || ''))
+      .map(key => key.startsWith(`${item.sourceProvider}:`) ? key.slice(item.sourceProvider.length + 1) : key)
+      .filter(Boolean);
+  }
+
+  dependencyRelationshipLabel(type, direction) {
+    if (direction === 'outgoing') {
+      if (type === 'blocks') return 'This item blocks the linked item';
+      if (['blocked_by', 'depends_on'].includes(type)) return 'This item depends on the linked item';
+      if (type === 'duplicates') return 'This item duplicates the linked item';
+      return 'This item relates to the linked item';
+    }
+    if (direction === 'incoming') {
+      if (type === 'blocks') return 'The linked item is blocked by this item';
+      if (['blocked_by', 'depends_on'].includes(type)) return 'The linked item depends on this item';
+      if (type === 'duplicates') return 'The linked item duplicates this item';
+      return 'The linked item relates to this item';
+    }
+    return 'Dependency relationship';
   }
 
   resolveWorkspaceId(workspaceId) {

@@ -342,7 +342,8 @@ class OperationsLedgerService {
       throw error;
     }
 
-    const candidate = workGraphService.buildDecisionCandidate(workItem);
+    const dependencySummary = await workGraphService.dependencySummaryForItem(workItem, workspaceId);
+    const candidate = workGraphService.buildDecisionCandidate(workItem, dependencySummary);
     if (!candidate) {
       const error = new Error('Work item does not currently need a decision queue item');
       error.statusCode = 400;

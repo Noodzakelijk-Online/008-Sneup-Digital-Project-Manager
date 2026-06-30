@@ -173,6 +173,7 @@ See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, a
 - `GET /api/work-signals` - List normalized cross-tool work signals for the current workspace
 - `GET /api/work-signals/graph` - Summarize normalized WorkItem/WorkActor/WorkContainer graph records
 - `GET /api/work-signals/graph/decisions` - List graph-derived Robert/VA/team decision candidates
+- `GET /api/work-signals/graph/items/:itemId` - Inspect a graph item with dependency edges, recent graph events, and queued recommendation history
 - `POST /api/work-signals/graph/items/:itemId/queue` - Queue a graph item as an approval-gated recommendation
 - `POST /api/work-signals/accounts/:accountId/upsert` - Upsert one normalized work signal from a linked connector account
 - `POST /api/work-signals/accounts/:accountId/sync` - Run a read-only adapter sync for one connected account

@@ -318,6 +318,15 @@ h1 {
   gap: 10px;
 }
 
+.graph-decision-list {
+  margin-bottom: 10px;
+}
+
+.graph-decision-list .item {
+  border-color: #c7d9e5;
+  background: linear-gradient(180deg, #ffffff, #f7fbfd);
+}
+
 .item {
   border: 1px solid var(--line);
   border-radius: 8px;

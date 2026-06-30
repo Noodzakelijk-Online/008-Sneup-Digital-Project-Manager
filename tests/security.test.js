@@ -968,6 +968,292 @@ describe('work signal normalization', () => {
   });
 });
 
+describe('work graph drilldowns', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.dontMock('mongoose');
+    jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/models/WorkActor');
+    jest.dontMock('../src/models/WorkContainer');
+    jest.dontMock('../src/models/WorkDependency');
+    jest.dontMock('../src/models/WorkEvent');
+    jest.dontMock('../src/models/WorkItem');
+    jest.dontMock('../src/models/Recommendation');
+    jest.dontMock('../src/models/DecisionQueueItem');
+    jest.dontMock('../src/models/AuditEvent');
+    jest.dontMock('../src/services/interventionPolicy');
+    jest.resetModules();
+  });
+
+  test('returns source item, dependency edges, and queued recommendation history for graph item detail', async () => {
+    jest.resetModules();
+
+    const item = {
+      _id: 'item-1',
+      workspaceId: 'workspace-object-id',
+      sourceProvider: 'jira_software',
+      connectorAccountId: 'account-1',
+      sourceSignalId: 'signal-1',
+      externalId: 'OPS-42',
+      canonicalKey: 'jira_software:OPS-42',
+      title: 'Client launch blocker',
+      description: 'Waiting on client approval',
+      itemType: 'issue',
+      status: 'blocked',
+      priority: 'high',
+      ownerKeys: ['jira_software:actor:nina'],
+      labelKeys: ['client'],
+      containerKey: 'jira_software:container:launch',
+      url: 'https://jira.example/browse/OPS-42',
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    };
+    const peer = {
+      _id: 'item-2',
+      workspaceId: 'workspace-object-id',
+      sourceProvider: 'jira_software',
+      connectorAccountId: 'account-1',
+      externalId: 'OPS-43',
+      canonicalKey: 'jira_software:OPS-43',
+      title: 'Launch QA',
+      itemType: 'issue',
+      status: 'waiting',
+      priority: 'normal',
+      ownerKeys: [],
+      labelKeys: [],
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    };
+    const dependency = {
+      _id: 'dep-1',
+      workspaceId: 'workspace-object-id',
+      sourceItemId: item,
+      targetItemId: peer,
+      dependencyType: 'blocks',
+      sourceProvider: 'jira_software',
+      externalId: 'jira_software:OPS-42:blocks:OPS-43',
+      confidence: 0.91,
+      evidenceRefs: [],
+      metadata: {},
+      createdAt: new Date('2026-06-30T08:00:00Z'),
+      updatedAt: new Date('2026-06-30T08:10:00Z')
+    };
+    const recommendation = {
+      _id: 'rec-1',
+      title: 'Unblock Client launch blocker',
+      findingType: 'graph_blocked_work',
+      recommendedAction: 'Ask for blocker, owner, and next action.',
+      actionType: 'escalate',
+      riskLevel: 'high',
+      ownerType: 'robert',
+      status: 'pending',
+      requiresApproval: true,
+      approvalReason: 'Provider writes are blocked.',
+      confidence: 0.84,
+      createdAt: new Date('2026-06-30T08:20:00Z'),
+      updatedAt: new Date('2026-06-30T08:20:00Z')
+    };
+
+    const chain = (items) => {
+      const query = {
+        populate: jest.fn(() => query),
+        sort: jest.fn(() => query),
+        limit: jest.fn().mockResolvedValue(items)
+      };
+      return query;
+    };
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(() => 'workspace-object-id'),
+      getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-object-id')
+    }));
+    jest.doMock('../src/models/WorkItem', () => ({ findOne: jest.fn().mockResolvedValue(item) }));
+    jest.doMock('../src/models/WorkDependency', () => ({ find: jest.fn().mockReturnValue(chain([dependency])) }));
+    jest.doMock('../src/models/WorkComment', () => ({}));
+    jest.doMock('../src/models/WorkContainer', () => ({
+      findOne: jest.fn().mockResolvedValue({
+        _id: 'container-1',
+        sourceProvider: 'jira_software',
+        externalId: 'jira_software:container:launch',
+        name: 'Launch',
+        containerType: 'project',
+        lastSeenAt: new Date('2026-06-30T08:00:00Z')
+      })
+    }));
+    jest.doMock('../src/models/WorkActor', () => ({
+      find: jest.fn().mockReturnValue(chain([{
+        _id: 'actor-1',
+        sourceProvider: 'jira_software',
+        externalId: 'actor:nina',
+        displayName: 'Nina',
+        actorType: 'person',
+        lastSeenAt: new Date('2026-06-30T08:00:00Z')
+      }]))
+    }));
+    jest.doMock('../src/models/WorkEvent', () => ({
+      find: jest.fn().mockReturnValue(chain([{
+        _id: 'event-1',
+        sourceProvider: 'jira_software',
+        externalId: 'OPS-42',
+        eventType: 'synced',
+        occurredAt: new Date('2026-06-30T08:00:00Z'),
+        summary: 'Client launch blocker synced',
+        metadata: {}
+      }]))
+    }));
+    jest.doMock('../src/models/Recommendation', () => ({ find: jest.fn().mockReturnValue(chain([recommendation])) }));
+
+    const workGraphService = require('../src/services/workGraphService');
+    const detail = await workGraphService.getItemDetail('item-1', { workspaceId: 'tenant-a' });
+
+    expect(detail.item).toMatchObject({
+      id: 'item-1',
+      title: 'Client launch blocker',
+      sourceProvider: 'jira_software'
+    });
+    expect(detail.dependencySummary).toMatchObject({
+      dependencyCount: 1,
+      blockingCount: 1,
+      blockedByCount: 0
+    });
+    expect(detail.dependencies[0]).toMatchObject({
+      direction: 'outgoing',
+      relationship: 'This item blocks the linked item',
+      peerItem: expect.objectContaining({
+        id: 'item-2',
+        title: 'Launch QA'
+      })
+    });
+    expect(detail.recommendations[0]).toMatchObject({
+      id: 'rec-1',
+      status: 'pending'
+    });
+    expect(detail.candidate).toMatchObject({
+      findingType: 'graph_blocked_work',
+      dependencySummary: expect.objectContaining({
+        blockingCount: 1
+      })
+    });
+  });
+
+  test('queues direct graph item recommendations with dependency-aware approval context', async () => {
+    jest.resetModules();
+
+    const item = {
+      _id: 'item-1',
+      workspaceId: 'workspace-object-id',
+      sourceProvider: 'jira_software',
+      connectorAccountId: 'account-1',
+      externalId: 'OPS-42',
+      canonicalKey: 'jira_software:OPS-42',
+      title: 'Client launch blocker',
+      description: 'Waiting on client approval',
+      itemType: 'issue',
+      status: 'blocked',
+      priority: 'high',
+      ownerKeys: ['jira_software:actor:nina'],
+      labelKeys: ['client'],
+      url: 'https://jira.example/browse/OPS-42',
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    };
+    const dependency = {
+      _id: 'dep-1',
+      workspaceId: 'workspace-object-id',
+      sourceItemId: item,
+      targetItemId: { _id: 'item-2' },
+      dependencyType: 'blocks',
+      sourceProvider: 'jira_software',
+      externalId: 'dep-1'
+    };
+    const createdRecommendation = {
+      _id: 'rec-1',
+      workspaceId: 'workspace-object-id',
+      ownerType: 'robert',
+      title: 'Unblock Client launch blocker',
+      recommendedAction: 'Ask for blocker, owner, and next action.',
+      actionType: 'escalate',
+      riskLevel: 'high',
+      sourceEvidence: [],
+      toObject: () => ({ _id: 'rec-1' })
+    };
+    const recommendationCreate = jest.fn().mockResolvedValue(createdRecommendation);
+
+    const chain = (items) => {
+      const query = {
+        limit: jest.fn().mockResolvedValue(items)
+      };
+      return query;
+    };
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(() => 'workspace-object-id'),
+      getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-object-id')
+    }));
+    jest.doMock('../src/models/WorkItem', () => ({ findOne: jest.fn().mockResolvedValue(item) }));
+    jest.doMock('../src/models/WorkDependency', () => ({ find: jest.fn().mockReturnValue(chain([dependency])) }));
+    jest.doMock('../src/models/Recommendation', () => ({
+      findOne: jest.fn().mockResolvedValue(null),
+      create: recommendationCreate
+    }));
+    jest.doMock('../src/models/DecisionQueueItem', () => ({
+      create: jest.fn().mockResolvedValue({ _id: 'decision-1' }),
+      findOne: jest.fn()
+    }));
+    jest.doMock('../src/models/AuditEvent', () => ({
+      create: jest.fn().mockResolvedValue({ _id: 'audit-1' })
+    }));
+    jest.doMock('../src/models/Approval', () => ({}));
+    jest.doMock('../src/models/TrelloActionAttempt', () => ({}));
+    jest.doMock('../src/models/FollowUpPlan', () => ({}));
+    jest.doMock('../src/models/WorkerResponse', () => ({}));
+    jest.doMock('../src/models/CardFinding', () => ({}));
+    jest.doMock('../src/models/Intervention', () => ({}));
+    jest.doMock('../src/models/BoardHealthSnapshot', () => ({}));
+    jest.doMock('../src/models/Card', () => ({}));
+    jest.doMock('../src/models/Member', () => ({}));
+    jest.doMock('../src/models/WorkActor', () => ({}));
+    jest.doMock('../src/models/WorkComment', () => ({}));
+    jest.doMock('../src/models/WorkContainer', () => ({}));
+    jest.doMock('../src/models/WorkEvent', () => ({}));
+    jest.doMock('../src/services/trelloClient', () => ({}));
+    jest.doMock('../src/services/interventionPolicy', () => ({
+      classifyAction: jest.fn(() => ({
+        riskLevel: 'high',
+        ownerType: 'robert',
+        approvalReason: 'Approval required'
+      }))
+    }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    await operationsLedgerService.createRecommendationFromWorkItem('item-1', {
+      workspaceId: 'tenant-a',
+      actor: 'robert'
+    });
+
+    expect(recommendationCreate).toHaveBeenCalledWith(expect.objectContaining({
+      actionPayload: expect.objectContaining({
+        workItemId: 'item-1',
+        dependencySummary: expect.objectContaining({
+          dependencyCount: 1,
+          blockingCount: 1
+        }),
+        externalProviderWriteBlocked: true,
+        executable: false,
+        draftOnly: true
+      }),
+      sourceEvidence: [
+        expect.objectContaining({
+          data: expect.objectContaining({
+            dependencySummary: expect.objectContaining({
+              blockingCount: 1
+            })
+          })
+        })
+      ]
+    }));
+  });
+});
+
 describe('mission-control evidence references', () => {
   test('attaches source evidence to focus, command, and risk items', () => {
     const autopilotService = require('../src/services/autopilotService');
