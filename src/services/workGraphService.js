@@ -313,10 +313,22 @@ class WorkGraphService {
       workspaceId,
       status: { $in: [...OPEN_STATUSES] }
     }).sort({ priority: 1, dueAt: 1, lastSeenAt: -1 }).limit(limit * 3);
+    const itemIds = items.map(item => item._id);
+    const dependencies = itemIds.length > 0
+      ? await WorkDependency.find({
+        workspaceId,
+        $or: [
+          { sourceItemId: { $in: itemIds } },
+          { targetItemId: { $in: itemIds } }
+        ]
+      }).limit(limit * 12)
+      : [];
+    const dependencySummaryByItem = this.dependencySummaryByItem(itemIds, dependencies);
 
     const candidates = items
-      .map(item => this.buildDecisionCandidate(item))
+      .map(item => this.buildDecisionCandidate(item, dependencySummaryByItem.get(String(item._id))))
       .filter(Boolean)
+      .sort((left, right) => (right.graphScore || 0) - (left.graphScore || 0))
       .slice(0, limit);
 
     return {
@@ -350,9 +362,10 @@ class WorkGraphService {
     }, {});
   }
 
-  buildDecisionCandidate(item) {
+  buildDecisionCandidate(item, dependencySummary = {}) {
     if (!item || ['done', 'archived'].includes(item.status)) return null;
 
+    const graphDependencies = this.normalizeDependencySummary(dependencySummary);
     const sensitive = this.requiresRobertReview(item);
     const overdue = item.dueAt && item.dueAt < new Date() && OPEN_STATUSES.has(item.status);
     const ownerless = !Array.isArray(item.ownerKeys) || item.ownerKeys.length === 0;
@@ -367,8 +380,8 @@ class WorkGraphService {
         actionType: high ? 'escalate' : 'follow_up',
         title: `Unblock ${item.title}`,
         recommendedAction: `Ask for blocker, owner, and next action on "${item.title}".`,
-        reason: 'The normalized work graph shows this item is blocked.'
-      });
+        reason: this.withDependencyReason('The normalized work graph shows this item is blocked.', graphDependencies)
+      }, graphDependencies);
     }
 
     if (overdue) {
@@ -379,8 +392,8 @@ class WorkGraphService {
         actionType: 'escalate',
         title: `Recover overdue ${item.title}`,
         recommendedAction: `Escalate overdue work and request a recovery date for "${item.title}".`,
-        reason: 'The normalized work graph shows this item is overdue and still open.'
-      });
+        reason: this.withDependencyReason('The normalized work graph shows this item is overdue and still open.', graphDependencies)
+      }, graphDependencies);
     }
 
     if (sensitive) {
@@ -391,8 +404,8 @@ class WorkGraphService {
         actionType: 'manual_review',
         title: `Robert review: ${item.title}`,
         recommendedAction: `Keep "${item.title}" in Robert review before any provider action.`,
-        reason: 'The title, description, or labels indicate client, legal, money, contract, compliance, or Robert-only decision risk.'
-      });
+        reason: this.withDependencyReason('The title, description, or labels indicate client, legal, money, contract, compliance, or Robert-only decision risk.', graphDependencies)
+      }, graphDependencies);
     }
 
     if (ownerless) {
@@ -403,8 +416,8 @@ class WorkGraphService {
         actionType: 'reassign',
         title: `Assign owner: ${item.title}`,
         recommendedAction: `Choose an accountable owner for "${item.title}".`,
-        reason: 'The normalized work graph has no owner for this open item.'
-      });
+        reason: this.withDependencyReason('The normalized work graph has no owner for this open item.', graphDependencies)
+      }, graphDependencies);
     }
 
     if (item.status === 'waiting') {
@@ -415,14 +428,14 @@ class WorkGraphService {
         actionType: 'follow_up',
         title: `Follow up waiting item: ${item.title}`,
         recommendedAction: `Request the waiting-party status and next action for "${item.title}".`,
-        reason: 'The normalized work graph shows this item is waiting.'
-      });
+        reason: this.withDependencyReason('The normalized work graph shows this item is waiting.', graphDependencies)
+      }, graphDependencies);
     }
 
     return null;
   }
 
-  decisionCandidate(item, spec) {
+  decisionCandidate(item, spec, dependencySummary = {}) {
     const itemId = item._id || item.id;
     const payload = {
       source: 'work_graph',
@@ -435,7 +448,8 @@ class WorkGraphService {
       executable: false,
       draftOnly: true,
       requiredChange: 'Approve the decision, then convert it into an exact provider-specific action payload before execution.',
-      commentText: this.defaultCommentText(item, spec)
+      commentText: this.defaultCommentText(item, spec),
+      dependencySummary
     };
 
     return {
@@ -448,14 +462,16 @@ class WorkGraphService {
       actionPayload: payload,
       riskLevel: spec.riskLevel,
       confidence: this.confidenceForCandidate(item, spec),
+      graphScore: this.graphScoreForCandidate(item, spec, dependencySummary),
+      dependencySummary,
       requiresApproval: true,
       approvalReason: `${spec.reason} Provider writes are blocked until a human approves an exact action payload.`,
       ownerType: spec.ownerType,
-      sourceEvidence: [this.evidenceForItem(item, spec)]
+      sourceEvidence: [this.evidenceForItem(item, spec, dependencySummary)]
     };
   }
 
-  evidenceForItem(item, spec) {
+  evidenceForItem(item, spec, dependencySummary = {}) {
     return {
       type: 'work_item',
       entityId: item._id || item.id || item.externalId,
@@ -471,9 +487,65 @@ class WorkGraphService {
         priority: item.priority,
         ownerKeys: item.ownerKeys || [],
         labelKeys: item.labelKeys || [],
-        dueAt: item.dueAt || null
+        dueAt: item.dueAt || null,
+        dependencySummary
       }
     };
+  }
+
+  dependencySummaryByItem(itemIds, dependencies = []) {
+    const byItem = new Map(itemIds.map(id => [String(id), this.normalizeDependencySummary()]));
+
+    for (const dependency of dependencies) {
+      const sourceId = String(dependency.sourceItemId?._id || dependency.sourceItemId || '');
+      const targetId = String(dependency.targetItemId?._id || dependency.targetItemId || '');
+
+      if (byItem.has(sourceId)) {
+        this.addDependencyToSummary(byItem.get(sourceId), dependency.dependencyType, 'source');
+      }
+      if (byItem.has(targetId)) {
+        this.addDependencyToSummary(byItem.get(targetId), dependency.dependencyType, 'target');
+      }
+    }
+
+    return byItem;
+  }
+
+  addDependencyToSummary(summary, dependencyType, direction) {
+    summary.dependencyCount += 1;
+    summary.dependencyTypes[dependencyType || 'unknown'] = (summary.dependencyTypes[dependencyType || 'unknown'] || 0) + 1;
+
+    if (direction === 'source') {
+      if (dependencyType === 'blocks') summary.blockingCount += 1;
+      else if (['blocked_by', 'depends_on'].includes(dependencyType)) summary.blockedByCount += 1;
+      else summary.relatedCount += 1;
+      return summary;
+    }
+
+    if (dependencyType === 'blocks') summary.blockedByCount += 1;
+    else if (['blocked_by', 'depends_on'].includes(dependencyType)) summary.blockingCount += 1;
+    else summary.relatedCount += 1;
+    return summary;
+  }
+
+  normalizeDependencySummary(summary = {}) {
+    return {
+      dependencyCount: Number(summary.dependencyCount) || 0,
+      blockingCount: Number(summary.blockingCount) || 0,
+      blockedByCount: Number(summary.blockedByCount) || 0,
+      relatedCount: Number(summary.relatedCount) || 0,
+      dependencyTypes: summary.dependencyTypes || {}
+    };
+  }
+
+  withDependencyReason(reason, dependencySummary = {}) {
+    if (dependencySummary.blockedByCount > 0) {
+      return `${reason} It is blocked by ${dependencySummary.blockedByCount} graph dependenc${dependencySummary.blockedByCount === 1 ? 'y' : 'ies'}.`;
+    }
+    if (dependencySummary.blockingCount > 0) {
+      return `${reason} It is blocking ${dependencySummary.blockingCount} downstream graph item${dependencySummary.blockingCount === 1 ? '' : 's'}.`;
+    }
+    return reason;
   }
 
   defaultCommentText(item, spec) {
@@ -495,6 +567,25 @@ class WorkGraphService {
     if (spec.findingType === 'graph_unowned_work') return 0.74;
     if (spec.findingType === 'graph_robert_review') return 0.7;
     return 0.66;
+  }
+
+  graphScoreForCandidate(item, spec, dependencySummary = {}) {
+    const severityBase = {
+      critical: 90,
+      high: 75,
+      medium: 55,
+      low: 35
+    }[spec.riskLevel] || 45;
+    const priorityBoost = item.priority === 'critical' ? 18
+      : item.priority === 'high' ? 10
+        : 0;
+    const dependencyBoost = dependencySummary.blockingCount * 14
+      + dependencySummary.blockedByCount * 12
+      + dependencySummary.relatedCount * 3;
+    const statusBoost = item.status === 'blocked' ? 14
+      : item.status === 'waiting' ? 8
+        : 0;
+    return Math.min(100, severityBase + priorityBoost + dependencyBoost + statusBoost);
   }
 
   requiresRobertReview(item) {

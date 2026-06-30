@@ -416,7 +416,8 @@ function renderOverview() {
     ['Overdue', snapshot.signals.overdueCards],
     ['High risk', snapshot.signals.highRiskCards],
     ['Unassigned', snapshot.signals.unassignedCards],
-    ['Overloaded', snapshot.signals.overloadedMembers]
+    ['Overloaded', snapshot.signals.overloadedMembers],
+    ['Graph decisions', snapshot.signals.graphDecisions || 0]
   ];
   els.metrics.innerHTML = metrics.map(([label, value]) => `
     <div class="metric">

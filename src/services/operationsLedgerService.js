@@ -1400,7 +1400,8 @@ class OperationsLedgerService {
       reason: command.reason || 'Autopilot recommended review.',
       automatable: command.automatable === true,
       minutesSaved: Number(command.minutesSaved) || 0,
-      payload: command.payload && typeof command.payload === 'object' ? command.payload : {}
+      payload: command.payload && typeof command.payload === 'object' ? command.payload : {},
+      sourceEvidence: Array.isArray(command.sourceEvidence) ? command.sourceEvidence : []
     };
   }
 
@@ -1526,6 +1527,34 @@ class OperationsLedgerService {
       };
     }
 
+    if (command.type === 'graph_decision') {
+      const graphPayload = command.payload || {};
+      return {
+        actionType: graphPayload.actionType || 'manual_review',
+        recommendedAction: graphPayload.recommendedAction || `${command.title} Review: Yes/No.`,
+        approvalReason: 'A normalized work graph decision needs human approval before any provider-specific action payload can be prepared.',
+        actionPayload: {
+          ...basePayload,
+          ...(graphPayload.actionPayload || {}),
+          source: 'work_graph',
+          workItemId: graphPayload.workItemId,
+          sourceProvider: graphPayload.sourceProvider,
+          externalId: graphPayload.externalId,
+          canonicalKey: graphPayload.canonicalKey,
+          providerUrl: graphPayload.providerUrl,
+          dependencySummary: graphPayload.dependencySummary || {},
+          externalProviderWriteBlocked: true,
+          executable: false,
+          draftOnly: true,
+          requiredChange: 'Approve the decision, then convert it into an exact provider-specific action payload before execution.'
+        },
+        requiresApproval: true,
+        ownerType: graphPayload.ownerType || (command.severity === 'critical' || command.severity === 'high' ? 'robert' : 'team'),
+        riskLevel: command.severity === 'critical' ? 'critical' : command.severity,
+        confidence: graphPayload.confidence || 0.7
+      };
+    }
+
     return {
       actionType: 'manual_review',
       recommendedAction: `${command.title} Review: Yes/No.`,
@@ -1570,7 +1599,9 @@ class OperationsLedgerService {
         type: 'member',
         entityId: member._id,
         label: member.username || member.fullName
-      } : null
+      } : null,
+      ...(command.sourceEvidence || []),
+      ...((command.payload && Array.isArray(command.payload.sourceEvidence)) ? command.payload.sourceEvidence : [])
     ].filter(Boolean);
   }
 

@@ -888,6 +888,14 @@ describe('work signal normalization', () => {
       labelKeys: ['client'],
       url: 'https://jira.example/browse/OPS-42',
       lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    }, {
+      dependencyCount: 3,
+      blockingCount: 1,
+      blockedByCount: 2,
+      dependencyTypes: {
+        blocks: 1,
+        blocked_by: 2
+      }
     });
     const ownerless = workGraphService.buildDecisionCandidate({
       _id: new mongoose.Types.ObjectId(),
@@ -925,7 +933,21 @@ describe('work signal normalization', () => {
       ownerType: 'robert',
       actionType: 'escalate',
       riskLevel: 'high',
-      requiresApproval: true
+      requiresApproval: true,
+      dependencySummary: expect.objectContaining({
+        blockingCount: 1,
+        blockedByCount: 2
+      }),
+      actionPayload: expect.objectContaining({
+        dependencySummary: expect.objectContaining({
+          blockedByCount: 2
+        })
+      })
+    });
+    expect(blocked.graphScore).toBeGreaterThan(ownerless.graphScore);
+    expect(blocked.approvalReason).toContain('blocked by 2 graph dependencies');
+    expect(blocked.sourceEvidence[0].data.dependencySummary).toMatchObject({
+      dependencyCount: 3
     });
     expect(ownerless).toMatchObject({
       findingType: 'graph_unowned_work',
@@ -1003,6 +1025,91 @@ describe('mission-control evidence references', () => {
       label: 'Nina Jacobs'
     });
     expect(risks.find(risk => risk.type === 'delivery_risk').sourceEvidence[0].data.reason).toBe('High delivery risk');
+  });
+
+  test('ranks dependency-aware graph decisions into mission-control commands and risks', () => {
+    const autopilotService = require('../src/services/autopilotService');
+    const workItemId = new mongoose.Types.ObjectId();
+    const graphCandidate = {
+      workItemId: String(workItemId),
+      findingType: 'graph_blocked_work',
+      title: 'Unblock Jira release gate',
+      description: 'The normalized work graph shows this item is blocked. It is blocking 2 downstream graph items.',
+      recommendedAction: 'Ask for blocker, owner, and next action on "Jira release gate".',
+      actionType: 'escalate',
+      riskLevel: 'high',
+      graphScore: 97,
+      confidence: 0.84,
+      ownerType: 'robert',
+      sourceProvider: 'jira_software',
+      externalId: 'OPS-42',
+      canonicalKey: 'jira_software:OPS-42',
+      dependencySummary: {
+        dependencyCount: 3,
+        blockingCount: 2,
+        blockedByCount: 1,
+        relatedCount: 0,
+        dependencyTypes: { blocks: 2, blocked_by: 1 }
+      },
+      actionPayload: {
+        source: 'work_graph',
+        workItemId: String(workItemId),
+        sourceProvider: 'jira_software',
+        externalId: 'OPS-42',
+        externalProviderWriteBlocked: true,
+        executable: false,
+        draftOnly: true
+      },
+      sourceEvidence: [
+        {
+          type: 'work_item',
+          entityId: workItemId,
+          label: 'Jira release gate',
+          data: { reason: 'Graph dependency risk' }
+        }
+      ]
+    };
+
+    const commands = autopilotService.buildCommandQueue({
+      cards: [],
+      boardSummaries: [],
+      teamLoad: [],
+      interventions: [],
+      graphCandidates: [graphCandidate]
+    });
+    const risks = autopilotService.buildRiskRadar([], {}, [graphCandidate]);
+    const signals = autopilotService.buildSignals([], [], [], risks, [graphCandidate]);
+
+    expect(commands[0]).toMatchObject({
+      type: 'graph_decision',
+      severity: 'high',
+      title: 'Unblock Jira release gate',
+      owner: 'robert',
+      automatable: false,
+      graphScore: 97,
+      payload: expect.objectContaining({
+        source: 'work_graph',
+        workItemId: String(workItemId),
+        dependencySummary: expect.objectContaining({
+          blockingCount: 2
+        }),
+        actionPayload: expect.objectContaining({
+          externalProviderWriteBlocked: true,
+          executable: false,
+          draftOnly: true
+        })
+      })
+    });
+    expect(commands[0].sourceEvidence[0]).toMatchObject({
+      type: 'work_item',
+      label: 'Jira release gate'
+    });
+    expect(risks[0]).toMatchObject({
+      type: 'graph_blocked_work',
+      score: 97,
+      title: 'Unblock Jira release gate'
+    });
+    expect(signals.graphDecisions).toBe(1);
   });
 });
 
@@ -1654,6 +1761,84 @@ describe('autopilot command approval queue', () => {
       draftOnly: true,
       requiredChange: 'Select toMemberId and toMemberTrelloId before execution.'
     });
+    expect(operationsLedgerService.isExecutableRecommendation({
+      actionType: spec.actionType,
+      actionPayload: spec.actionPayload
+    })).toBe(false);
+  });
+
+  test('keeps graph mission-control commands draft-only in the approval ledger', () => {
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const workItemId = new mongoose.Types.ObjectId();
+    const command = operationsLedgerService.normalizeAutopilotCommand({
+      id: `graph_decision-${workItemId}`,
+      type: 'graph_decision',
+      severity: 'high',
+      title: 'Unblock Jira release gate',
+      target: 'jira_software',
+      owner: 'robert',
+      reason: 'The normalized work graph shows this item blocks downstream work.',
+      automatable: false,
+      payload: {
+        source: 'work_graph',
+        workItemId: String(workItemId),
+        sourceProvider: 'jira_software',
+        externalId: 'OPS-42',
+        ownerType: 'robert',
+        recommendedAction: 'Ask for blocker, owner, and next action on "Jira release gate".',
+        actionType: 'escalate',
+        confidence: 0.84,
+        dependencySummary: {
+          dependencyCount: 3,
+          blockingCount: 2,
+          blockedByCount: 1
+        },
+        actionPayload: {
+          source: 'work_graph',
+          workItemId: String(workItemId),
+          sourceProvider: 'jira_software',
+          externalId: 'OPS-42',
+          externalProviderWriteBlocked: true,
+          executable: false,
+          draftOnly: true
+        },
+        sourceEvidence: [
+          {
+            type: 'work_item',
+            entityId: workItemId,
+            label: 'Jira release gate'
+          }
+        ]
+      }
+    });
+
+    const spec = operationsLedgerService.buildAutopilotActionSpec(command);
+    const evidence = operationsLedgerService.buildAutopilotSourceEvidence(command);
+
+    expect(spec).toMatchObject({
+      actionType: 'escalate',
+      ownerType: 'robert',
+      riskLevel: 'high',
+      confidence: 0.84
+    });
+    expect(spec.actionPayload).toMatchObject({
+      source: 'work_graph',
+      workItemId: String(workItemId),
+      sourceProvider: 'jira_software',
+      externalId: 'OPS-42',
+      externalProviderWriteBlocked: true,
+      executable: false,
+      draftOnly: true,
+      dependencySummary: expect.objectContaining({
+        blockingCount: 2
+      })
+    });
+    expect(evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'work_item',
+        label: 'Jira release gate'
+      })
+    ]));
     expect(operationsLedgerService.isExecutableRecommendation({
       actionType: spec.actionType,
       actionPayload: spec.actionPayload

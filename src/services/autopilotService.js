@@ -10,6 +10,7 @@ const analyticsService = require('./analyticsService');
 const interventionEngine = require('./interventionEngine');
 const operationsLedgerService = require('./operationsLedgerService');
 const trelloSync = require('./trelloSync');
+const workGraphService = require('./workGraphService');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const HOURS_PER_DAY = 24;
@@ -27,7 +28,7 @@ class AutopilotService {
 
     try {
       const workspaceId = normalizeWorkspaceObjectId(options.workspaceId);
-      const [boards, cards, members, interventions] = await Promise.all([
+      const [boards, cards, members, interventions, graphDecisionResult] = await Promise.all([
         Board.find({ workspaceId, closed: false }).populate('members').sort({ name: 1 }),
         Card.find({ workspaceId, closed: false })
           .populate('boardId')
@@ -38,8 +39,10 @@ class AutopilotService {
         Intervention.find({ workspaceId, status: { $in: ['pending', 'failed'] } })
           .populate('boardId cardId memberId')
           .sort({ severity: -1, createdAt: 1 })
-          .limit(25)
+          .limit(25),
+        workGraphService.listDecisionCandidates({ workspaceId, limit: 25 })
       ]);
+      const graphCandidates = graphDecisionResult.candidates || [];
 
       const analyticsByBoard = await this.getLatestAnalyticsByBoard(boards, { workspaceId });
       const listsByBoard = await this.getListsByBoard(boards, { workspaceId });
@@ -47,12 +50,13 @@ class AutopilotService {
       const boardSummaries = this.buildBoardSummaries(boards, cardIndex, analyticsByBoard, listsByBoard);
       const teamLoad = this.buildTeamLoad(members, cardIndex);
       const focus = this.buildFocusQueue(cards);
-      const risks = this.buildRiskRadar(cards, analyticsByBoard);
+      const risks = this.buildRiskRadar(cards, analyticsByBoard, graphCandidates);
       const commandQueue = this.buildCommandQueue({
         cards,
         boardSummaries,
         teamLoad,
-        interventions
+        interventions,
+        graphCandidates
       });
       const dailyPlan = this.buildDailyPlan(focus, commandQueue, risks);
 
@@ -60,7 +64,7 @@ class AutopilotService {
         mode: 'live',
         generatedAt: new Date(),
         autonomy: this.getAutonomyState(false),
-        signals: this.buildSignals(boardSummaries, cards, teamLoad, risks),
+        signals: this.buildSignals(boardSummaries, cards, teamLoad, risks, graphCandidates),
         boardSummaries,
         focus,
         commandQueue,
@@ -346,7 +350,7 @@ class AutopilotService {
       .slice(0, 10);
   }
 
-  buildRiskRadar(cards, analyticsByBoard) {
+  buildRiskRadar(cards, analyticsByBoard, graphCandidates = []) {
     const cardRisks = cards
       .flatMap(card => this.getCardRisks(card))
       .sort((a, b) => b.score - a.score);
@@ -376,10 +380,21 @@ class AutopilotService {
       }))
     );
 
-    return [...cardRisks, ...boardRisks].sort((a, b) => b.score - a.score).slice(0, 12);
+    const graphRisks = graphCandidates.map(candidate => ({
+      id: `graph-${candidate.workItemId || candidate.actionPayload?.externalId || candidate.title}`,
+      type: candidate.findingType,
+      severity: candidate.riskLevel,
+      title: candidate.title,
+      boardName: candidate.sourceProvider || candidate.actionPayload?.sourceProvider || 'Work graph',
+      score: candidate.graphScore || this.severityScore(candidate.riskLevel) * 20,
+      detail: candidate.description,
+      sourceEvidence: candidate.sourceEvidence || []
+    }));
+
+    return [...cardRisks, ...boardRisks, ...graphRisks].sort((a, b) => b.score - a.score).slice(0, 12);
   }
 
-  buildCommandQueue({ cards, boardSummaries, teamLoad, interventions }) {
+  buildCommandQueue({ cards, boardSummaries, teamLoad, interventions, graphCandidates = [] }) {
     const commands = [];
 
     for (const card of cards) {
@@ -489,9 +504,55 @@ class AutopilotService {
       }));
     }
 
+    for (const candidate of graphCandidates) {
+      commands.push(this.createGraphDecisionCommand(candidate));
+    }
+
     return commands
-      .sort((a, b) => this.severityScore(b.severity) - this.severityScore(a.severity))
+      .sort((a, b) => this.commandScore(b) - this.commandScore(a))
       .slice(0, MAX_COMMAND_QUEUE);
+  }
+
+  createGraphDecisionCommand(candidate) {
+    const dependencySummary = candidate.dependencySummary || candidate.actionPayload?.dependencySummary || {};
+    const dependencyReason = dependencySummary.blockingCount
+      ? `Blocking ${dependencySummary.blockingCount} downstream graph item${dependencySummary.blockingCount === 1 ? '' : 's'}`
+      : dependencySummary.blockedByCount
+        ? `Blocked by ${dependencySummary.blockedByCount} graph dependenc${dependencySummary.blockedByCount === 1 ? 'y' : 'ies'}`
+        : 'Graph decision candidate';
+
+    return this.createCommand({
+      type: 'graph_decision',
+      severity: candidate.riskLevel || 'medium',
+      title: candidate.title,
+      target: candidate.sourceProvider || candidate.actionPayload?.sourceProvider || 'Work graph',
+      owner: candidate.ownerType || 'team',
+      reason: `${candidate.description || candidate.recommendedAction || dependencyReason} ${dependencyReason}.`.trim(),
+      automatable: false,
+      graphScore: candidate.graphScore || 0,
+      sourceEvidence: candidate.sourceEvidence || [],
+      payload: {
+        source: 'work_graph',
+        workItemId: candidate.workItemId,
+        findingType: candidate.findingType,
+        ownerType: candidate.ownerType,
+        recommendedAction: candidate.recommendedAction,
+        actionType: candidate.actionType,
+        confidence: candidate.confidence,
+        sourceProvider: candidate.sourceProvider || candidate.actionPayload?.sourceProvider,
+        externalId: candidate.externalId || candidate.actionPayload?.externalId,
+        canonicalKey: candidate.canonicalKey || candidate.actionPayload?.canonicalKey,
+        providerUrl: candidate.providerUrl || candidate.actionPayload?.providerUrl,
+        dependencySummary,
+        actionPayload: {
+          ...(candidate.actionPayload || {}),
+          externalProviderWriteBlocked: true,
+          executable: false,
+          draftOnly: true
+        },
+        sourceEvidence: candidate.sourceEvidence || []
+      }
+    });
   }
 
   buildDailyPlan(focus, commands, risks) {
@@ -522,7 +583,7 @@ class AutopilotService {
     };
   }
 
-  buildSignals(boardSummaries, cards, teamLoad, risks) {
+  buildSignals(boardSummaries, cards, teamLoad, risks, graphCandidates = []) {
     return {
       boards: boardSummaries.length,
       activeCards: cards.length,
@@ -530,7 +591,8 @@ class AutopilotService {
       highRiskCards: cards.filter(card => ['high', 'critical'].includes(card.riskLevel)).length,
       unassignedCards: cards.filter(card => !card.members || card.members.length === 0).length,
       overloadedMembers: teamLoad.filter(member => member.capacityState === 'overloaded').length,
-      activeRisks: risks.length
+      activeRisks: risks.length,
+      graphDecisions: graphCandidates.length
     };
   }
 
@@ -563,11 +625,15 @@ class AutopilotService {
 
   createCommand(command) {
     return {
-      id: `${command.type}-${command.payload.cardId || command.payload.memberId || command.payload.boardId || command.payload.interventionId || Math.random().toString(36).slice(2)}`,
+      id: `${command.type}-${command.payload.cardId || command.payload.memberId || command.payload.boardId || command.payload.interventionId || command.payload.workItemId || command.payload.externalId || command.payload.canonicalKey || Math.random().toString(36).slice(2)}`,
       status: command.automatable ? 'ready' : 'review',
       minutesSaved: command.automatable ? this.estimateMinutesSaved(command.type) : 0,
       ...command
     };
+  }
+
+  commandScore(command) {
+    return this.severityScore(command.severity) * 100 + (command.graphScore || 0);
   }
 
   getPriorityReasons(card) {

@@ -171,11 +171,11 @@ const enhancements = [
     priority: 'P2',
     area: 'data-model',
     title: 'Introduce a normalized cross-tool work graph',
-    evidence: 'Work signals now project into normalized WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent graph models, provider-native dependencies are extracted from Jira, Asana, GitHub, Trello, and generic dependency fields when target work items are present, `/api/work-signals/graph` summarizes graph dependency counts for the dashboard, graph items can produce Robert/VA/team decision candidates that queue approval-gated recommendations, and graph decisions are promoted into the read-only daily operations brief with source/provider evidence.',
+    evidence: 'Work signals now project into normalized WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent graph models, provider-native dependencies are extracted from Jira, Asana, GitHub, Trello, and generic dependency fields when target work items are present, `/api/work-signals/graph` summarizes graph dependency counts for the dashboard, graph items can produce dependency-aware Robert/VA/team decision candidates that rank into mission control as review-only commands/risks, queue approval-gated draft recommendations, and appear in the read-only daily operations brief with source/provider evidence.',
     impact: 'Allows Sneup to reason across projects without forcing every provider into Trello-specific schemas.',
     effort: 'XL',
     status: 'in-progress',
-    nextStep: 'Use dependency edges to rank graph-native blocked-work decisions in mission control alongside Trello-native operating signals.',
+    nextStep: 'Add graph-backed board/card detail drilldowns so mission-control graph decisions can be inspected by source item, dependency edge, and queued recommendation history.',
     acceptanceCriteria: [
       'Trello data can be projected into the normalized graph without losing Trello-specific fields.',
       'At least three non-Trello providers can sync into the graph.',
