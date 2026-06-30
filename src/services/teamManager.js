@@ -16,12 +16,76 @@ const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./w
 // Analyze team workload and suggest rebalancing
 const resolveWorkspaceId = (workspaceId) => normalizeWorkspaceObjectId(workspaceId || getDefaultWorkspaceObjectId());
 
+const toMemberId = (memberId) => String(memberId);
+
+const isOverdue = (card, now) => card.due && new Date(card.due) < now && !card.dueComplete;
+
+const isHighRisk = (card) => card.riskLevel === 'high' || card.riskLevel === 'critical';
+
+const normalizeLabelText = (value) => String(value || '').trim().toLowerCase();
+
+const getSpecialtySet = (member) => {
+  if (!member || !Array.isArray(member.specialties)) {
+    return new Set();
+  }
+
+  if (member.__sneupSpecialtySet) {
+    return member.__sneupSpecialtySet;
+  }
+
+  const values = new Set();
+  for (const value of member.specialties) {
+    const normalized = normalizeLabelText(value);
+    if (normalized) values.add(normalized);
+  }
+
+  member.__sneupSpecialtySet = values;
+  return values;
+};
+
+const labelAwareScore = (member, cardLabels = []) => {
+  if (!member?.specialties || member.specialties.length === 0 || cardLabels.length === 0) {
+    return 0;
+  }
+
+  const memberSpecialties = getSpecialtySet(member);
+  return cardLabels.reduce((score, label) => {
+    const normalizedLabel = normalizeLabelText(label?.name || label);
+    if (!normalizedLabel) return score;
+
+    for (const specialty of memberSpecialties) {
+      if (specialty && normalizedLabel.includes(specialty)) {
+        return score + 2;
+      }
+    }
+    return score;
+  }, 0);
+};
+
+const normalizeCardMembers = (card) => (card.members || []).map((member) => toMemberId(member._id || member));
+
+const getBoardMemberAssignments = async (board, workspaceId) => {
+  const rows = await Card.aggregate([
+    { $match: { boardId: board._id, workspaceId, closed: false } },
+    { $unwind: '$members' },
+    { $group: { _id: '$members', count: { $sum: 1 } } }
+  ]);
+
+  return rows.reduce((acc, row) => {
+    acc[toMemberId(row._id)] = {
+      count: row.count
+    };
+    return acc;
+  }, {});
+};
+
 const analyzeTeamWorkload = async (boardId, options = {}) => {
   try {
     logger.info(`Analyzing team workload for board: ${boardId}`);
     const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const board = await Board.findOne({ _id: boardId, workspaceId }).populate('members');
+    const board = await Board.findOne({ _id: boardId, workspaceId })
+      .populate('members', 'username fullName specialties workloadLevel');
     if (!board) {
       logger.warn(`Board not found: ${boardId}`);
       return null;
@@ -35,34 +99,69 @@ const analyzeTeamWorkload = async (boardId, options = {}) => {
       underutilizedMembers: [],
       recommendations: []
     };
-    
+
+    const now = new Date();
+    const assignedCards = await Card.find(
+      { boardId: board._id, workspaceId, closed: false },
+      {
+        members: 1,
+        due: 1,
+        dueComplete: 1,
+        riskLevel: 1,
+        labels: 1
+      }
+    ).lean();
+    const assignmentByMember = {};
+    const lowRiskCandidates = {};
+
+    for (const card of assignedCards) {
+      const isCardOverdue = isOverdue(card, now);
+      const isCardHighRisk = isHighRisk(card);
+      const memberIds = normalizeCardMembers(card);
+
+      if (memberIds.length === 0) continue;
+
+      for (const memberId of memberIds) {
+        if (!assignmentByMember[memberId]) {
+          assignmentByMember[memberId] = {
+            assignedCards: 0,
+            overdueCards: 0,
+            highRiskCards: 0
+          };
+        }
+
+        assignmentByMember[memberId].assignedCards += 1;
+        assignmentByMember[memberId].overdueCards += isCardOverdue ? 1 : 0;
+        assignmentByMember[memberId].highRiskCards += isCardHighRisk ? 1 : 0;
+
+        if (!isCardHighRisk && (card.riskLevel === 'none' || card.riskLevel === 'low')) {
+          lowRiskCandidates[memberId] = lowRiskCandidates[memberId] || [];
+          if (lowRiskCandidates[memberId].length < 3) {
+            lowRiskCandidates[memberId].push(card);
+          }
+        }
+      }
+    }
+
     // Analyze each member
     for (const member of board.members) {
-      const assignedCards = await Card.find({
-        boardId: board._id,
-        workspaceId,
-        members: member._id,
-        closed: false
-      });
-      
-      const overdueCards = assignedCards.filter(card => 
-        card.due && new Date(card.due) < new Date() && !card.dueComplete
-      ).length;
-      
-      const highRiskCards = assignedCards.filter(card => 
-        card.riskLevel === 'high' || card.riskLevel === 'critical'
-      ).length;
-      
+      const key = toMemberId(member._id);
+      const assignmentStats = assignmentByMember[key] || {
+        assignedCards: 0,
+        overdueCards: 0,
+        highRiskCards: 0
+      };
+
       // Calculate workload score
-      const workloadScore = assignedCards.length + (overdueCards * 2) + (highRiskCards * 1.5);
+      const workloadScore = assignmentStats.assignedCards + (assignmentStats.overdueCards * 2) + (assignmentStats.highRiskCards * 1.5);
       
       const memberAnalysis = {
         memberId: member._id,
         username: member.username,
         fullName: member.fullName,
-        assignedCards: assignedCards.length,
-        overdueCards,
-        highRiskCards,
+        assignedCards: assignmentStats.assignedCards,
+        overdueCards: assignmentStats.overdueCards,
+        highRiskCards: assignmentStats.highRiskCards,
         workloadScore,
         workloadLevel: member.workloadLevel,
         specialties: member.specialties || []
@@ -81,16 +180,9 @@ const analyzeTeamWorkload = async (boardId, options = {}) => {
     if (workloadAnalysis.overloadedMembers.length > 0 && 
         workloadAnalysis.underutilizedMembers.length > 0) {
       for (const overloadedMember of workloadAnalysis.overloadedMembers) {
+        const candidateCards = lowRiskCandidates[toMemberId(overloadedMember.memberId)] || [];
         // Find cards that could be reassigned
-        const cards = await Card.find({
-          boardId: board._id,
-          workspaceId,
-          members: overloadedMember.memberId,
-          closed: false,
-          riskLevel: { $in: ['none', 'low'] }
-        }).limit(3);
-        
-        for (const card of cards) {
+        for (const card of candidateCards) {
           // Find best available member
           const bestMember = await findBestMemberForCard(
             card,
@@ -146,15 +238,7 @@ const findBestMemberForCard = async (card, availableMembers) => {
       }
       
       // Match specialties with card labels
-      if (member.specialties && member.specialties.length > 0) {
-        for (const specialty of member.specialties) {
-          for (const label of card.labels) {
-            if (label.name && label.name.toLowerCase().includes(specialty.toLowerCase())) {
-              score += 2;
-            }
-          }
-        }
-      }
+      score += labelAwareScore(member, card.labels || []);
       
       memberScores.push({
         member,
@@ -178,12 +262,15 @@ const autoAssignCards = async (boardId, options = {}) => {
     logger.info(`Auto-assigning cards for board: ${boardId}`);
     const workspaceId = resolveWorkspaceId(options.workspaceId);
     
-    const board = await Board.findOne({ _id: boardId, workspaceId }).populate('members');
+    const board = await Board.findOne({ _id: boardId, workspaceId })
+      .populate('members', 'username fullName workloadLevel specialties');
     if (!board) {
       logger.warn(`Board not found: ${boardId}`);
       return null;
     }
     
+    const assignmentCounts = await getBoardMemberAssignments(board, workspaceId);
+
     // Find unassigned cards
     const unassignedCards = await Card.find({
       boardId: board._id,
@@ -193,7 +280,11 @@ const autoAssignCards = async (boardId, options = {}) => {
         { members: { $exists: false } },
         { members: { $size: 0 } }
       ]
-    });
+    }, {
+      _id: 1,
+      name: 1,
+      labels: 1
+    }).lean();
     
     logger.info(`Found ${unassignedCards.length} unassigned cards`);
     
@@ -203,18 +294,12 @@ const autoAssignCards = async (boardId, options = {}) => {
       // Get available members
       const availableMembers = [];
       for (const member of board.members) {
-        const assignedCount = await Card.countDocuments({
-          boardId: board._id,
-          workspaceId,
-          members: member._id,
-          closed: false
-        });
-        
+        const memberId = toMemberId(member._id);
         availableMembers.push({
           memberId: member._id,
           username: member.username,
           fullName: member.fullName,
-          assignedCards: assignedCount,
+          assignedCards: assignmentCounts[memberId]?.count || 0,
           workloadLevel: member.workloadLevel,
           specialties: member.specialties || []
         });
@@ -272,21 +357,26 @@ const executeRecommendation = async (recommendation, options = {}) => {
         return { success: false, error: 'Card not found' };
       }
       
-      // Remove old member
-      card.members = card.members.filter(m => 
-        m.toString() !== recommendation.fromMember.id.toString()
-      );
-      
-      // Add new member
-      const newMember = await Member.findOne({ _id: recommendation.toMember.id, workspaceId });
-      if (!newMember) {
-        logger.warn(`Member not found: ${recommendation.toMember.id}`);
+      const [fromMember, toMember] = await Member.find({
+        _id: { $in: [recommendation.fromMember.id, recommendation.toMember.id] },
+        workspaceId
+      })
+        .then((members) => {
+          const byId = new Map();
+          members.forEach((member) => byId.set(toMemberId(member._id), member));
+          return [
+            byId.get(toMemberId(recommendation.fromMember.id)) || null,
+            byId.get(toMemberId(recommendation.toMember.id)) || null
+          ];
+        });
+
+      if (!fromMember) {
+        logger.warn(`Member not found: ${recommendation.fromMember.id}`);
         return { success: false, error: 'Member not found' };
       }
 
-      const currentMember = await Member.findOne({ _id: recommendation.fromMember.id, workspaceId });
-      if (!currentMember) {
-        logger.warn(`Member not found: ${recommendation.fromMember.id}`);
+      if (!toMember) {
+        logger.warn(`Member not found: ${recommendation.toMember.id}`);
         return { success: false, error: 'Member not found' };
       }
 
@@ -294,19 +384,19 @@ const executeRecommendation = async (recommendation, options = {}) => {
         boardId: card.boardId,
         workspaceId,
         cardId: card._id,
-        memberId: currentMember._id,
+        memberId: fromMember._id,
         type: 'reassign',
         trigger: 'member_overloaded',
         severity: 'medium',
         action: 'Approve workload rebalance',
-        message: `Card reassignment from @${currentMember.username} to @${newMember.username} is recommended for workload balancing.`,
+        message: `Card reassignment from @${fromMember.username} to @${toMember.username} is recommended for workload balancing.`,
         metadata: {
           reason: recommendation.reason,
-          fromMemberId: currentMember._id,
-          fromMemberTrelloId: currentMember.trelloId,
-          toMemberId: newMember._id,
-          toMemberTrelloId: newMember.trelloId,
-          commentText: `Card reassignment from @${currentMember.username} to @${newMember.username} was approved in Sneup for workload balancing.`,
+          fromMemberId: fromMember._id,
+          fromMemberTrelloId: fromMember.trelloId,
+          toMemberId: toMember._id,
+          toMemberTrelloId: toMember.trelloId,
+          commentText: `Card reassignment from @${fromMember.username} to @${toMember.username} was approved in Sneup for workload balancing.`,
           source: 'team_recommendation'
         }
       });
@@ -333,6 +423,7 @@ const identifyAtRiskCards = async (boardId, options = {}) => {
   try {
     logger.info(`Identifying at-risk cards for board: ${boardId}`);
     const workspaceId = resolveWorkspaceId(options.workspaceId);
+    const now = new Date();
     
     const board = await Board.findOne({ _id: boardId, workspaceId });
     if (!board) {
@@ -345,22 +436,77 @@ const identifyAtRiskCards = async (boardId, options = {}) => {
       boardId: board._id,
       workspaceId,
       closed: false
-    }).populate('listId').populate('members');
-    
+    }, {
+      name: 1,
+      listId: 1,
+      members: 1,
+      due: 1,
+      dueComplete: 1,
+      riskLevel: 1,
+      timeInCurrentList: 1,
+      lastActivity: 1
+    }).populate('listId', 'name averageTimeInList')
+      .populate('members', 'username')
+      .lean();
+
+    const assessCardRisk = (card, averageTimeInList, now = new Date()) => {
+      const riskFactors = [];
+      let riskScore = 0;
+
+      if (isOverdue(card, now)) {
+        riskFactors.push('Overdue');
+        riskScore += 3;
+      }
+
+      if (card.due) {
+        const dueDate = new Date(card.due);
+        const nowDate = new Date(now);
+        const daysUntilDue = Math.ceil((dueDate - nowDate) / (1000 * 60 * 60 * 24));
+        if (daysUntilDue >= 0 && daysUntilDue <= 2) {
+          riskFactors.push('Due soon');
+          riskScore += 2;
+        }
+      }
+
+      if (averageTimeInList > 0 && card.timeInCurrentList > (averageTimeInList * 2)) {
+        riskFactors.push('Stuck in current list');
+        riskScore += 2;
+      }
+
+      const daysSinceActivity = (now - new Date(card.lastActivity || now)) / (1000 * 60 * 60 * 24);
+      if (daysSinceActivity > 7) {
+        riskFactors.push('No recent activity');
+        riskScore += 1;
+      }
+
+      if (!card.members || card.members.length === 0) {
+        riskFactors.push('No members assigned');
+        riskScore += 1;
+      }
+
+      let riskLevel = 'none';
+      if (riskScore >= 6) riskLevel = 'critical';
+      else if (riskScore >= 4) riskLevel = 'high';
+      else if (riskScore >= 2) riskLevel = 'medium';
+      else if (riskScore >= 1) riskLevel = 'low';
+
+      return { riskLevel, riskFactors, riskScore };
+    };
+
     const atRiskCards = [];
     
     for (const card of cards) {
       // Assess risk
-      const list = await card.listId;
+      const list = card.listId;
       const averageTimeInList = list ? list.averageTimeInList : 0;
-      const riskAssessment = card.assessRisk(averageTimeInList);
+      const riskAssessment = assessCardRisk(card, averageTimeInList, now);
       
       if (riskAssessment.riskLevel === 'high' || riskAssessment.riskLevel === 'critical') {
         // Generate interventions
         const interventions = [];
         
         // Check if stuck
-        if (card.isStuck(averageTimeInList)) {
+        if (averageTimeInList > 0 && card.timeInCurrentList > (averageTimeInList * 2)) {
           interventions.push({
             type: 'move',
             action: 'Consider moving card forward or breaking it into smaller tasks',
@@ -369,7 +515,7 @@ const identifyAtRiskCards = async (boardId, options = {}) => {
         }
         
         // Check if overdue
-        if (card.isOverdue()) {
+        if (isOverdue(card, now)) {
           interventions.push({
             type: 'escalate',
             action: 'Card is overdue - escalate to team lead or reassign',
@@ -387,7 +533,7 @@ const identifyAtRiskCards = async (boardId, options = {}) => {
         }
         
         // Check if no recent activity
-        const daysSinceActivity = (Date.now() - new Date(card.lastActivity)) / (1000 * 60 * 60 * 24);
+        const daysSinceActivity = (now - new Date(card.lastActivity || now)) / (1000 * 60 * 60 * 24);
         if (daysSinceActivity > 7) {
           interventions.push({
             type: 'follow_up',

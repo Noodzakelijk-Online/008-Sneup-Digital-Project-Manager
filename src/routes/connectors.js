@@ -26,7 +26,12 @@ const sendError = (res, error) => {
 
 router.get('/', async (req, res) => {
   try {
-    const catalog = accountConnectorService.getCatalog();
+    const catalog = accountConnectorService.getCatalog({
+      category: req.query.category,
+      search: req.query.search || req.query.q,
+      limit: req.query.limit,
+      offset: req.query.offset
+    });
     const accounts = await accountConnectorService.listAccounts(connectorRequestOptions(req));
     res.json({
       success: true,

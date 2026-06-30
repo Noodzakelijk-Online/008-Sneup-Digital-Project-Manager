@@ -522,6 +522,38 @@ describe('connector registry', () => {
       expect.arrayContaining(['trello', 'jira_software', 'asana', 'slack', 'github', 'notion', 'microsoft_365'])
     );
   });
+
+  test('supports connector search, category aliases, and pagination', () => {
+    const result = accountConnectorService.getCatalog({
+      category: 'software delivery',
+      search: 'jira',
+      limit: '2',
+      offset: '0'
+    });
+
+    expect(result.total).toBeGreaterThanOrEqual(3);
+    expect(result.connectors.length).toBe(2);
+    expect(result.connectors.map(connector => connector.id)).toEqual(
+      expect.arrayContaining(['jira_software', 'jira_service_management'])
+    );
+
+    const aliasResult = accountConnectorService.getCatalog({
+      category: 'work management'
+    });
+    expect(aliasResult.connectors.some(connector => connector.id === 'scoro')).toBe(true);
+    expect(aliasResult.total).toBeGreaterThanOrEqual(20);
+
+    const pageTwo = accountConnectorService.getCatalog({
+      category: 'work management',
+      limit: 3,
+      offset: 3
+    });
+    expect(pageTwo.offset).toBe(3);
+    expect(pageTwo.limit).toBe(3);
+    expect(pageTwo.total).toBe(aliasResult.total);
+    expect(pageTwo.connectors).toHaveLength(3);
+    expect(pageTwo.connectors[0]).not.toMatchObject(aliasResult.connectors[0]);
+  });
 });
 
 describe('work signal normalization', () => {

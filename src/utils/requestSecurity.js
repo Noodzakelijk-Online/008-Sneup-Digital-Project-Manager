@@ -385,7 +385,7 @@ const apiRateLimit = (req, res, next) => {
   return next();
 };
 
-const allowedOrigins = () => {
+const buildAllowedOrigins = () => {
   const configured = (process.env.SNEUP_ALLOWED_ORIGINS || '')
     .split(',')
     .map(origin => origin.trim())
@@ -398,9 +398,25 @@ const allowedOrigins = () => {
   ]);
 };
 
+let allowedOriginsCache = {
+  source: '',
+  set: null
+};
+
+const getAllowedOrigins = () => {
+  const source = process.env.SNEUP_ALLOWED_ORIGINS || '';
+  if (allowedOriginsCache.source !== source || !allowedOriginsCache.set) {
+    allowedOriginsCache = {
+      source,
+      set: buildAllowedOrigins()
+    };
+  }
+  return allowedOriginsCache.set;
+};
+
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || allowedOrigins().has(origin)) {
+    if (!origin || getAllowedOrigins().has(origin)) {
       return callback(null, true);
     }
     return callback(new Error('Origin is not allowed by Sneup CORS policy'));

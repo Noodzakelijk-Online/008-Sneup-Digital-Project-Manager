@@ -530,6 +530,17 @@ const CONNECTORS = [
   { id: 'testRail', name: 'TestRail', category: 'incident_quality', description: 'Test cases, runs, plans, milestones, defects, and QA delivery status.', auth: apiKey({ docsUrl: 'https://support.testrail.com/hc/en-us/articles/7077039051284-Accessing-the-TestRail-API' }), sync: ['test_cases', 'runs', 'plans', 'milestones'] },
   { id: 'browserstack', name: 'BrowserStack', category: 'incident_quality', description: 'Builds, sessions, test observability, browser coverage, and QA evidence.', auth: apiKey({ docsUrl: 'https://www.browserstack.com/docs/api' }), sync: ['builds', 'sessions', 'projects'] },
   { id: 'statuspage', name: 'Atlassian Statuspage', category: 'incident_quality', description: 'Components, incidents, subscribers, maintenance windows, and customer-facing status.', auth: apiKey({ docsUrl: 'https://developer.statuspage.io/' }), sync: ['components', 'incidents', 'maintenance'] },
+  { id: 'aha', name: 'Aha!', category: 'work_management', description: 'Roadmaps, initiatives, features, releases, goals, and customer demand signals.', auth: apiKey({ docsUrl: 'https://www.aha.io/api', fields: [{ name: 'apiToken', label: 'API token', secret: true, required: true }] }), sync: ['products', 'initiatives', 'features', 'goals', 'releases', 'requirements'] },
+  { id: 'productboard', name: 'Productboard', category: 'work_management', description: 'Roadmap items, components, goals, feature ideas, and stakeholder priority signals.', auth: apiKey({ docsUrl: 'https://developer.productboard.com/', fields: [{ name: 'apiToken', label: 'API token', secret: true, required: true }] }), sync: ['components', 'features', 'ideas', 'objectives', 'roadmaps'] },
+  { id: 'jira_align', name: 'Jira Align', category: 'software_delivery', description: 'Program initiatives, enterprise epics, value streams, dependencies, and planning windows.', auth: manual({ docsUrl: 'https://www.atlassian.com/software/jira/align', fields: [{ name: 'baseUrl', label: 'Jira Align API URL', required: true }, { name: 'apiToken', label: 'API token', secret: true, required: true }] }), sync: ['programs', 'initiatives', 'work_items', 'dependencies', 'planning_windows'] },
+  { id: 'teamgantt', name: 'TeamGantt', category: 'work_management', description: 'Projects, schedules, tasks, dependencies, milestones, and team capacities.', auth: apiKey({ docsUrl: 'https://help.teamgantt.com/en/articles/900-introducing-the-teamgantt-api' }), sync: ['projects', 'tasks', 'schedules', 'dependencies', 'milestones', 'timesheets'] },
+  { id: 'kanbanize', name: 'Kanbanize', category: 'work_management', description: 'Boards, cards, swimlanes, dependencies, WIP policies, and release planning.', auth: apiKey({ docsUrl: 'https://kanbanize.com/ctrl_login/docs/1/api/index.html', fields: [{ name: 'apiUrl', label: 'Kanbanize API URL', required: true }, { name: 'apiToken', label: 'API token', secret: true, required: true }] }), sync: ['boards', 'cards', 'swimlanes', 'dependencies', 'workflows'] },
+  { id: 'google_chat', name: 'Google Chat', category: 'communication', description: 'Rooms, messages, mentions, spaces, and PM-ready team communication.', auth: oauth2({ envPrefix: 'GOOGLE_CHAT', authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token', scopes: ['https://www.googleapis.com/auth/chat.messages'], docsUrl: 'https://developers.google.com/chat/api/guides/auth' }), sync: ['spaces', 'members', 'messages', 'threads'] },
+  { id: 'projectplace', name: 'Projectplace', category: 'work_management', description: 'Projects, tasks, templates, workstreams, files, and collaborative planning.', auth: apiKey({ docsUrl: 'https://help.projectplace.com/en/kb/api-api-interface', fields: [{ name: 'baseUrl', label: 'Projectplace API URL', required: true }, { name: 'apiKey', label: 'API key', secret: true, required: true }] }), sync: ['projects', 'tasks', 'workstreams', 'files', 'users'] },
+  { id: 'clarizen', name: 'Clarizen', category: 'software_delivery', description: 'Programs, initiatives, dependencies, resource assignments, risks, milestones, and executive reporting.', auth: apiKey({ docsUrl: 'https://api.clarizen.com/api/2/rest', fields: [{ name: 'tenantUrl', label: 'Clarizen tenant URL', required: true }, { name: 'apiKey', label: 'API token', secret: true, required: true }] }), sync: ['projects', 'tasks', 'initiatives', 'assignments', 'risks', 'milestones'] },
+  { id: 'scoro', name: 'Scoro', category: 'work_management', description: 'Work orders, tasks, CRM opportunities, estimates, billing, capacity, and team utilization.', auth: apiKey({ docsUrl: 'https://api.scoro.com', fields: [{ name: 'accountId', label: 'Scoro account ID', required: true }, { name: 'apiKey', label: 'API token', secret: true, required: true }] }), sync: ['projects', 'tasks', 'opportunities', 'invoices', 'timesheets'] },
+  { id: 'hive', name: 'Hive', category: 'work_management', description: 'Projects, tasks, conversations, checklists, files, and team communication signals.', auth: apiKey({ docsUrl: 'https://developer.hive.com/', fields: [{ name: 'apiToken', label: 'API token', secret: true, required: true }] }), sync: ['projects', 'tasks', 'conversations', 'files', 'checklists'] },
+  { id: 'taskworld', name: 'Taskworld', category: 'work_management', description: 'Projects, tasks, milestones, chat, approvals, and team workload management.', auth: apiKey({ docsUrl: 'https://developer.taskworld.com/docs', fields: [{ name: 'apiKey', label: 'API token', secret: true, required: true }] }), sync: ['projects', 'tasks', 'milestones', 'conversations', 'comments'] },
   { id: 'webhook_generic', name: 'Generic Webhook', category: 'automation_data', description: 'Catch events from any tool with outbound webhooks and map them into Sneup signals.', auth: manual({ fields: [{ name: 'sourceName', label: 'Source name', required: true }, { name: 'signingSecret', label: 'Signing secret', secret: true, required: false }] }), sync: ['events'] },
   { id: 'rest_api_generic', name: 'Generic REST API', category: 'automation_data', description: 'Connect any project tool with a REST API, bearer token, and JSON endpoints.', auth: apiKey({ fields: [{ name: 'baseUrl', label: 'Base URL', required: true }, { name: 'apiKey', label: 'Bearer token or API key', secret: true, required: true }] }), sync: ['custom_resources'] }
 ];
@@ -539,15 +550,28 @@ const CONNECTORS_BY_ID = CONNECTORS.reduce((index, connector) => {
   return index;
 }, {});
 
+const CONNECTOR_CATEGORY_COUNTS = Object.entries(CATEGORIES).reduce((acc, [id]) => {
+  acc[id] = 0;
+  return acc;
+}, {});
+
+for (const connector of CONNECTORS) {
+  if (CONNECTOR_CATEGORY_COUNTS[connector.category] !== undefined) {
+    CONNECTOR_CATEGORY_COUNTS[connector.category] += 1;
+  }
+}
+
+const CATEGORIES_WITH_COUNTS = Object.entries(CATEGORIES).map(([id, name]) => ({
+  id,
+  name,
+  count: CONNECTOR_CATEGORY_COUNTS[id] || 0
+}));
+
 const getConnectors = () => CONNECTORS;
 
 const getConnector = (id) => CONNECTORS_BY_ID[id];
 
-const getCategories = () => Object.entries(CATEGORIES).map(([id, name]) => ({
-  id,
-  name,
-  count: CONNECTORS.filter(connector => connector.category === id).length
-}));
+const getCategories = () => CATEGORIES_WITH_COUNTS.map((category) => ({ ...category }));
 
 module.exports = {
   CATEGORIES,

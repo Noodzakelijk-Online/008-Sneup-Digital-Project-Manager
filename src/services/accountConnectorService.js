@@ -6,13 +6,86 @@ const { CATEGORIES, getCategories, getConnector, getConnectors } = require('./co
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const STATE_TTL_MS = 10 * 60 * 1000;
+const MAX_CATALOG_LIMIT = 300;
+
+const sanitizeText = (value) => String(value || '').trim().toLowerCase();
+const normalizeText = (value) => sanitizeText(value).replace(/[^a-z0-9]+/g, '');
+
+const CATEGORY_LOOKUP = (() => {
+  const map = new Map();
+  Object.entries(CATEGORIES).forEach(([id, name]) => {
+    map.set(normalizeText(id), id);
+    map.set(normalizeText(name), id);
+  });
+  return map;
+})();
+
+const clampPositiveInt = (value, defaultValue = 0, min = 0, max = Number.MAX_SAFE_INTEGER) => {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return defaultValue;
+  return Math.max(min, Math.min(max, parsed));
+};
 
 class AccountConnectorService {
-  getCatalog() {
+  getCatalog(filters = {}) {
+    const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
+    const filteredConnectors = this.filterConnectors(category, search);
+    const slicedConnectors = typeof limit === 'number' && limit > 0
+      ? filteredConnectors.slice(offset || 0, (offset || 0) + limit)
+      : filteredConnectors.slice(offset || 0);
+
     return {
       categories: getCategories(),
-      connectors: getConnectors().map(connector => this.sanitizeConnector(connector))
+      connectors: slicedConnectors.map(connector => this.sanitizeConnector(connector)),
+      total: filteredConnectors.length,
+      offset,
+      limit
     };
+  }
+
+  normalizeCatalogFilter(filters = {}) {
+    const category = this.normalizeCategory(filters.category);
+    const search = filters.search || filters.query || '';
+    const limit = clampPositiveInt(filters.limit, 0, 0, MAX_CATALOG_LIMIT);
+    const offset = clampPositiveInt(filters.offset, 0, 0);
+    return {
+      category,
+      search,
+      limit,
+      offset
+    };
+  }
+
+  normalizeCategory(category) {
+    if (!category || category === 'all') return undefined;
+    const candidate = normalizeText(category);
+    return candidate ? (CATEGORY_LOOKUP.get(candidate) || undefined) : undefined;
+  }
+
+  filterConnectors(category, search) {
+    let connectors = getConnectors();
+
+    if (category) {
+      connectors = connectors.filter((connector) => connector.category === category);
+    }
+
+    if (search) {
+      const normalizedSearch = String(search).trim().toLowerCase();
+      if (normalizedSearch) {
+        connectors = connectors.filter((connector) => {
+          const name = String(connector.name || '').toLowerCase();
+          const description = String(connector.description || '').toLowerCase();
+          const categoryName = String(CATEGORIES[connector.category] || '').toLowerCase();
+          return (
+            name.includes(normalizedSearch) ||
+            description.includes(normalizedSearch) ||
+            categoryName.includes(normalizedSearch)
+          );
+        });
+      }
+    }
+
+    return connectors;
   }
 
   getConnectorDetails(connectorId) {
