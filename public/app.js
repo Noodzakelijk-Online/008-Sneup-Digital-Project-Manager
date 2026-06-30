@@ -461,11 +461,15 @@ function renderOperationsBrief() {
 
   const counts = brief.counts || {};
   const robertDecisionCount = counts.robertDecisions || 0;
-  els.operationsBriefCount.textContent = `${robertDecisionCount} decision${robertDecisionCount === 1 ? '' : 's'}`;
+  const graphDecisionCount = counts.graphDecisions || 0;
+  els.operationsBriefCount.textContent = graphDecisionCount > 0
+    ? `${robertDecisionCount} Robert, ${graphDecisionCount} graph`
+    : `${robertDecisionCount} decision${robertDecisionCount === 1 ? '' : 's'}`;
 
   const items = [
     ...(brief.robertDecisions || []),
     ...(brief.vaReady || []),
+    ...(brief.teamQueue || []),
     ...(brief.failedActions || []),
     ...(brief.dueFollowUps || []),
     ...(brief.boardHealth || [])
@@ -613,7 +617,10 @@ function renderOperationsBriefItem(item) {
         ${item.boardName ? `<span>${escapeHtml(item.boardName)}</span>` : ''}
         ${item.cardName ? `<span>${escapeHtml(item.cardName)}</span>` : ''}
         ${item.sourceCount ? `<span>${item.sourceCount} sources</span>` : ''}
+        ${item.sourceProvider ? `<span>${escapeHtml(item.sourceProvider)}</span>` : ''}
+        ${item.draftOnly ? '<span>draft-only</span>' : ''}
       </div>
+      ${item.providerUrl ? `<div class="meta"><a href="${escapeHtml(item.providerUrl)}" rel="noreferrer" target="_blank">Open source</a></div>` : ''}
     </div>
   `;
 }

@@ -6,6 +6,7 @@ const FollowUpPlan = require('../models/FollowUpPlan');
 const CardFinding = require('../models/CardFinding');
 const BoardHealthSnapshot = require('../models/BoardHealthSnapshot');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
+const workGraphService = require('./workGraphService');
 
 const SEVERITY_SCORE = {
   critical: 4,
@@ -34,7 +35,8 @@ class OperationsBriefService {
       failedActions,
       dueFollowUps,
       findings,
-      healthSnapshots
+      healthSnapshots,
+      graphDecisionResult
     ] = await Promise.all([
       DecisionQueueItem.find({ workspaceId, status: 'open' })
         .populate('recommendationId boardId cardId')
@@ -63,7 +65,11 @@ class OperationsBriefService {
       BoardHealthSnapshot.find({ workspaceId })
         .populate('boardId')
         .sort({ generatedAt: -1 })
-        .limit(50)
+        .limit(50),
+      workGraphService.listDecisionCandidates({
+        workspaceId,
+        limit: Math.min(limit, 25)
+      })
     ]);
 
     return this.buildBrief({
@@ -74,12 +80,18 @@ class OperationsBriefService {
       failedActions,
       dueFollowUps,
       findings,
-      healthSnapshots
+      healthSnapshots,
+      graphDecisionCandidates: graphDecisionResult.candidates || []
     });
   }
 
   buildBrief(records = {}) {
     const decisions = records.decisions || [];
+    const graphDecisionCandidates = this.normalizeGraphDecisionCandidates(records.graphDecisionCandidates || []);
+    const decisionItems = [
+      ...decisions,
+      ...graphDecisionCandidates
+    ];
     const recommendations = records.recommendations || [];
     const failedActions = records.failedActions || [];
     const dueFollowUps = records.dueFollowUps || [];
@@ -87,13 +99,13 @@ class OperationsBriefService {
     const healthSnapshots = this.latestHealthByBoard(records.healthSnapshots || []);
     const generatedAt = records.generatedAt || new Date();
 
-    const robertDecisions = this.sortPriority(decisions.filter(item => item.ownerType === 'robert'));
+    const robertDecisions = this.sortPriority(decisionItems.filter(item => item.ownerType === 'robert'));
     const vaReady = this.sortPriority([
-      ...decisions.filter(item => item.ownerType === 'va'),
+      ...decisionItems.filter(item => item.ownerType === 'va'),
       ...findings.filter(item => item.waitingOn === 'va')
     ]);
     const teamQueue = this.sortPriority([
-      ...decisions.filter(item => item.ownerType === 'team'),
+      ...decisionItems.filter(item => item.ownerType === 'team'),
       ...findings.filter(item => ['team', 'worker', 'external'].includes(item.waitingOn))
     ]);
     const criticalFindings = this.sortPriority(findings.filter(item =>
@@ -103,9 +115,9 @@ class OperationsBriefService {
       ['critical', 'at_risk'].includes(snapshot.healthStatus)
     );
 
-    const topDecision = robertDecisions[0] || decisions[0] || recommendations[0] || criticalFindings[0];
+    const topDecision = robertDecisions[0] || decisionItems[0] || recommendations[0] || criticalFindings[0];
     const confidence = this.calculateConfidence({
-      decisions,
+      decisions: decisionItems,
       failedActions,
       dueFollowUps,
       findings,
@@ -128,6 +140,7 @@ class OperationsBriefService {
         dueFollowUps: dueFollowUps.length,
         highRiskFindings: criticalFindings.length,
         boardsAtRisk: boardsAtRisk.length,
+        graphDecisions: graphDecisionCandidates.length,
         pendingRecommendations: recommendations.filter(item => ['pending', 'approved', 'change_requested'].includes(item.status)).length
       },
       robertDecisions: robertDecisions.slice(0, 5).map(item => this.toBriefItem(item, 'robert_decision')),
@@ -136,6 +149,7 @@ class OperationsBriefService {
       failedActions: failedActions.slice(0, 5).map(item => this.toBriefItem(item, 'failed_action')),
       dueFollowUps: dueFollowUps.slice(0, 5).map(item => this.toBriefItem(item, 'follow_up_due')),
       boardHealth: boardsAtRisk.slice(0, 5).map(item => this.toBriefItem(item, 'board_health')),
+      graphDecisions: graphDecisionCandidates.slice(0, 5).map(item => this.toBriefItem(item, 'graph_decision')),
       morningPlan: this.buildMorningPlan({
         robertDecisions,
         vaReady,
@@ -229,8 +243,29 @@ class OperationsBriefService {
       cardName: this.displayName(card),
       dueAt: item.dueAt,
       generatedAt: item.generatedAt,
-      sourceCount: (item.sourceEvidence || recommendation.sourceEvidence || []).length
+      sourceCount: (item.sourceEvidence || recommendation.sourceEvidence || []).length,
+      sourceSystem: item.sourceSystem,
+      sourceProvider: item.sourceProvider,
+      externalId: item.externalId,
+      providerUrl: item.providerUrl || item.url || '',
+      workItemId: item.workItemId,
+      draftOnly: item.draftOnly || item.actionPayload?.draftOnly || false,
+      executable: item.executable || item.actionPayload?.executable || false
     };
+  }
+
+  normalizeGraphDecisionCandidates(candidates) {
+    return candidates.map(candidate => ({
+      ...candidate,
+      id: candidate.id || candidate.workItemId || candidate.externalId || candidate.canonicalKey,
+      status: candidate.status || 'open',
+      sourceSystem: 'work_graph',
+      providerUrl: candidate.providerUrl || candidate.actionPayload?.providerUrl || '',
+      sourceProvider: candidate.sourceProvider || candidate.actionPayload?.sourceProvider,
+      externalId: candidate.externalId || candidate.actionPayload?.externalId,
+      draftOnly: candidate.draftOnly ?? candidate.actionPayload?.draftOnly ?? true,
+      executable: candidate.executable ?? candidate.actionPayload?.executable ?? false
+    }));
   }
 
   latestHealthByBoard(snapshots) {

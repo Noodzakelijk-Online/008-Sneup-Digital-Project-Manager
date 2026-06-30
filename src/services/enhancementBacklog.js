@@ -171,11 +171,11 @@ const enhancements = [
     priority: 'P2',
     area: 'data-model',
     title: 'Introduce a normalized cross-tool work graph',
-    evidence: 'Work signals now project into normalized WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent graph models, `/api/work-signals/graph` summarizes the graph for the dashboard, and graph items can produce Robert/VA/team decision candidates that queue approval-gated recommendations.',
+    evidence: 'Work signals now project into normalized WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent graph models, `/api/work-signals/graph` summarizes the graph for the dashboard, graph items can produce Robert/VA/team decision candidates that queue approval-gated recommendations, and graph decisions are promoted into the read-only daily operations brief with source/provider evidence.',
     impact: 'Allows Sneup to reason across projects without forcing every provider into Trello-specific schemas.',
     effort: 'XL',
     status: 'in-progress',
-    nextStep: 'Extract provider-native dependencies and promote queued graph evidence into the daily operations brief.',
+    nextStep: 'Extract provider-native dependencies and let mission control rank graph-native decisions alongside Trello-native operating signals.',
     acceptanceCriteria: [
       'Trello data can be projected into the normalized graph without losing Trello-specific fields.',
       'At least three non-Trello providers can sync into the graph.',

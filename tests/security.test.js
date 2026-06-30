@@ -1078,6 +1078,7 @@ describe('operations daily brief', () => {
     jest.dontMock('../src/models/FollowUpPlan');
     jest.dontMock('../src/models/CardFinding');
     jest.dontMock('../src/models/BoardHealthSnapshot');
+    jest.dontMock('../src/services/workGraphService');
     jest.resetModules();
   });
 
@@ -1107,8 +1108,12 @@ describe('operations daily brief', () => {
     jest.doMock('../src/models/FollowUpPlan', () => makeModel('FollowUpPlan'));
     jest.doMock('../src/models/CardFinding', () => makeModel('CardFinding'));
     jest.doMock('../src/models/BoardHealthSnapshot', () => makeModel('BoardHealthSnapshot'));
+    jest.doMock('../src/services/workGraphService', () => ({
+      listDecisionCandidates: jest.fn().mockResolvedValue({ count: 0, candidates: [] })
+    }));
 
     const operationsBriefService = require('../src/services/operationsBriefService');
+    const workGraphService = require('../src/services/workGraphService');
     jest.spyOn(operationsBriefService, 'buildBrief').mockReturnValue({ mode: 'live' });
 
     await expect(operationsBriefService.getDailyBrief({
@@ -1122,6 +1127,10 @@ describe('operations daily brief', () => {
     expect(queryLog.FollowUpPlan).toMatchObject({ workspaceId: 'workspace-object-id' });
     expect(queryLog.CardFinding).toMatchObject({ workspaceId: 'workspace-object-id' });
     expect(queryLog.BoardHealthSnapshot).toMatchObject({ workspaceId: 'workspace-object-id' });
+    expect(workGraphService.listDecisionCandidates).toHaveBeenCalledWith({
+      workspaceId: 'workspace-object-id',
+      limit: 5
+    });
   });
 
   test('prioritizes failed actions and separates Robert, VA, and team queues', () => {
@@ -1220,6 +1229,94 @@ describe('operations daily brief', () => {
       'Worker follow-up needed'
     ]));
     expect(brief.morningPlan[0]).toContain('failed Trello action');
+  });
+
+  test('promotes graph decision candidates into the read-only daily brief', () => {
+    const operationsBriefService = require('../src/services/operationsBriefService');
+
+    const brief = operationsBriefService.buildBrief({
+      mode: 'live',
+      generatedAt: new Date('2026-06-29T08:00:00Z'),
+      graphDecisionCandidates: [
+        {
+          workItemId: 'work-item-robert',
+          ownerType: 'robert',
+          title: 'Robert review: Client budget approval',
+          description: 'Sensitive client budget work needs Robert review.',
+          riskLevel: 'high',
+          sourceProvider: 'asana',
+          externalId: 'task-1',
+          providerUrl: 'https://asana.example/task-1',
+          actionPayload: {
+            draftOnly: true,
+            executable: false
+          },
+          sourceEvidence: [
+            { type: 'work_item', label: 'Client budget approval' }
+          ]
+        },
+        {
+          workItemId: 'work-item-va',
+          ownerType: 'va',
+          title: 'Assign owner: Analytics webhook rollout',
+          description: 'The graph has no owner for this open item.',
+          riskLevel: 'medium',
+          sourceProvider: 'github',
+          externalId: 'issue-5',
+          actionPayload: {
+            draftOnly: true,
+            executable: false
+          },
+          sourceEvidence: [
+            { type: 'work_item', label: 'Analytics webhook rollout' }
+          ]
+        },
+        {
+          workItemId: 'work-item-team',
+          ownerType: 'team',
+          title: 'Follow up waiting item: Legal checklist',
+          description: 'The normalized work graph shows this item is waiting.',
+          riskLevel: 'medium',
+          sourceProvider: 'jira_software',
+          externalId: 'OPS-4',
+          actionPayload: {
+            draftOnly: true,
+            executable: false
+          }
+        }
+      ]
+    });
+
+    expect(brief.readonly).toBe(true);
+    expect(brief.counts).toMatchObject({
+      robertDecisions: 1,
+      vaReady: 1,
+      teamQueue: 1,
+      graphDecisions: 3
+    });
+    expect(brief.nextDecision).toBe('Robert review: Client budget approval Approve: Yes/No.');
+    expect(brief.robertDecisions[0]).toMatchObject({
+      id: 'work-item-robert',
+      type: 'robert_decision',
+      sourceSystem: 'work_graph',
+      sourceProvider: 'asana',
+      providerUrl: 'https://asana.example/task-1',
+      draftOnly: true,
+      executable: false,
+      sourceCount: 1
+    });
+    expect(brief.vaReady[0]).toMatchObject({
+      id: 'work-item-va',
+      type: 'va_ready',
+      sourceProvider: 'github',
+      draftOnly: true
+    });
+    expect(brief.teamQueue[0]).toMatchObject({
+      id: 'work-item-team',
+      type: 'team_queue',
+      sourceProvider: 'jira_software',
+      draftOnly: true
+    });
   });
 });
 
