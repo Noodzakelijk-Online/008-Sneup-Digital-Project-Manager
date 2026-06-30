@@ -1368,6 +1368,7 @@ function renderWorkSignals() {
     ['Providers', providers.length],
     ['Graph items', graph.counts.items || 0],
     ['Graph actors', graph.counts.actors || 0],
+    ['Graph deps', graph.counts.dependencies || 0],
     ['Graph decisions', graphCandidates.length],
     ['Implemented adapters', implementedContracts.length],
     ['Connected adapters', connectedContracts.length]
@@ -1386,7 +1387,7 @@ function renderWorkSignals() {
     : '';
 
   const graphNotice = graph.counts.items
-    ? `<div class="notice">Normalized graph: ${escapeHtml(graph.counts.items)} items, ${escapeHtml(graph.counts.containers || 0)} containers, ${escapeHtml(graph.counts.events || 0)} events.</div>`
+    ? `<div class="notice">Normalized graph: ${escapeHtml(graph.counts.items)} items, ${escapeHtml(graph.counts.containers || 0)} containers, ${escapeHtml(graph.counts.dependencies || 0)} dependencies, ${escapeHtml(graph.counts.events || 0)} events.</div>`
     : '';
   const graphDecisionNotice = graphCandidates.length
     ? `<div class="notice">Graph decisions: ${escapeHtml(countByOwner(graphCandidates, 'robert'))} Robert, ${escapeHtml(countByOwner(graphCandidates, 'va'))} VA, ${escapeHtml(countByOwner(graphCandidates, 'team'))} team.</div>`

@@ -702,7 +702,8 @@ describe('work signal normalization', () => {
         repository: {
           id: 'repo-1',
           full_name: 'no/sneup'
-        }
+        },
+        blockedBy: [{ node_id: 'ISSUE_kwDO999', title: 'Complete auth review' }]
       }
     });
 
@@ -731,6 +732,15 @@ describe('work signal normalization', () => {
         name: 'no/sneup',
         containerType: 'repository'
       }),
+      dependencies: [
+        expect.objectContaining({
+          sourceProvider: 'github',
+          sourceExternalId: 'PR_kwDO123',
+          targetProvider: 'github',
+          targetExternalId: 'ISSUE_kwDO999',
+          dependencyType: 'blocked_by'
+        })
+      ],
       event: expect.objectContaining({
         eventType: 'synced',
         eventKey: 'github:PR_kwDO123:2026-06-30T08:00:00.000Z'
@@ -739,6 +749,122 @@ describe('work signal normalization', () => {
     expect(String(projection.workspaceId)).toBe(String(workspaceId));
     expect(String(projection.connectorAccountId)).toBe(String(accountId));
     expect(String(projection.sourceSignalId)).toBe(String(signalId));
+  });
+
+  test('extracts provider-native work dependencies into graph projections', () => {
+    const workGraphService = require('../src/services/workGraphService');
+    const workspaceId = new mongoose.Types.ObjectId();
+    const accountId = new mongoose.Types.ObjectId();
+
+    const jiraProjection = workGraphService.buildProjection({
+      workspaceId,
+      connectorAccountId: accountId,
+      provider: 'jira_software',
+      externalId: 'OPS-42',
+      sourceType: 'issue',
+      title: 'Launch checklist',
+      status: 'blocked',
+      raw: {
+        fields: {
+          issuelinks: [
+            {
+              id: '1001',
+              type: { outward: 'blocks', inward: 'is blocked by' },
+              outwardIssue: { key: 'OPS-43', fields: { summary: 'Launch QA' } }
+            },
+            {
+              id: '1002',
+              type: { inward: 'is blocked by' },
+              inwardIssue: { key: 'OPS-7', fields: { summary: 'Client approval' } }
+            }
+          ]
+        }
+      }
+    });
+    const asanaProjection = workGraphService.buildProjection({
+      workspaceId,
+      connectorAccountId: accountId,
+      provider: 'asana',
+      externalId: 'task-1',
+      sourceType: 'task',
+      title: 'Publish landing page',
+      status: 'waiting',
+      raw: {
+        dependencies: [{ gid: 'task-0', name: 'Approve copy' }],
+        dependents: [{ gid: 'task-2', name: 'Start ads' }]
+      }
+    });
+    const githubProjection = workGraphService.buildProjection({
+      workspaceId,
+      connectorAccountId: accountId,
+      provider: 'github',
+      externalId: 'PR_kwDO1',
+      sourceType: 'pull_request',
+      title: 'Ship reporting API',
+      status: 'open',
+      raw: {
+        blocks: [{ node_id: 'ISSUE_kwDO2', title: 'Frontend report UI' }],
+        closing_issues: [{ node_id: 'ISSUE_kwDO3', title: 'Bug report' }]
+      }
+    });
+    const trelloProjection = workGraphService.buildProjection({
+      workspaceId,
+      connectorAccountId: accountId,
+      provider: 'trello',
+      externalId: 'card-1',
+      sourceType: 'task',
+      title: 'Client rollout',
+      status: 'open',
+      raw: {
+        attachments: [
+          { id: 'attachment-1', idModel: 'card-2', name: 'Related rollout checklist', url: 'https://trello.example/c/card-2' }
+        ]
+      }
+    });
+
+    expect(jiraProjection.dependencies).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetExternalId: 'OPS-43',
+        dependencyType: 'blocks',
+        sourceProvider: 'jira_software'
+      }),
+      expect.objectContaining({
+        targetExternalId: 'OPS-7',
+        dependencyType: 'blocked_by',
+        sourceProvider: 'jira_software'
+      })
+    ]));
+    expect(asanaProjection.dependencies).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetExternalId: 'task-0',
+        dependencyType: 'depends_on',
+        sourceProvider: 'asana'
+      }),
+      expect.objectContaining({
+        targetExternalId: 'task-2',
+        dependencyType: 'blocks',
+        sourceProvider: 'asana'
+      })
+    ]));
+    expect(githubProjection.dependencies).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetExternalId: 'ISSUE_kwDO2',
+        dependencyType: 'blocks',
+        sourceProvider: 'github'
+      }),
+      expect.objectContaining({
+        targetExternalId: 'ISSUE_kwDO3',
+        dependencyType: 'relates_to',
+        sourceProvider: 'github'
+      })
+    ]));
+    expect(trelloProjection.dependencies).toEqual([
+      expect.objectContaining({
+        targetExternalId: 'card-2',
+        dependencyType: 'relates_to',
+        sourceProvider: 'trello'
+      })
+    ]);
   });
 
   test('routes graph work items into Robert, VA, and team decision candidates without provider writes', () => {

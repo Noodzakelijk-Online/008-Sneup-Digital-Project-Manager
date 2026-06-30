@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const WorkActor = require('../models/WorkActor');
 const WorkComment = require('../models/WorkComment');
 const WorkContainer = require('../models/WorkContainer');
+const WorkDependency = require('../models/WorkDependency');
 const WorkEvent = require('../models/WorkEvent');
 const WorkItem = require('../models/WorkItem');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
@@ -19,6 +20,12 @@ const asDate = (value) => {
 };
 
 const signalId = (signal) => signal?._id || signal?.id;
+const asArray = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (value === undefined || value === null || value === '') return [];
+  return [value];
+};
+const pick = (...values) => values.find(value => value !== undefined && value !== null && value !== '');
 const OPEN_STATUSES = new Set(['open', 'in_progress', 'blocked', 'waiting', 'unknown']);
 const ROBERT_SENSITIVE_PATTERN = /\b(robert|client|legal|contract|money|budget|invoice|payment|government|tax|compliance|commitment|approval)\b/i;
 
@@ -55,6 +62,7 @@ class WorkGraphService {
       evidenceRefs: signal.evidenceRefs || [],
       raw: signal.raw || {},
       syncState: signal.syncState || {},
+      dependencies: this.dependencyProjectionsForSignal(signal, workspaceId, provider, externalId),
       actors: (signal.owners || []).map(owner => ({
         workspaceId,
         sourceProvider: provider,
@@ -122,6 +130,7 @@ class WorkGraphService {
     await this.upsertContainer(projection, now);
     await this.upsertComment(projection, item, now);
     await this.upsertEvent(projection, item);
+    await this.upsertDependencies(projection, item, now);
 
     return this.sanitizeItem(item);
   }
@@ -205,6 +214,44 @@ class WorkGraphService {
     });
   }
 
+  async upsertDependencies(projection, item, now) {
+    for (const dependency of projection.dependencies || []) {
+      const target = await WorkItem.findOne({
+        workspaceId: projection.workspaceId,
+        sourceProvider: dependency.targetProvider || projection.sourceProvider,
+        externalId: dependency.targetExternalId
+      });
+      if (!target) continue;
+
+      await WorkDependency.findOneAndUpdate({
+        workspaceId: projection.workspaceId,
+        sourceProvider: projection.sourceProvider,
+        externalId: dependency.externalId
+      }, {
+        $set: {
+          workspaceId: projection.workspaceId,
+          sourceItemId: item._id,
+          targetItemId: target._id,
+          dependencyType: dependency.dependencyType,
+          sourceProvider: projection.sourceProvider,
+          externalId: dependency.externalId,
+          confidence: dependency.confidence,
+          evidenceRefs: dependency.evidenceRefs,
+          metadata: {
+            ...(dependency.metadata || {}),
+            targetProvider: dependency.targetProvider || projection.sourceProvider,
+            targetExternalId: dependency.targetExternalId,
+            lastSeenAt: now
+          }
+        }
+      }, {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true
+      });
+    }
+  }
+
   async getSummary(options = {}) {
     if (!this.isDatabaseReady()) {
       return this.emptySummary();
@@ -212,11 +259,12 @@ class WorkGraphService {
 
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const limit = Math.max(1, Math.min(Number.parseInt(options.limit, 10) || 50, 200));
-    const [itemCount, actorCount, containerCount, commentCount, eventCount, byStatus, byProvider, recentItems] = await Promise.all([
+    const [itemCount, actorCount, containerCount, commentCount, dependencyCount, eventCount, byStatus, byProvider, byDependencyType, recentItems, recentDependencies] = await Promise.all([
       WorkItem.countDocuments({ workspaceId }),
       WorkActor.countDocuments({ workspaceId }),
       WorkContainer.countDocuments({ workspaceId }),
       WorkComment.countDocuments({ workspaceId }),
+      WorkDependency.countDocuments({ workspaceId }),
       WorkEvent.countDocuments({ workspaceId }),
       WorkItem.aggregate([
         { $match: { workspaceId } },
@@ -228,7 +276,13 @@ class WorkGraphService {
         { $group: { _id: '$sourceProvider', count: { $sum: 1 } } },
         { $sort: { count: -1 } }
       ]),
-      WorkItem.find({ workspaceId }).sort({ priority: 1, dueAt: 1, lastSeenAt: -1 }).limit(limit)
+      WorkDependency.aggregate([
+        { $match: { workspaceId } },
+        { $group: { _id: '$dependencyType', count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+      ]),
+      WorkItem.find({ workspaceId }).sort({ priority: 1, dueAt: 1, lastSeenAt: -1 }).limit(limit),
+      WorkDependency.find({ workspaceId }).sort({ updatedAt: -1 }).limit(Math.min(limit, 25))
     ]);
 
     return {
@@ -237,11 +291,14 @@ class WorkGraphService {
         actors: actorCount,
         containers: containerCount,
         comments: commentCount,
+        dependencies: dependencyCount,
         events: eventCount
       },
       byStatus: this.aggregateRows(byStatus),
       byProvider: this.aggregateRows(byProvider),
-      items: recentItems.map(item => this.sanitizeItem(item))
+      byDependencyType: this.aggregateRows(byDependencyType),
+      items: recentItems.map(item => this.sanitizeItem(item)),
+      dependencies: recentDependencies.map(dependency => this.sanitizeDependency(dependency))
     };
   }
 
@@ -275,11 +332,14 @@ class WorkGraphService {
         actors: 0,
         containers: 0,
         comments: 0,
+        dependencies: 0,
         events: 0
       },
       byStatus: {},
       byProvider: {},
-      items: []
+      byDependencyType: {},
+      items: [],
+      dependencies: []
     };
   }
 
@@ -472,6 +532,199 @@ class WorkGraphService {
     };
   }
 
+  dependencyProjectionsForSignal(signal, workspaceId, provider, externalId) {
+    const raw = signal.raw || {};
+    const refs = [
+      ...this.genericDependencyRefs(raw, provider, externalId),
+      ...this.jiraDependencyRefs(raw, provider, externalId),
+      ...this.asanaDependencyRefs(raw, provider, externalId),
+      ...this.githubDependencyRefs(raw, provider, externalId),
+      ...this.trelloDependencyRefs(raw, provider, externalId)
+    ];
+    const seen = new Set();
+
+    return refs.filter(ref => {
+      if (!ref.targetExternalId || ref.targetExternalId === externalId) return false;
+      const key = `${ref.targetProvider || provider}:${ref.targetExternalId}:${ref.dependencyType}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).map(ref => ({
+      workspaceId,
+      sourceProvider: provider,
+      sourceExternalId: externalId,
+      targetProvider: ref.targetProvider || provider,
+      targetExternalId: String(ref.targetExternalId),
+      dependencyType: this.normalizeDependencyType(ref.dependencyType),
+      externalId: ref.externalId || `${provider}:${externalId}:${ref.dependencyType || 'unknown'}:${ref.targetProvider || provider}:${ref.targetExternalId}`,
+      confidence: ref.confidence || 1,
+      evidenceRefs: ref.evidenceRefs || [{
+        provider,
+        externalId,
+        url: ref.url,
+        label: ref.label || `Dependency ${ref.targetExternalId}`,
+        type: 'dependency'
+      }],
+      metadata: ref.metadata || {}
+    }));
+  }
+
+  genericDependencyRefs(raw, provider, externalId) {
+    const groups = [
+      ['dependencies', 'depends_on'],
+      ['dependsOn', 'depends_on'],
+      ['blockedBy', 'blocked_by'],
+      ['blocks', 'blocks'],
+      ['dependents', 'blocks'],
+      ['related', 'relates_to'],
+      ['relatedItems', 'relates_to'],
+      ['duplicates', 'duplicates'],
+      ['linkedIssues', 'relates_to'],
+      ['linkedCards', 'relates_to']
+    ];
+
+    return groups.flatMap(([field, dependencyType]) =>
+      asArray(raw[field]).map((target, index) => this.dependencyRefFromTarget(target, {
+        provider,
+        externalId,
+        dependencyType,
+        relationField: field,
+        index
+      }))
+    ).filter(Boolean);
+  }
+
+  jiraDependencyRefs(raw, provider, externalId) {
+    const links = asArray(raw.issuelinks || raw.fields?.issuelinks);
+    return links.flatMap((link, index) => {
+      const refs = [];
+      if (link.outwardIssue) {
+        refs.push(this.dependencyRefFromTarget(link.outwardIssue, {
+          provider,
+          externalId,
+          dependencyType: this.normalizeDependencyType(link.type?.outward || link.type?.name),
+          relationField: 'issuelinks.outward',
+          index,
+          relationId: link.id,
+          label: link.type?.outward || link.type?.name
+        }));
+      }
+      if (link.inwardIssue) {
+        refs.push(this.dependencyRefFromTarget(link.inwardIssue, {
+          provider,
+          externalId,
+          dependencyType: this.normalizeDependencyType(link.type?.inward || link.type?.name),
+          relationField: 'issuelinks.inward',
+          index,
+          relationId: link.id,
+          label: link.type?.inward || link.type?.name
+        }));
+      }
+      return refs.filter(Boolean);
+    });
+  }
+
+  asanaDependencyRefs(raw, provider, externalId) {
+    return [
+      ...asArray(raw.dependencies).map((target, index) => this.dependencyRefFromTarget(target, {
+        provider,
+        externalId,
+        dependencyType: 'depends_on',
+        relationField: 'dependencies',
+        index
+      })),
+      ...asArray(raw.dependents).map((target, index) => this.dependencyRefFromTarget(target, {
+        provider,
+        externalId,
+        dependencyType: 'blocks',
+        relationField: 'dependents',
+        index
+      }))
+    ].filter(Boolean);
+  }
+
+  githubDependencyRefs(raw, provider, externalId) {
+    return [
+      ...asArray(raw.blocked_by || raw.blockedBy).map((target, index) => this.dependencyRefFromTarget(target, {
+        provider,
+        externalId,
+        dependencyType: 'blocked_by',
+        relationField: 'blocked_by',
+        index
+      })),
+      ...asArray(raw.blocks).map((target, index) => this.dependencyRefFromTarget(target, {
+        provider,
+        externalId,
+        dependencyType: 'blocks',
+        relationField: 'blocks',
+        index
+      })),
+      ...asArray(raw.closing_issues || raw.closingIssues).map((target, index) => this.dependencyRefFromTarget(target, {
+        provider,
+        externalId,
+        dependencyType: 'relates_to',
+        relationField: 'closing_issues',
+        index
+      }))
+    ].filter(Boolean);
+  }
+
+  trelloDependencyRefs(raw, provider, externalId) {
+    return asArray(raw.attachments)
+      .filter(attachment => attachment.idModel || attachment.cardId || /\/c\//.test(String(attachment.url || '')))
+      .map((attachment, index) => this.dependencyRefFromTarget(attachment.idModel || attachment.cardId || attachment, {
+        provider,
+        externalId,
+        dependencyType: 'relates_to',
+        relationField: 'attachments',
+        relationId: attachment.id,
+        index,
+        label: attachment.name || 'Linked Trello card',
+        url: attachment.url
+      }))
+      .filter(Boolean);
+  }
+
+  dependencyRefFromTarget(target, context) {
+    const targetExternalId = typeof target === 'object'
+      ? pick(target.externalId, target.targetExternalId, target.key, target.gid, target.id, target.node_id, target.number, target.shortLink, target.cardId)
+      : target;
+    if (!targetExternalId) return null;
+
+    const targetProvider = typeof target === 'object'
+      ? pick(target.provider, target.targetProvider, context.provider)
+      : context.provider;
+    const dependencyType = typeof target === 'object'
+      ? this.normalizeDependencyType(pick(target.dependencyType, target.relationship, target.type, context.dependencyType))
+      : this.normalizeDependencyType(context.dependencyType);
+    const relationId = pick(context.relationId, typeof target === 'object' ? target.relationId || target.id : undefined, context.index);
+
+    return {
+      targetProvider,
+      targetExternalId: String(targetExternalId),
+      dependencyType,
+      externalId: `${context.provider}:${context.externalId}:${context.relationField}:${relationId}:${targetProvider}:${targetExternalId}`,
+      label: context.label || (typeof target === 'object' ? target.title || target.name || target.summary : undefined),
+      url: context.url || (typeof target === 'object' ? pick(target.url, target.html_url, target.htmlUrl, target.permalink_url, target.webUrl, target.self) : undefined),
+      confidence: typeof target === 'object' ? target.confidence : undefined,
+      metadata: {
+        relationField: context.relationField,
+        relationId,
+        rawType: typeof target === 'object' ? target.type?.name || target.type || target.relationship : undefined
+      }
+    };
+  }
+
+  normalizeDependencyType(value) {
+    const text = String(value || '').toLowerCase().replace(/[_-]+/g, ' ');
+    if (/\b(duplicate|duplicates|duplicated)\b/.test(text)) return 'duplicates';
+    if (/\b(blocked by|is blocked by|blocked)\b/.test(text)) return 'blocked_by';
+    if (/\b(depends on|depends|dependency|requires|required by)\b/.test(text)) return 'depends_on';
+    if (/\b(blocks|blocking|is blocking)\b/.test(text)) return 'blocks';
+    if (/\b(relates|related|linked|closes|closing)\b/.test(text)) return 'relates_to';
+    return ['blocks', 'blocked_by', 'relates_to', 'duplicates', 'depends_on'].includes(value) ? value : 'unknown';
+  }
+
   containerKeyForSignal(signal) {
     const raw = signal.raw || {};
     const container = raw.container || raw.project || raw.board || raw.repository || raw.channel || raw.folder || raw.calendar;
@@ -522,6 +775,23 @@ class WorkGraphService {
       syncState: item.syncState || {},
       createdAt: item.createdAt,
       updatedAt: item.updatedAt
+    };
+  }
+
+  sanitizeDependency(dependency) {
+    return {
+      id: String(dependency._id),
+      workspaceId: dependency.workspaceId ? String(dependency.workspaceId) : null,
+      sourceItemId: dependency.sourceItemId ? String(dependency.sourceItemId) : null,
+      targetItemId: dependency.targetItemId ? String(dependency.targetItemId) : null,
+      dependencyType: dependency.dependencyType,
+      sourceProvider: dependency.sourceProvider,
+      externalId: dependency.externalId,
+      confidence: dependency.confidence,
+      evidenceRefs: dependency.evidenceRefs || [],
+      metadata: dependency.metadata || {},
+      createdAt: dependency.createdAt,
+      updatedAt: dependency.updatedAt
     };
   }
 
