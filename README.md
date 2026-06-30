@@ -195,13 +195,13 @@ See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, a
 - `GET /api/audit` - List audit events
 - `GET /api/follow-ups` - List follow-up plans
 - `GET /api/follow-ups/due` - List due follow-up plans
-- `GET /api/boards/:boardId/operations-ledger` - Board-level recommendation/action/audit ledger with Trello-linked graph context
+- `GET /api/boards/:boardId/operations-ledger` - Board-level recommendation/action/audit ledger with Trello-linked graph context, source links, and dependency filters
 - `GET /api/boards/:boardId/operating-ledger` - Alias for board-level operating ledger
 - `GET /api/boards/:boardId/decision-queue` - Board-specific decision queue
 - `POST /api/boards/:boardId/analyze` - Safely analyze synced cards and persist findings/health snapshots
 - `GET /api/boards/:boardId/findings` - Board-specific card findings
 - `GET /api/boards/:boardId/health-snapshots` - Board health snapshot history
-- `GET /api/cards/:cardId/operations-ledger` - Card-level recommendation/action/follow-up ledger with Trello-linked graph context
+- `GET /api/cards/:cardId/operations-ledger` - Card-level recommendation/action/follow-up ledger with Trello-linked graph context, source links, and dependency filters
 - `GET /api/cards/:cardId/operating-ledger` - Alias for card-level operating ledger
 - `GET /api/cards/:cardId/audit` - Card audit events
 - `GET /api/cards/:cardId/findings` - Card findings and missing next-action/stale/blocked signals

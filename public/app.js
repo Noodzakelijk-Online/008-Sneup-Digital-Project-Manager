@@ -605,6 +605,7 @@ function renderOperationsLedger() {
     button.addEventListener('click', () => openRecommendationEvidence(button.dataset.recommendationEvidence));
   });
   bindLedgerDrilldownActions();
+  bindGraphActions();
 }
 
 function renderOperationsBriefItem(item) {
@@ -1074,6 +1075,8 @@ function renderOperatingLedgerModal(type, ledger = {}) {
   els.modal.classList.add('open');
   document.getElementById('ledgerClose').addEventListener('click', closeModal);
   bindLedgerDrilldownActions();
+  bindGraphActions();
+  bindGraphLedgerFilters();
   document.querySelectorAll('[data-recommendation-action]').forEach((button) => {
     button.addEventListener('click', () => runRecommendationAction(
       button.dataset.recommendationId,
@@ -1122,11 +1125,95 @@ function renderGraphLedgerContext(graphContext = {}) {
         </div>
       </div>
       ${notice}
+      ${renderGraphLedgerFilters(graphContext)}
+      ${renderGraphDetailSection('Linked Source Items', graphContext.sourceLinks || [], renderGraphLinkedItem)}
+      ${renderGraphDetailSection('Linked Graph Items', graphContext.items || [], renderGraphLinkedItem)}
       ${renderGraphDetailSection('Graph Decision Candidates', graphContext.candidates || [], renderGraphCandidateDetail)}
       ${renderGraphDetailSection('Graph Dependency Edges', graphContext.dependencies || [], renderGraphDependency)}
       ${renderGraphDetailSection('Graph Recommendation History', graphContext.recommendations || [], renderGraphRecommendationHistory)}
     </section>
   `;
+}
+
+function renderGraphLedgerFilters(graphContext = {}) {
+  const filters = graphContext.filters || {};
+  const providers = filters.providers || [];
+  const dependencyTypes = filters.dependencyTypes || [];
+  const directions = filters.directions || [];
+  if (!providers.length && !dependencyTypes.length && !directions.length) return '';
+
+  return `
+    <div class="graph-filter-panel">
+      ${renderGraphFilterGroup('Provider', 'provider', providers)}
+      ${renderGraphFilterGroup('Type', 'type', dependencyTypes)}
+      ${renderGraphFilterGroup('Direction', 'direction', directions)}
+      <span class="meta graph-filter-count"><span data-graph-filter-count>0</span> visible graph rows</span>
+    </div>
+  `;
+}
+
+function renderGraphFilterGroup(label, group, values = []) {
+  if (!values.length) return '';
+  return `
+    <div class="graph-filter-group">
+      <span>${escapeHtml(label)}</span>
+      <div class="segmented graph-filter-buttons" data-graph-filter-group="${escapeHtml(group)}">
+        <button class="active" data-graph-filter="${escapeHtml(group)}" data-graph-filter-value="all" type="button">All</button>
+        ${values.map(value => `
+          <button data-graph-filter="${escapeHtml(group)}" data-graph-filter-value="${escapeHtml(value)}" type="button">${escapeHtml(value)}</button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function bindGraphActions() {
+  document.querySelectorAll('[data-graph-detail]').forEach((button) => {
+    button.addEventListener('click', () => openGraphItemDetail(button.dataset.graphDetail));
+  });
+  document.querySelectorAll('[data-graph-queue]').forEach((button) => {
+    button.addEventListener('click', () => queueGraphDecision(button.dataset.graphQueue));
+  });
+}
+
+function bindGraphLedgerFilters() {
+  document.querySelectorAll('[data-graph-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const group = button.dataset.graphFilter;
+      document.querySelectorAll(`[data-graph-filter="${cssEscape(group)}"]`).forEach((peer) => {
+        peer.classList.toggle('active', peer === button);
+      });
+      applyGraphLedgerFilters();
+    });
+  });
+  applyGraphLedgerFilters();
+}
+
+function applyGraphLedgerFilters() {
+  const provider = activeGraphFilter('provider');
+  const type = activeGraphFilter('type');
+  const direction = activeGraphFilter('direction');
+  let visible = 0;
+
+  document.querySelectorAll('[data-graph-ledger-row]').forEach((row) => {
+    const providers = (row.dataset.graphProviders || '').split('|').filter(Boolean);
+    const dependencyType = row.dataset.graphDependencyType || '';
+    const rowDirection = row.dataset.graphDirection || '';
+    const providerMatches = provider === 'all' || providers.includes(provider);
+    const typeMatches = type === 'all' || dependencyType === type || !dependencyType;
+    const directionMatches = direction === 'all' || rowDirection === direction || !rowDirection;
+    const shouldShow = providerMatches && typeMatches && directionMatches;
+    row.classList.toggle('graph-hidden', !shouldShow);
+    if (shouldShow) visible += 1;
+  });
+
+  document.querySelectorAll('[data-graph-filter-count]').forEach((node) => {
+    node.textContent = visible;
+  });
+}
+
+function activeGraphFilter(group) {
+  return document.querySelector(`[data-graph-filter="${cssEscape(group)}"].active`)?.dataset.graphFilterValue || 'all';
 }
 
 function renderEvidenceSection(title, items, renderer) {
@@ -1655,6 +1742,7 @@ function renderGraphItemDetailModal(detail = {}) {
   els.modal.classList.add('open');
   document.getElementById('graphDetailClose').addEventListener('click', closeModal);
   document.getElementById('graphDetailQueue').addEventListener('click', () => queueGraphDecision(item.id));
+  bindGraphActions();
 }
 
 function renderGraphDetailSection(title, items, renderer) {
@@ -1669,14 +1757,47 @@ function renderGraphDetailSection(title, items, renderer) {
   `;
 }
 
-function renderGraphCandidateDetail(candidate) {
+function graphRowAttrs({ providers = [], dependencyType = '', direction = '' } = {}) {
+  return [
+    'data-graph-ledger-row',
+    `data-graph-providers="${escapeHtml(unique(providers).join('|'))}"`,
+    `data-graph-dependency-type="${escapeHtml(dependencyType)}"`,
+    `data-graph-direction="${escapeHtml(direction)}"`
+  ].join(' ');
+}
+
+function renderGraphLinkedItem(item = {}) {
   return `
-    <div class="item">
+    <div class="item" ${graphRowAttrs({ providers: [item.sourceProvider] })}>
+      <div class="item-title">
+        <strong>${escapeHtml(item.title || item.externalId || 'Linked source')}</strong>
+        <span class="pill review">${escapeHtml(item.sourceProvider || 'provider')}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(item.externalId || item.canonicalKey || 'no external id')}</span>
+        <span>${escapeHtml(item.status || 'unknown')}</span>
+      </div>
+      <div class="item-actions">
+        ${item.url ? `<a class="button" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
+        ${item.id ? `<button class="button" data-graph-detail="${escapeHtml(item.id)}" type="button">Inspect graph</button>` : ''}
+        ${item.id ? `<button class="button primary" data-graph-queue="${escapeHtml(item.id)}" type="button">Queue Yes/No</button>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderGraphCandidateDetail(candidate) {
+  const provider = candidate.sourceProvider || candidate.actionPayload?.sourceProvider || 'work_graph';
+  const itemId = candidate.workItemId || candidate.actionPayload?.workItemId;
+  const providerUrl = candidate.providerUrl || candidate.actionPayload?.providerUrl;
+  return `
+    <div class="item" ${graphRowAttrs({ providers: [provider] })}>
       <div class="item-title">
         <strong>${escapeHtml(candidate.title || candidate.recommendedAction || 'Decision candidate')}</strong>
         <span class="pill ${severityClass(candidate.riskLevel)}">${escapeHtml(candidate.ownerType || 'team')}</span>
       </div>
       <div class="meta">
+        <span>${escapeHtml(provider)}</span>
         <span>${escapeHtml(candidate.findingType || 'graph_decision')}</span>
         <span>${escapeHtml(candidate.actionType || 'manual_review')}</span>
         <span>${Math.round(candidate.graphScore || 0)} score</span>
@@ -1684,17 +1805,32 @@ function renderGraphCandidateDetail(candidate) {
       </div>
       <div class="meta">${escapeHtml(candidate.approvalReason || candidate.description || candidate.recommendedAction || 'Review required.')}</div>
       ${renderDependencySummary(candidate.dependencySummary)}
+      <div class="item-actions">
+        ${providerUrl ? `<a class="button" href="${escapeHtml(providerUrl)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
+        ${itemId ? `<button class="button" data-graph-detail="${escapeHtml(itemId)}" type="button">Inspect graph</button>` : ''}
+        ${itemId ? `<button class="button primary" data-graph-queue="${escapeHtml(itemId)}" type="button">Queue Yes/No</button>` : ''}
+      </div>
     </div>
   `;
 }
 
 function renderGraphDependency(dependency) {
   const peer = dependency.peerItem || dependency.targetItem || dependency.sourceItem || {};
+  const providers = [
+    dependency.sourceProvider,
+    dependency.sourceItem?.sourceProvider,
+    dependency.targetItem?.sourceProvider,
+    peer.sourceProvider
+  ];
   const edgeLabel = dependency.sourceItem && dependency.targetItem
     ? `${dependency.sourceItem.title || dependency.sourceItem.externalId || 'Source'} -> ${dependency.targetItem.title || dependency.targetItem.externalId || 'Target'}`
     : dependency.externalId;
   return `
-    <div class="item">
+    <div class="item" ${graphRowAttrs({
+      providers,
+      dependencyType: dependency.dependencyType,
+      direction: dependency.direction
+    })}>
       <div class="item-title">
         <strong>${escapeHtml(peer.title || edgeLabel || 'Linked work item')}</strong>
         <span class="pill review">${escapeHtml(dependency.dependencyType || 'unknown')}</span>
@@ -1709,24 +1845,34 @@ function renderGraphDependency(dependency) {
         <span>${escapeHtml(peer.externalId || 'no external id')}</span>
         <span>${escapeHtml(peer.status || 'unknown')}</span>
       </div>
-      ${peer.url ? `<div class="meta"><a href="${escapeHtml(peer.url)}" target="_blank" rel="noreferrer">Open linked item</a></div>` : ''}
+      <div class="item-actions">
+        ${dependency.sourceItem?.url ? `<a class="button" href="${escapeHtml(dependency.sourceItem.url)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
+        ${dependency.targetItem?.url ? `<a class="button" href="${escapeHtml(dependency.targetItem.url)}" target="_blank" rel="noreferrer">Open target</a>` : ''}
+        ${peer.id ? `<button class="button" data-graph-detail="${escapeHtml(peer.id)}" type="button">Inspect graph</button>` : ''}
+      </div>
     </div>
   `;
 }
 
 function renderGraphRecommendationHistory(recommendation) {
+  const provider = recommendation.sourceProvider || 'work_graph';
   return `
-    <div class="item">
+    <div class="item" ${graphRowAttrs({ providers: [provider] })}>
       <div class="item-title">
         <strong>${escapeHtml(recommendation.title || recommendation.recommendedAction || 'Recommendation')}</strong>
         <span class="pill ${severityClass(recommendation.riskLevel)}">${escapeHtml(recommendation.status || 'pending')}</span>
       </div>
       <div class="meta">
+        <span>${escapeHtml(provider)}</span>
         <span>${escapeHtml(recommendation.actionType || 'manual_review')}</span>
         <span>${escapeHtml(recommendation.ownerType || 'team')}</span>
         <span>${formatDate(recommendation.createdAt)}</span>
       </div>
       <div class="meta">${escapeHtml(recommendation.approvalReason || recommendation.recommendedAction || 'Review queued recommendation.')}</div>
+      <div class="item-actions">
+        ${recommendation.providerUrl ? `<a class="button" href="${escapeHtml(recommendation.providerUrl)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
+        ${recommendation.workItemId ? `<button class="button" data-graph-detail="${escapeHtml(recommendation.workItemId)}" type="button">Inspect graph</button>` : ''}
+      </div>
     </div>
   `;
 }
@@ -1961,6 +2107,11 @@ function formatDate(value) {
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+function cssEscape(value) {
+  if (window.CSS?.escape) return window.CSS.escape(String(value || ''));
+  return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 }
 
 function clampPercent(value) {

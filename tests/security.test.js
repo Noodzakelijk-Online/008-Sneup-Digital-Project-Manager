@@ -390,6 +390,8 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain("fetchApi('/api/work-signals?limit=100')");
     expect(appJs).toContain('data-recommendation-evidence');
     expect(appJs).toContain('/api/recommendations/${recommendationId}/evidence');
+    expect(appJs).toContain('data-graph-filter');
+    expect(appJs).toContain('renderGraphLedgerFilters(graphContext)');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
     expect(recommendationRoutes).toContain("router.get('/:recommendationId/evidence'");
     expect(html).not.toMatch(/<style[\s>]/i);
@@ -1202,7 +1204,12 @@ describe('work graph drilldowns', () => {
       findingType: 'graph_blocked_work',
       recommendedAction: 'Ask for blocker, owner, and next action.',
       actionType: 'escalate',
-      actionPayload: { workItemId: 'item-1' },
+      actionPayload: {
+        workItemId: 'item-1',
+        sourceProvider: 'trello',
+        externalId: 'trello-card-1',
+        providerUrl: 'https://trello.example/c/launch'
+      },
       riskLevel: 'high',
       ownerType: 'robert',
       status: 'pending',
@@ -1270,6 +1277,19 @@ describe('work graph drilldowns', () => {
         decisions: 1
       }
     });
+    expect(context.filters).toEqual({
+      providers: ['trello'],
+      dependencyTypes: ['blocks'],
+      directions: ['related']
+    });
+    expect(context.sourceLinks).toEqual([
+      expect.objectContaining({
+        sourceProvider: 'trello',
+        externalId: 'trello-card-1',
+        title: 'Client launch blocker',
+        url: 'https://trello.example/c/launch'
+      })
+    ]);
     expect(context.items[0]).toMatchObject({
       id: 'item-1',
       candidate: expect.objectContaining({
@@ -1289,6 +1309,12 @@ describe('work graph drilldowns', () => {
       direction: 'related',
       sourceItem: expect.objectContaining({ title: 'Client launch blocker' }),
       targetItem: expect.objectContaining({ title: 'Launch QA' })
+    });
+    expect(context.recommendations[0]).toMatchObject({
+      sourceProvider: 'trello',
+      externalId: 'trello-card-1',
+      providerUrl: 'https://trello.example/c/launch',
+      workItemId: 'item-1'
     });
   });
 

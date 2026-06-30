@@ -483,6 +483,9 @@ class WorkGraphService {
       };
     });
 
+    const sanitizedDependencies = dependencies.slice(0, limit).map(dependency => this.sanitizeDependencyDetail(dependency, null));
+    const sanitizedRecommendations = recommendations.slice(0, limit).map(recommendation => this.sanitizeGraphRecommendation(recommendation));
+
     return {
       contextType: options.contextType || 'work_graph',
       sourceProvider: options.sourceProvider || 'trello',
@@ -495,9 +498,11 @@ class WorkGraphService {
         decisions: candidates.length
       },
       items: sanitizedItems,
-      dependencies: dependencies.slice(0, limit).map(dependency => this.sanitizeDependencyDetail(dependency, null)),
-      recommendations: recommendations.slice(0, limit).map(recommendation => this.sanitizeGraphRecommendation(recommendation)),
-      candidates: candidates.sort((left, right) => (right.graphScore || 0) - (left.graphScore || 0)).slice(0, limit)
+      dependencies: sanitizedDependencies,
+      recommendations: sanitizedRecommendations,
+      candidates: candidates.sort((left, right) => (right.graphScore || 0) - (left.graphScore || 0)).slice(0, limit),
+      sourceLinks: this.sourceLinksForLedgerContext(sanitizedItems, sanitizedDependencies, sanitizedRecommendations, limit),
+      filters: this.filtersForLedgerContext(sanitizedItems, sanitizedDependencies, sanitizedRecommendations)
     };
   }
 
@@ -546,7 +551,13 @@ class WorkGraphService {
       items: [],
       dependencies: [],
       recommendations: [],
-      candidates: []
+      candidates: [],
+      sourceLinks: [],
+      filters: {
+        providers: [],
+        dependencyTypes: [],
+        directions: []
+      }
     };
   }
 
@@ -1144,12 +1155,17 @@ class WorkGraphService {
   }
 
   sanitizeGraphRecommendation(recommendation) {
+    const payload = recommendation.actionPayload || {};
     return {
       id: String(recommendation._id),
       title: recommendation.title,
       findingType: recommendation.findingType,
       recommendedAction: recommendation.recommendedAction,
       actionType: recommendation.actionType,
+      sourceProvider: payload.sourceProvider || null,
+      externalId: payload.externalId || null,
+      providerUrl: payload.providerUrl || null,
+      workItemId: payload.workItemId ? String(payload.workItemId) : null,
       riskLevel: recommendation.riskLevel,
       ownerType: recommendation.ownerType,
       status: recommendation.status,
@@ -1158,6 +1174,70 @@ class WorkGraphService {
       confidence: recommendation.confidence,
       createdAt: recommendation.createdAt,
       updatedAt: recommendation.updatedAt
+    };
+  }
+
+  sourceLinksForLedgerContext(items = [], dependencies = [], recommendations = [], limit = 25) {
+    const links = new Map();
+    const add = (item) => {
+      if (!item?.url) return;
+      const key = `${item.sourceProvider || 'provider'}:${item.externalId || item.id || item.url}`;
+      if (links.has(key)) return;
+      links.set(key, {
+        id: item.id || null,
+        sourceProvider: item.sourceProvider || 'provider',
+        externalId: item.externalId || item.canonicalKey || '',
+        title: item.title || item.externalId || 'Source item',
+        status: item.status || 'unknown',
+        url: item.url
+      });
+    };
+
+    items.forEach(add);
+    dependencies.forEach(dependency => {
+      add(dependency.sourceItem);
+      add(dependency.targetItem);
+      add(dependency.peerItem);
+    });
+    recommendations.forEach(recommendation => {
+      if (!recommendation.providerUrl) return;
+      const key = `${recommendation.sourceProvider || 'provider'}:${recommendation.externalId || recommendation.workItemId || recommendation.providerUrl}`;
+      if (links.has(key)) return;
+      links.set(key, {
+        id: recommendation.workItemId || null,
+        sourceProvider: recommendation.sourceProvider || 'provider',
+        externalId: recommendation.externalId || '',
+        title: recommendation.title || recommendation.recommendedAction || 'Recommendation source',
+        status: recommendation.status || 'pending',
+        url: recommendation.providerUrl
+      });
+    });
+
+    return Array.from(links.values()).slice(0, limit);
+  }
+
+  filtersForLedgerContext(items = [], dependencies = [], recommendations = []) {
+    const providers = new Set();
+    const dependencyTypes = new Set();
+    const directions = new Set();
+    const addProvider = value => {
+      if (value) providers.add(value);
+    };
+
+    items.forEach(item => addProvider(item.sourceProvider));
+    dependencies.forEach(dependency => {
+      addProvider(dependency.sourceProvider);
+      addProvider(dependency.sourceItem?.sourceProvider);
+      addProvider(dependency.targetItem?.sourceProvider);
+      if (dependency.dependencyType) dependencyTypes.add(dependency.dependencyType);
+      if (dependency.direction) directions.add(dependency.direction);
+    });
+    recommendations.forEach(recommendation => addProvider(recommendation.sourceProvider));
+
+    return {
+      providers: Array.from(providers).sort(),
+      dependencyTypes: Array.from(dependencyTypes).sort(),
+      directions: Array.from(directions).sort()
     };
   }
 

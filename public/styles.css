@@ -327,6 +327,41 @@ h1 {
   background: linear-gradient(180deg, #ffffff, #f7fbfd);
 }
 
+.graph-filter-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.graph-filter-group {
+  display: grid;
+  gap: 6px;
+}
+
+.graph-filter-group > span,
+.graph-filter-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.graph-filter-buttons {
+  justify-self: start;
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+.graph-filter-buttons button {
+  font-size: 12px;
+  min-height: 32px;
+}
+
+.graph-hidden {
+  display: none;
+}
+
 .item {
   border: 1px solid var(--line);
   border-radius: 8px;

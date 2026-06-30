@@ -171,11 +171,11 @@ const enhancements = [
     priority: 'P2',
     area: 'data-model',
     title: 'Introduce a normalized cross-tool work graph',
-    evidence: 'Work signals now project into normalized WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent graph models, provider-native dependencies are extracted from Jira, Asana, GitHub, Trello, and generic dependency fields when target work items are present, `/api/work-signals/graph` summarizes graph dependency counts for the dashboard, graph items can produce dependency-aware Robert/VA/team decision candidates that rank into mission control as review-only commands/risks, queue approval-gated draft recommendations, appear in the read-only daily operations brief with source/provider evidence, can be inspected in Signals through graph item drilldowns showing source item state, dependency edges, recent graph events, and queued recommendation history, and now enrich board/card operating ledgers with Trello-linked graph context.',
+    evidence: 'Work signals now project into normalized WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent graph models, provider-native dependencies are extracted from Jira, Asana, GitHub, Trello, and generic dependency fields when target work items are present, `/api/work-signals/graph` summarizes graph dependency counts for the dashboard, graph items can produce dependency-aware Robert/VA/team decision candidates that rank into mission control as review-only commands/risks, queue approval-gated draft recommendations, appear in the read-only daily operations brief with source/provider evidence, can be inspected in Signals through graph item drilldowns showing source item state, dependency edges, recent graph events, and queued recommendation history, and now enrich board/card operating ledgers with Trello-linked graph context, direct source links, and provider/type/direction filters.',
     impact: 'Allows Sneup to reason across projects without forcing every provider into Trello-specific schemas.',
     effort: 'XL',
     status: 'in-progress',
-    nextStep: 'Add cross-provider source navigation and dependency filters inside board/card operating-ledger graph sections.',
+    nextStep: 'Persist explicit cross-provider dependency relationships from live adapter syncs so board/card graph filters can show non-Trello blockers even when Trello has no matching local card.',
     acceptanceCriteria: [
       'Trello data can be projected into the normalized graph without losing Trello-specific fields.',
       'At least three non-Trello providers can sync into the graph.',
