@@ -52,6 +52,12 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/models/FollowUpPlan');
     jest.dontMock('../src/models/CardFinding');
     jest.dontMock('../src/models/BoardHealthSnapshot');
+    jest.dontMock('../src/models/WorkActor');
+    jest.dontMock('../src/models/WorkComment');
+    jest.dontMock('../src/models/WorkContainer');
+    jest.dontMock('../src/models/WorkDependency');
+    jest.dontMock('../src/models/WorkEvent');
+    jest.dontMock('../src/models/WorkItem');
     jest.dontMock('../src/services/workspaceScopeService');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
@@ -660,6 +666,74 @@ describe('work signal normalization', () => {
     await expect(workSignalAdapterService.applyAction(account, {
       type: 'comment'
     })).rejects.toThrow('read-only');
+  });
+
+  test('projects provider signals into normalized work graph records', () => {
+    const WorkActor = require('../src/models/WorkActor');
+    const WorkComment = require('../src/models/WorkComment');
+    const WorkContainer = require('../src/models/WorkContainer');
+    const WorkDependency = require('../src/models/WorkDependency');
+    const WorkEvent = require('../src/models/WorkEvent');
+    const WorkItem = require('../src/models/WorkItem');
+    const workGraphService = require('../src/services/workGraphService');
+    const workspaceId = new mongoose.Types.ObjectId();
+    const accountId = new mongoose.Types.ObjectId();
+    const signalId = new mongoose.Types.ObjectId();
+
+    const projection = workGraphService.buildProjection({
+      _id: signalId,
+      workspaceId,
+      connectorAccountId: accountId,
+      provider: 'github',
+      externalId: 'PR_kwDO123',
+      sourceType: 'pull_request',
+      title: 'Ship graph-backed provider sync',
+      description: 'Cross-tool work item projection',
+      status: 'open',
+      priority: 'high',
+      url: 'https://github.example/pull/8',
+      owners: ['Robert Velhorst'],
+      labels: ['P1', 'backend'],
+      providerCreatedAt: new Date('2026-06-30T07:00:00Z'),
+      providerUpdatedAt: new Date('2026-06-30T08:00:00Z'),
+      evidenceRefs: [{ type: 'pull_request', label: 'PR 8' }],
+      raw: {
+        repository: {
+          id: 'repo-1',
+          full_name: 'no/sneup'
+        }
+      }
+    });
+
+    expect(WorkItem.schema.path('canonicalKey')).toBeTruthy();
+    expect(WorkActor.schema.path('displayName')).toBeTruthy();
+    expect(WorkContainer.schema.path('containerType').enumValues).toContain('repository');
+    expect(WorkComment.schema.path('body')).toBeTruthy();
+    expect(WorkDependency.schema.path('dependencyType').enumValues).toContain('blocks');
+    expect(WorkEvent.schema.path('eventKey')).toBeTruthy();
+    expect(projection).toMatchObject({
+      sourceProvider: 'github',
+      externalId: 'PR_kwDO123',
+      canonicalKey: 'github:PR_kwDO123',
+      title: 'Ship graph-backed provider sync',
+      itemType: 'pull_request',
+      status: 'open',
+      priority: 'high',
+      ownerKeys: ['github:actor:robert-velhorst'],
+      labelKeys: ['p1', 'backend'],
+      containerKey: 'github:container:repo-1',
+      container: expect.objectContaining({
+        name: 'no/sneup',
+        containerType: 'repository'
+      }),
+      event: expect.objectContaining({
+        eventType: 'synced',
+        eventKey: 'github:PR_kwDO123:2026-06-30T08:00:00.000Z'
+      })
+    });
+    expect(String(projection.workspaceId)).toBe(String(workspaceId));
+    expect(String(projection.connectorAccountId)).toBe(String(accountId));
+    expect(String(projection.sourceSignalId)).toBe(String(signalId));
   });
 });
 

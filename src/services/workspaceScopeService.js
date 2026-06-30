@@ -21,6 +21,12 @@ const FollowUpPlan = require('../models/FollowUpPlan');
 const WorkerResponse = require('../models/WorkerResponse');
 const CardFinding = require('../models/CardFinding');
 const BoardHealthSnapshot = require('../models/BoardHealthSnapshot');
+const WorkActor = require('../models/WorkActor');
+const WorkComment = require('../models/WorkComment');
+const WorkContainer = require('../models/WorkContainer');
+const WorkDependency = require('../models/WorkDependency');
+const WorkEvent = require('../models/WorkEvent');
+const WorkItem = require('../models/WorkItem');
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i;
 
@@ -121,7 +127,13 @@ const backfillDefaultWorkspace = async () => {
     ['followUpPlans', FollowUpPlan],
     ['workerResponses', WorkerResponse],
     ['cardFindings', CardFinding],
-    ['boardHealthSnapshots', BoardHealthSnapshot]
+    ['boardHealthSnapshots', BoardHealthSnapshot],
+    ['workActors', WorkActor],
+    ['workComments', WorkComment],
+    ['workContainers', WorkContainer],
+    ['workDependencies', WorkDependency],
+    ['workEvents', WorkEvent],
+    ['workItems', WorkItem]
   ].map(async ([key, Model]) => [key, await backfillModelWorkspace(Model, workspaceId)]));
 
   const counts = Object.fromEntries(results);

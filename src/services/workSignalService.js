@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const WorkSignal = require('../models/WorkSignal');
 const ConnectorAccount = require('../models/ConnectorAccount');
 const { getConnector, getConnectors } = require('./connectorRegistry');
+const workGraphService = require('./workGraphService');
 const workSignalAdapterService = require('./workSignalAdapterService');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
@@ -198,6 +199,10 @@ class WorkSignalService {
     account.lastSyncAt = now;
     account.lastError = undefined;
     await account.save();
+
+    await workGraphService.upsertFromSignal(signal, {
+      actorId: options.actorId || 'sync-worker'
+    });
 
     return this.sanitizeSignal(signal);
   }

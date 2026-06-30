@@ -1,5 +1,6 @@
 const express = require('express');
 const connectorSyncService = require('../services/connectorSyncService');
+const workGraphService = require('../services/workGraphService');
 const workSignalAdapterService = require('../services/workSignalAdapterService');
 const workSignalService = require('../services/workSignalService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
@@ -67,6 +68,22 @@ router.get('/adapters', (req, res) => {
     });
   } catch (error) {
     logger.error('Failed to list work signal adapters:', error);
+    sendError(res, error);
+  }
+});
+
+router.get('/graph', async (req, res) => {
+  try {
+    const graph = await workGraphService.getSummary({
+      ...requestOptions(req),
+      limit: req.query.limit
+    });
+    res.json({
+      success: true,
+      graph
+    });
+  } catch (error) {
+    logger.error('Failed to summarize work graph:', error);
     sendError(res, error);
   }
 });

@@ -6,6 +6,7 @@ const state = {
   categories: [],
   accounts: [],
   workSignals: [],
+  workGraph: null,
   workSignalContracts: [],
   workSignalError: '',
   securityContext: null,
@@ -303,16 +304,19 @@ async function loadConnectors() {
 
 async function loadWorkSignals() {
   try {
-    const [signalsData, contractsData] = await Promise.all([
+    const [signalsData, contractsData, graphData] = await Promise.all([
       fetchApi('/api/work-signals?limit=100'),
-      fetchApi('/api/work-signals/contracts')
+      fetchApi('/api/work-signals/contracts'),
+      fetchApi('/api/work-signals/graph?limit=20')
     ]);
     state.workSignals = signalsData.signals || [];
     state.workSignalContracts = contractsData.contracts || [];
+    state.workGraph = graphData.graph || null;
     state.workSignalError = '';
     renderWorkSignals();
   } catch (error) {
     state.workSignals = [];
+    state.workGraph = null;
     state.workSignalContracts = [];
     state.workSignalError = error.message;
     renderWorkSignals();
@@ -1333,6 +1337,7 @@ function renderWorkSignals() {
 
   const signals = state.workSignals || [];
   const contracts = state.workSignalContracts || [];
+  const graph = state.workGraph || { counts: {}, byStatus: {}, byProvider: {}, items: [] };
   const providers = unique(signals.map(signal => signal.provider));
   const connectedProviderIds = new Set((state.accounts || []).map(account => account.connectorId));
   const connectedContracts = contracts.filter(contract => connectedProviderIds.has(contract.connectorId));
@@ -1349,6 +1354,8 @@ function renderWorkSignals() {
     ['Blocked', blockedSignals.length],
     ['Critical', criticalSignals.length],
     ['Providers', providers.length],
+    ['Graph items', graph.counts.items || 0],
+    ['Graph actors', graph.counts.actors || 0],
     ['Implemented adapters', implementedContracts.length],
     ['Connected adapters', connectedContracts.length]
   ].map(([label, value]) => `
@@ -1365,7 +1372,10 @@ function renderWorkSignals() {
     ? `<div class="notice">Work signals need MongoDB/live data: ${escapeHtml(state.workSignalError)}</div>`
     : '';
 
-  els.workSignalList.innerHTML = notice + listOrEmpty(filteredSignals, renderWorkSignal);
+  const graphNotice = graph.counts.items
+    ? `<div class="notice">Normalized graph: ${escapeHtml(graph.counts.items)} items, ${escapeHtml(graph.counts.containers || 0)} containers, ${escapeHtml(graph.counts.events || 0)} events.</div>`
+    : '';
+  els.workSignalList.innerHTML = notice + graphNotice + listOrEmpty(filteredSignals, renderWorkSignal);
   els.workSignalContracts.innerHTML = listOrEmpty(
     connectedContracts.length > 0 ? connectedContracts : contracts.slice(0, 12),
     contract => renderWorkSignalContract(contract, connectedProviderIds.has(contract.connectorId))

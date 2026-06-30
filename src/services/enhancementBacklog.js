@@ -171,15 +171,16 @@ const enhancements = [
     priority: 'P2',
     area: 'data-model',
     title: 'Introduce a normalized cross-tool work graph',
-    evidence: 'The current data model is Trello-first, while connectors cover many non-Trello project systems.',
+    evidence: 'Work signals now project into normalized WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent graph models, and `/api/work-signals/graph` summarizes the graph for the dashboard.',
     impact: 'Allows Sneup to reason across projects without forcing every provider into Trello-specific schemas.',
     effort: 'XL',
-    status: 'ready',
-    nextStep: 'Create WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent models with provider mappings.',
+    status: 'in-progress',
+    nextStep: 'Extract provider-native dependencies and use graph evidence to route Robert-only and VA-ready queue items.',
     acceptanceCriteria: [
       'Trello data can be projected into the normalized graph without losing Trello-specific fields.',
       'At least three non-Trello providers can sync into the graph.',
-      'Mission control can read from the graph rather than Trello-only collections.'
+      'Mission control can read from the graph rather than Trello-only collections.',
+      'Provider-native dependency extraction is implemented for supported tools.'
     ]
   },
   {
