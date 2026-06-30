@@ -452,6 +452,7 @@ function renderOverview() {
   els.teamLoad.innerHTML = listOrEmpty(snapshot.teamLoad, renderTeamMember);
   els.boardCount.textContent = `${snapshot.boardSummaries.length} boards`;
   els.boards.innerHTML = listOrEmpty(snapshot.boardSummaries, renderBoard);
+  bindLedgerDrilldownActions();
   renderOperationsBrief();
   renderJobDashboard();
 }
@@ -603,6 +604,7 @@ function renderOperationsLedger() {
   document.querySelectorAll('[data-recommendation-evidence]').forEach((button) => {
     button.addEventListener('click', () => openRecommendationEvidence(button.dataset.recommendationEvidence));
   });
+  bindLedgerDrilldownActions();
 }
 
 function renderOperationsBriefItem(item) {
@@ -742,6 +744,7 @@ function renderPayloadEditAction(recommendationId, recommendation = {}) {
 function renderFinding(finding) {
   const card = finding.cardId || {};
   const board = finding.boardId || {};
+  const cardId = getId(card._id || card.id);
   return `
     <div class="item">
       <div class="item-title">
@@ -759,6 +762,7 @@ function renderFinding(finding) {
       </div>
       <div class="meta">${escapeHtml(finding.recommendedAction || finding.description || 'Review finding')}</div>
       ${renderSourceEvidence(finding.sourceEvidence)}
+      ${cardId ? `<div class="item-actions"><button class="button" data-card-ledger="${escapeHtml(cardId)}" type="button">Card ledger</button></div>` : ''}
     </div>
   `;
 }
@@ -1014,6 +1018,117 @@ function renderEvidenceModal(bundle = {}) {
   document.getElementById('evidenceClose').addEventListener('click', closeModal);
 }
 
+function bindLedgerDrilldownActions() {
+  document.querySelectorAll('[data-board-ledger]').forEach((button) => {
+    button.addEventListener('click', () => openOperatingLedger('board', button.dataset.boardLedger));
+  });
+  document.querySelectorAll('[data-card-ledger]').forEach((button) => {
+    button.addEventListener('click', () => openOperatingLedger('card', button.dataset.cardLedger));
+  });
+}
+
+async function openOperatingLedger(type, entityId) {
+  if (!entityId) return;
+
+  const endpoint = type === 'board'
+    ? `/api/boards/${entityId}/operating-ledger`
+    : `/api/cards/${entityId}/operating-ledger`;
+
+  try {
+    const data = await fetchApi(endpoint);
+    renderOperatingLedgerModal(type, data.ledger || {});
+  } catch (error) {
+    openNotice('Operating ledger unavailable', error.message);
+  }
+}
+
+function renderOperatingLedgerModal(type, ledger = {}) {
+  const graphContext = ledger.graphContext || {};
+  const title = type === 'board' ? 'Board operating ledger' : 'Card operating ledger';
+  els.modalTitle.textContent = title;
+  els.modalBody.innerHTML = `
+    <div class="notice-stack">
+      <div class="item">
+        <div class="item-title">
+          <strong>${escapeHtml(graphContext.sourceName || title)}</strong>
+          <span class="pill review">${escapeHtml(graphContext.contextType || type)}</span>
+        </div>
+        <div class="meta">
+          <span>${(ledger.recommendations || []).length} recommendations</span>
+          <span>${(ledger.decisions || []).length} decisions</span>
+          <span>${(ledger.actions || []).length} Trello attempts</span>
+          <span>${(ledger.auditEvents || []).length} audit events</span>
+          <span>${(ledger.followUps || []).length} follow-ups</span>
+        </div>
+      </div>
+      ${renderGraphLedgerContext(graphContext)}
+      ${renderLedgerSection('Open Findings', ledger.findings || [], renderFinding)}
+      ${renderLedgerSection('Recent Recommendations', ledger.recommendations || [], renderRecommendation)}
+      ${renderLedgerSection('Trello Action Attempts', ledger.actions || [], renderTrelloAttempt)}
+      ${renderLedgerSection('Audit Trail', ledger.auditEvents || [], renderAuditEvent)}
+      <div class="toolbar modal-actions">
+        <button class="button primary" type="button" id="ledgerClose">Done</button>
+      </div>
+    </div>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('ledgerClose').addEventListener('click', closeModal);
+  bindLedgerDrilldownActions();
+  document.querySelectorAll('[data-recommendation-action]').forEach((button) => {
+    button.addEventListener('click', () => runRecommendationAction(
+      button.dataset.recommendationId,
+      button.dataset.recommendationAction
+    ));
+  });
+  document.querySelectorAll('[data-recommendation-evidence]').forEach((button) => {
+    button.addEventListener('click', () => openRecommendationEvidence(button.dataset.recommendationEvidence));
+  });
+  document.querySelectorAll('[data-payload-edit]').forEach((button) => {
+    button.addEventListener('click', () => editRecommendationPayload(button.dataset.payloadEdit));
+  });
+}
+
+function renderLedgerSection(title, items, renderer) {
+  return `
+    <section>
+      <div class="panel-head evidence-head">
+        <h2>${escapeHtml(title)}</h2>
+        <span class="pill review">${items.length}</span>
+      </div>
+      <div class="list">${listOrEmpty(items.slice(0, 5), renderer)}</div>
+    </section>
+  `;
+}
+
+function renderGraphLedgerContext(graphContext = {}) {
+  const counts = graphContext.counts || {};
+  const hasGraph = (counts.items || 0) > 0 || (counts.dependencies || 0) > 0 || (counts.decisions || 0) > 0;
+  const notice = hasGraph
+    ? ''
+    : '<div class="notice">No normalized graph item is linked to this Trello context yet. Sync connector work signals to enrich dependency context.</div>';
+
+  return `
+    <section>
+      <div class="panel-head evidence-head">
+        <h2>Graph Context</h2>
+        <span class="pill ${hasGraph ? 'healthy' : 'review'}">${hasGraph ? 'linked' : 'empty'}</span>
+      </div>
+      <div class="item">
+        <div class="meta">
+          <span>${counts.items || 0} graph items</span>
+          <span>${counts.dependencies || 0} dependencies</span>
+          <span>${counts.decisions || 0} decisions</span>
+          <span>${counts.recommendations || 0} graph recommendations</span>
+        </div>
+      </div>
+      ${notice}
+      ${renderGraphDetailSection('Graph Decision Candidates', graphContext.candidates || [], renderGraphCandidateDetail)}
+      ${renderGraphDetailSection('Graph Dependency Edges', graphContext.dependencies || [], renderGraphDependency)}
+      ${renderGraphDetailSection('Graph Recommendation History', graphContext.recommendations || [], renderGraphRecommendationHistory)}
+    </section>
+  `;
+}
+
 function renderEvidenceSection(title, items, renderer) {
   return `
     <section>
@@ -1116,6 +1231,7 @@ async function queueAutopilotCommand(commandId) {
 }
 
 function renderFocus(item) {
+  const cardId = getId(item.id);
   return `
     <div class="item">
       <div class="item-title">
@@ -1129,6 +1245,7 @@ function renderFocus(item) {
       </div>
       <div class="meta">${item.reasons.map(escapeHtml).join('  |  ')}</div>
       ${renderSourceEvidence(item.sourceEvidence)}
+      ${cardId ? `<div class="item-actions"><button class="button" data-card-ledger="${escapeHtml(cardId)}" type="button">Card ledger</button></div>` : ''}
     </div>
   `;
 }
@@ -1152,6 +1269,7 @@ function renderTeamMember(member) {
 
 function renderBoard(board) {
   const maxCount = Math.max(...board.flow.map(step => step.count), 1);
+  const boardId = getId(board.id);
   return `
     <div class="connector-card">
       <div class="connector-top">
@@ -1174,6 +1292,7 @@ function renderBoard(board) {
         <span>${board.velocity.cardsPerWeek} cards/week</span>
         <span>${board.blockedCards} blocked</span>
       </div>
+      ${boardId ? `<div class="connector-actions"><button class="button" data-board-ledger="${escapeHtml(boardId)}" type="button">Operating ledger</button></div>` : ''}
     </div>
   `;
 }
@@ -1570,11 +1689,14 @@ function renderGraphCandidateDetail(candidate) {
 }
 
 function renderGraphDependency(dependency) {
-  const peer = dependency.peerItem || {};
+  const peer = dependency.peerItem || dependency.targetItem || dependency.sourceItem || {};
+  const edgeLabel = dependency.sourceItem && dependency.targetItem
+    ? `${dependency.sourceItem.title || dependency.sourceItem.externalId || 'Source'} -> ${dependency.targetItem.title || dependency.targetItem.externalId || 'Target'}`
+    : dependency.externalId;
   return `
     <div class="item">
       <div class="item-title">
-        <strong>${escapeHtml(peer.title || dependency.externalId || 'Linked work item')}</strong>
+        <strong>${escapeHtml(peer.title || edgeLabel || 'Linked work item')}</strong>
         <span class="pill review">${escapeHtml(dependency.dependencyType || 'unknown')}</span>
       </div>
       <div class="meta">

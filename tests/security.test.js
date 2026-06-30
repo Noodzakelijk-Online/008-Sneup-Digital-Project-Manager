@@ -981,6 +981,7 @@ describe('work graph drilldowns', () => {
     jest.dontMock('../src/models/Recommendation');
     jest.dontMock('../src/models/DecisionQueueItem');
     jest.dontMock('../src/models/AuditEvent');
+    jest.dontMock('../src/models/Board');
     jest.dontMock('../src/services/interventionPolicy');
     jest.resetModules();
   });
@@ -1135,6 +1136,162 @@ describe('work graph drilldowns', () => {
     });
   });
 
+  test('returns Trello board graph context for operating-ledger drilldowns', async () => {
+    jest.resetModules();
+
+    const board = {
+      _id: 'board-db-1',
+      workspaceId: 'workspace-object-id',
+      trelloId: 'trello-board-1',
+      name: 'Growth Experiments'
+    };
+    const card = {
+      _id: 'card-db-1',
+      workspaceId: 'workspace-object-id',
+      trelloId: 'trello-card-1',
+      name: 'Client launch blocker'
+    };
+    const item = {
+      _id: 'item-1',
+      workspaceId: 'workspace-object-id',
+      sourceProvider: 'trello',
+      externalId: 'trello-card-1',
+      canonicalKey: 'trello:trello-card-1',
+      title: 'Client launch blocker',
+      description: 'Waiting on client approval',
+      itemType: 'card',
+      status: 'blocked',
+      priority: 'high',
+      ownerKeys: ['trello:actor:nina'],
+      labelKeys: ['client'],
+      containerKey: 'trello:container:trello-board-1',
+      url: 'https://trello.example/c/launch',
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    };
+    const peer = {
+      _id: 'item-2',
+      workspaceId: 'workspace-object-id',
+      sourceProvider: 'trello',
+      externalId: 'trello-card-2',
+      canonicalKey: 'trello:trello-card-2',
+      title: 'Launch QA',
+      itemType: 'card',
+      status: 'waiting',
+      priority: 'normal',
+      ownerKeys: [],
+      labelKeys: [],
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    };
+    const dependency = {
+      _id: 'dep-1',
+      workspaceId: 'workspace-object-id',
+      sourceItemId: item,
+      targetItemId: peer,
+      dependencyType: 'blocks',
+      sourceProvider: 'trello',
+      externalId: 'trello:trello-card-1:blocks:trello-card-2',
+      confidence: 0.91,
+      evidenceRefs: [],
+      metadata: {},
+      createdAt: new Date('2026-06-30T08:00:00Z'),
+      updatedAt: new Date('2026-06-30T08:10:00Z')
+    };
+    const recommendation = {
+      _id: 'rec-1',
+      title: 'Unblock Client launch blocker',
+      findingType: 'graph_blocked_work',
+      recommendedAction: 'Ask for blocker, owner, and next action.',
+      actionType: 'escalate',
+      actionPayload: { workItemId: 'item-1' },
+      riskLevel: 'high',
+      ownerType: 'robert',
+      status: 'pending',
+      requiresApproval: true,
+      approvalReason: 'Provider writes are blocked.',
+      confidence: 0.84,
+      createdAt: new Date('2026-06-30T08:20:00Z'),
+      updatedAt: new Date('2026-06-30T08:20:00Z')
+    };
+
+    const chain = (items) => {
+      const query = {
+        populate: jest.fn(() => query),
+        sort: jest.fn(() => query),
+        limit: jest.fn().mockResolvedValue(items)
+      };
+      return query;
+    };
+    const workItemFind = jest.fn().mockReturnValue(chain([item]));
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(() => 'workspace-object-id'),
+      getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-object-id')
+    }));
+    jest.doMock('../src/models/WorkItem', () => ({ find: workItemFind }));
+    jest.doMock('../src/models/WorkDependency', () => ({ find: jest.fn().mockReturnValue(chain([dependency])) }));
+    jest.doMock('../src/models/WorkComment', () => ({}));
+    jest.doMock('../src/models/WorkContainer', () => ({}));
+    jest.doMock('../src/models/WorkActor', () => ({}));
+    jest.doMock('../src/models/WorkEvent', () => ({}));
+    jest.doMock('../src/models/Recommendation', () => ({ find: jest.fn().mockReturnValue(chain([recommendation])) }));
+
+    const workGraphService = require('../src/services/workGraphService');
+    const context = await workGraphService.getTrelloBoardLedgerContext(board, [card], {
+      workspaceId: 'tenant-a',
+      limit: 10
+    });
+
+    expect(workItemFind).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'workspace-object-id',
+      sourceProvider: 'trello',
+      $or: expect.arrayContaining([
+        expect.objectContaining({
+          containerKey: {
+            $in: expect.arrayContaining(['trello:container:trello-board-1'])
+          }
+        }),
+        expect.objectContaining({
+          externalId: {
+            $in: expect.arrayContaining(['trello-card-1', 'card-db-1'])
+          }
+        })
+      ])
+    }));
+    expect(context).toMatchObject({
+      contextType: 'board',
+      sourceProvider: 'trello',
+      sourceId: 'trello-board-1',
+      sourceName: 'Growth Experiments',
+      counts: {
+        items: 1,
+        dependencies: 1,
+        recommendations: 1,
+        decisions: 1
+      }
+    });
+    expect(context.items[0]).toMatchObject({
+      id: 'item-1',
+      candidate: expect.objectContaining({
+        findingType: 'graph_blocked_work',
+        dependencySummary: expect.objectContaining({
+          blockingCount: 1
+        })
+      }),
+      recommendations: [
+        expect.objectContaining({
+          id: 'rec-1',
+          status: 'pending'
+        })
+      ]
+    });
+    expect(context.dependencies[0]).toMatchObject({
+      direction: 'related',
+      sourceItem: expect.objectContaining({ title: 'Client launch blocker' }),
+      targetItem: expect.objectContaining({ title: 'Launch QA' })
+    });
+  });
+
   test('queues direct graph item recommendations with dependency-aware approval context', async () => {
     jest.resetModules();
 
@@ -1209,6 +1366,7 @@ describe('work graph drilldowns', () => {
     jest.doMock('../src/models/CardFinding', () => ({}));
     jest.doMock('../src/models/Intervention', () => ({}));
     jest.doMock('../src/models/BoardHealthSnapshot', () => ({}));
+    jest.doMock('../src/models/Board', () => ({}));
     jest.doMock('../src/models/Card', () => ({}));
     jest.doMock('../src/models/Member', () => ({}));
     jest.doMock('../src/models/WorkActor', () => ({}));
@@ -1852,6 +2010,7 @@ describe('follow-up accountability', () => {
     jest.dontMock('../src/models/DecisionQueueItem');
     jest.dontMock('../src/models/CardFinding');
     jest.dontMock('../src/models/BoardHealthSnapshot');
+    jest.dontMock('../src/models/Board');
     jest.dontMock('../src/models/Card');
     jest.dontMock('../src/models/Member');
     jest.dontMock('../src/services/trelloClient');
@@ -1921,6 +2080,7 @@ describe('follow-up accountability', () => {
       '../src/models/DecisionQueueItem',
       '../src/models/CardFinding',
       '../src/models/BoardHealthSnapshot',
+      '../src/models/Board',
       '../src/models/Card',
       '../src/models/Member'
     ].forEach((modelPath) => {

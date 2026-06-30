@@ -384,6 +384,123 @@ class WorkGraphService {
     };
   }
 
+  async getTrelloBoardLedgerContext(board, cards = [], options = {}) {
+    if (!board) return this.emptyLedgerContext('board');
+    this.requireDatabase();
+
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId || board.workspaceId);
+    const boardExternalIds = this.trelloBoardExternalIds(board);
+    const cardExternalIds = cards.flatMap(card => this.trelloCardExternalIds(card));
+    const containerKeys = boardExternalIds.map(id => `trello:container:${slugify(id)}`);
+    const query = {
+      workspaceId,
+      sourceProvider: 'trello',
+      $or: [
+        { containerKey: { $in: containerKeys } }
+      ]
+    };
+    if (cardExternalIds.length > 0) {
+      query.$or.push({ externalId: { $in: cardExternalIds } });
+    }
+
+    const items = await WorkItem.find(query).sort({ priority: 1, dueAt: 1, lastSeenAt: -1 }).limit(200);
+    return this.ledgerContextForItems(items, {
+      contextType: 'board',
+      sourceProvider: 'trello',
+      sourceId: board.trelloId || String(board._id),
+      sourceName: board.name,
+      limit: options.limit
+    });
+  }
+
+  async getTrelloCardLedgerContext(card, options = {}) {
+    if (!card) return this.emptyLedgerContext('card');
+    this.requireDatabase();
+
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId || card.workspaceId);
+    const externalIds = this.trelloCardExternalIds(card);
+    if (externalIds.length === 0) return this.emptyLedgerContext('card');
+
+    const items = await WorkItem.find({
+      workspaceId,
+      sourceProvider: 'trello',
+      externalId: { $in: externalIds }
+    }).sort({ lastSeenAt: -1 }).limit(10);
+
+    return this.ledgerContextForItems(items, {
+      contextType: 'card',
+      sourceProvider: 'trello',
+      sourceId: card.trelloId || String(card._id),
+      sourceName: card.name,
+      limit: options.limit
+    });
+  }
+
+  async ledgerContextForItems(items = [], options = {}) {
+    const itemIds = items.map(item => item._id).filter(Boolean);
+    if (itemIds.length === 0) {
+      return {
+        ...this.emptyLedgerContext(options.contextType),
+        sourceProvider: options.sourceProvider || 'trello',
+        sourceId: options.sourceId || null,
+        sourceName: options.sourceName || ''
+      };
+    }
+
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId || items[0].workspaceId);
+    const limit = Math.max(1, Math.min(Number.parseInt(options.limit, 10) || 25, 100));
+    const [dependencies, recommendations] = await Promise.all([
+      WorkDependency.find({
+        workspaceId,
+        $or: [
+          { sourceItemId: { $in: itemIds } },
+          { targetItemId: { $in: itemIds } }
+        ]
+      }).populate('sourceItemId targetItemId').sort({ updatedAt: -1 }).limit(limit * 4),
+      Recommendation.find({
+        workspaceId,
+        'actionPayload.workItemId': { $in: itemIds.map(id => String(id)) }
+      }).sort({ createdAt: -1 }).limit(limit * 2)
+    ]);
+    const summaryByItem = this.dependencySummaryByItem(itemIds, dependencies);
+    const recommendationsByWorkItem = recommendations.reduce((result, recommendation) => {
+      const workItemId = recommendation.actionPayload?.workItemId;
+      if (!workItemId) return result;
+      if (!result.has(workItemId)) result.set(workItemId, []);
+      result.get(workItemId).push(this.sanitizeGraphRecommendation(recommendation));
+      return result;
+    }, new Map());
+    const candidates = [];
+    const sanitizedItems = items.slice(0, limit).map(item => {
+      const dependencySummary = this.normalizeDependencySummary(summaryByItem.get(String(item._id)));
+      const candidate = this.buildDecisionCandidate(item, dependencySummary);
+      if (candidate) candidates.push(candidate);
+      return {
+        ...this.sanitizeItem(item),
+        dependencySummary,
+        candidate,
+        recommendations: recommendationsByWorkItem.get(String(item._id)) || []
+      };
+    });
+
+    return {
+      contextType: options.contextType || 'work_graph',
+      sourceProvider: options.sourceProvider || 'trello',
+      sourceId: options.sourceId || null,
+      sourceName: options.sourceName || '',
+      counts: {
+        items: items.length,
+        dependencies: dependencies.length,
+        recommendations: recommendations.length,
+        decisions: candidates.length
+      },
+      items: sanitizedItems,
+      dependencies: dependencies.slice(0, limit).map(dependency => this.sanitizeDependencyDetail(dependency, null)),
+      recommendations: recommendations.slice(0, limit).map(recommendation => this.sanitizeGraphRecommendation(recommendation)),
+      candidates: candidates.sort((left, right) => (right.graphScore || 0) - (left.graphScore || 0)).slice(0, limit)
+    };
+  }
+
   async dependencySummaryForItem(item, workspaceId) {
     if (!item?._id) return this.normalizeDependencySummary();
     const dependencies = await WorkDependency.find({
@@ -411,6 +528,25 @@ class WorkGraphService {
       byDependencyType: {},
       items: [],
       dependencies: []
+    };
+  }
+
+  emptyLedgerContext(contextType = 'work_graph') {
+    return {
+      contextType,
+      sourceProvider: 'trello',
+      sourceId: null,
+      sourceName: '',
+      counts: {
+        items: 0,
+        dependencies: 0,
+        recommendations: 0,
+        decisions: 0
+      },
+      items: [],
+      dependencies: [],
+      recommendations: [],
+      candidates: []
     };
   }
 
@@ -948,15 +1084,23 @@ class WorkGraphService {
   sanitizeDependencyDetail(dependency, currentItemId) {
     const sourceId = String(dependency.sourceItemId?._id || dependency.sourceItemId || '');
     const targetId = String(dependency.targetItemId?._id || dependency.targetItemId || '');
-    const currentId = String(currentItemId);
+    const currentId = currentItemId ? String(currentItemId) : '';
     const direction = sourceId === currentId ? 'outgoing' : targetId === currentId ? 'incoming' : 'related';
-    const peerItem = direction === 'outgoing' ? dependency.targetItemId : dependency.sourceItemId;
+    const peerItem = direction === 'outgoing' ? dependency.targetItemId
+      : direction === 'incoming' ? dependency.sourceItemId
+        : null;
 
     return {
       ...this.sanitizeDependency(dependency),
       direction,
       peerItem: peerItem && typeof peerItem === 'object' && peerItem._id
         ? this.sanitizeItem(peerItem)
+        : null,
+      sourceItem: dependency.sourceItemId && typeof dependency.sourceItemId === 'object' && dependency.sourceItemId._id
+        ? this.sanitizeItem(dependency.sourceItemId)
+        : null,
+      targetItem: dependency.targetItemId && typeof dependency.targetItemId === 'object' && dependency.targetItemId._id
+        ? this.sanitizeItem(dependency.targetItemId)
         : null,
       relationship: this.dependencyRelationshipLabel(dependency.dependencyType, direction)
     };
@@ -1038,6 +1182,25 @@ class WorkGraphService {
       return 'The linked item relates to this item';
     }
     return 'Dependency relationship';
+  }
+
+  trelloBoardExternalIds(board = {}) {
+    return [
+      board.trelloId,
+      board.externalId,
+      board.shortLink,
+      board.name,
+      board._id ? String(board._id) : null
+    ].filter(Boolean).map(value => String(value));
+  }
+
+  trelloCardExternalIds(card = {}) {
+    return [
+      card.trelloId,
+      card.externalId,
+      card.shortLink,
+      card._id ? String(card._id) : null
+    ].filter(Boolean).map(value => String(value));
   }
 
   resolveWorkspaceId(workspaceId) {
