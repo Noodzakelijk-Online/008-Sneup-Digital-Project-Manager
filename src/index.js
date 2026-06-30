@@ -13,6 +13,7 @@ const {
 } = require('./utils/requestSecurity');
 const trelloSync = require('./services/trelloSync');
 const analyticsService = require('./services/analyticsService');
+const connectorSyncService = require('./services/connectorSyncService');
 const workspaceScopeService = require('./services/workspaceScopeService');
 
 // Import routes
@@ -188,6 +189,7 @@ const initApp = async () => {
 
     if (databaseConnected) {
       analyticsService.initAnalytics();
+      connectorSyncService.init();
 
       const interventionWorker = require('./workers/interventionWorker');
       interventionWorker.init();

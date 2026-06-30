@@ -1,4 +1,6 @@
 const express = require('express');
+const connectorSyncService = require('../services/connectorSyncService');
+const workSignalAdapterService = require('../services/workSignalAdapterService');
 const workSignalService = require('../services/workSignalService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
@@ -55,6 +57,20 @@ router.get('/contracts', (req, res) => {
   }
 });
 
+router.get('/adapters', (req, res) => {
+  try {
+    const adapters = workSignalAdapterService.listAdapters();
+    res.json({
+      success: true,
+      count: adapters.length,
+      adapters
+    });
+  } catch (error) {
+    logger.error('Failed to list work signal adapters:', error);
+    sendError(res, error);
+  }
+});
+
 router.post('/accounts/:accountId/upsert', requirePermission('sync:run'), async (req, res) => {
   try {
     const signal = await workSignalService.upsertSignal(req.params.accountId, req.body, requestOptions(req));
@@ -64,6 +80,22 @@ router.post('/accounts/:accountId/upsert', requirePermission('sync:run'), async 
     });
   } catch (error) {
     logger.error('Failed to upsert work signal:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/sync', requirePermission('sync:run'), async (req, res) => {
+  try {
+    const result = await connectorSyncService.syncAccount(req.params.accountId, {
+      ...requestOptions(req),
+      actor: req.auth?.actorId || 'api'
+    });
+    res.json({
+      success: true,
+      result
+    });
+  } catch (error) {
+    logger.error('Failed to sync connector work signals:', error);
     sendError(res, error);
   }
 });

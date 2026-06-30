@@ -582,6 +582,8 @@ describe('work signal normalization', () => {
       due: '2026-07-01T10:00:00Z'
     });
     const contract = workSignalService.buildAdapterContract('github');
+    const trelloContract = workSignalService.buildAdapterContract('trello');
+    const notionContract = workSignalService.buildAdapterContract('notion');
 
     expect(String(normalized.workspaceId)).toBe(String(workspaceId));
     expect(String(normalized.connectorAccountId)).toBe(String(accountId));
@@ -599,10 +601,65 @@ describe('work signal normalization', () => {
     expect(normalized.dueAt.toISOString()).toBe('2026-07-01T10:00:00.000Z');
     expect(contract).toMatchObject({
       connectorId: 'github',
+      adapterStatus: 'implemented',
       outputModel: 'WorkSignal',
       requiredFields: ['externalId', 'title']
     });
+    expect(trelloContract.adapterCapabilities).toMatchObject({
+      list: true,
+      fetchDelta: true,
+      normalize: true,
+      applyAction: false
+    });
+    expect(notionContract.adapterStatus).toBe('contract_only');
     expect(workSignalService.getAdapterContracts()).toHaveLength(getConnectors().length);
+  });
+
+  test('first-wave provider adapters normalize records and block external writes', async () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const workspaceId = new mongoose.Types.ObjectId();
+    const account = {
+      _id: new mongoose.Types.ObjectId(),
+      workspaceId,
+      connectorId: 'github'
+    };
+
+    const normalized = workSignalAdapterService.normalize(account, {
+      node_id: 'PR_kwDO123',
+      title: 'Ship connector sync worker',
+      body: 'Adds first-wave provider ingestion.',
+      state: 'open',
+      pull_request: {},
+      labels: [{ name: 'P1' }, { name: 'backend' }],
+      assignees: [{ login: 'robert' }],
+      html_url: 'https://github.example/pull/7',
+      created_at: '2026-06-30T07:00:00Z',
+      updated_at: '2026-06-30T08:00:00Z'
+    });
+
+    expect(workSignalAdapterService.getFirstWaveConnectorIds()).toEqual(expect.arrayContaining([
+      'trello',
+      'jira_software',
+      'asana',
+      'slack',
+      'github',
+      'google_workspace',
+      'microsoft_365'
+    ]));
+    expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(8);
+    expect(normalized).toMatchObject({
+      externalId: 'PR_kwDO123',
+      sourceType: 'pull_request',
+      title: 'Ship connector sync worker',
+      status: 'open',
+      priority: 'high',
+      owners: ['robert'],
+      labels: ['P1', 'backend'],
+      url: 'https://github.example/pull/7'
+    });
+    await expect(workSignalAdapterService.applyAction(account, {
+      type: 'comment'
+    })).rejects.toThrow('read-only');
   });
 });
 

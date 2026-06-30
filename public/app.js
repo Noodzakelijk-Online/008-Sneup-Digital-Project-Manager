@@ -1336,6 +1336,7 @@ function renderWorkSignals() {
   const providers = unique(signals.map(signal => signal.provider));
   const connectedProviderIds = new Set((state.accounts || []).map(account => account.connectorId));
   const connectedContracts = contracts.filter(contract => connectedProviderIds.has(contract.connectorId));
+  const implementedContracts = contracts.filter(contract => contract.adapterStatus === 'implemented');
   const openSignals = signals.filter(signal => ['open', 'in_progress'].includes(signal.status));
   const blockedSignals = signals.filter(signal => signal.status === 'blocked');
   const criticalSignals = signals.filter(signal => signal.priority === 'critical');
@@ -1348,6 +1349,7 @@ function renderWorkSignals() {
     ['Blocked', blockedSignals.length],
     ['Critical', criticalSignals.length],
     ['Providers', providers.length],
+    ['Implemented adapters', implementedContracts.length],
     ['Connected adapters', connectedContracts.length]
   ].map(([label, value]) => `
     <div class="metric">
@@ -1393,16 +1395,18 @@ function renderWorkSignal(signal) {
 }
 
 function renderWorkSignalContract(contract, connected) {
+  const implemented = contract.adapterStatus === 'implemented';
   return `
     <div class="item">
       <div class="item-title">
         <strong>${escapeHtml(contract.connectorName)}</strong>
-        <span class="pill ${connected ? 'connected' : 'review'}">${connected ? 'connected' : 'contract'}</span>
+        <span class="pill ${connected ? 'connected' : implemented ? 'healthy' : 'review'}">${connected ? 'connected' : implemented ? 'adapter' : 'contract'}</span>
       </div>
       <div class="meta">
         <span>${escapeHtml(contract.category)}</span>
         <span>${escapeHtml(contract.authType)}</span>
         <span>${escapeHtml(contract.outputModel)}</span>
+        <span>${escapeHtml(contract.adapterStatus || 'contract_only')}</span>
       </div>
       <div class="meta">${(contract.syncTargets || []).slice(0, 5).map(escapeHtml).join(' | ') || 'No sync targets declared'}</div>
       <div class="meta">${escapeHtml(contract.safeWritePolicy)}</div>

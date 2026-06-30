@@ -11,11 +11,11 @@ const enhancements = [
     priority: 'P0',
     area: 'connectors',
     title: 'Build provider sync adapters from linked accounts',
-    evidence: 'Connector accounts can be linked and stored, normalized WorkSignal records now exist, `/api/work-signals/contracts` exposes adapter contracts for the connector catalog, `/api/work-signals/accounts/:accountId/upsert` gives sync workers a safe workspace-scoped target, and the command dashboard exposes a Signals view for cross-tool work plus adapter readiness. Provider-specific list/fetchDelta workers still need to be implemented.',
+    evidence: 'Connector accounts can be linked and stored, normalized WorkSignal records now exist, `/api/work-signals/contracts` exposes adapter contracts, first-wave read-only adapters exist for Trello, Jira, Asana, Slack, GitHub, Google Workspace, and Microsoft 365, `/api/work-signals/accounts/:accountId/sync` can run a safe account sync, and a scheduled connector work-signal job is tracked in Job Health.',
     impact: 'Turns the connector marketplace from account linking into cross-tool project ingestion.',
     effort: 'XL',
     status: 'in-progress',
-    nextStep: 'Implement Trello, Jira, Asana, Slack, GitHub, Google, and Microsoft list/fetchDelta adapters that write to WorkSignal with retries and rate limits.',
+    nextStep: 'Replace metadata-fed adapter deltas with provider API clients, retries, and per-provider rate limits for the first-wave adapters.',
     acceptanceCriteria: [
       'Each adapter exposes list, fetchDelta, normalize, and applyAction methods.',
       'A scheduled job syncs connected accounts with retries and per-provider rate limits.',

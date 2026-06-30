@@ -3,6 +3,7 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const Board = require('../models/Board');
 const analyticsService = require('../services/analyticsService');
+const connectorSyncService = require('../services/connectorSyncService');
 const interventionEngine = require('../services/interventionEngine');
 const jobObservabilityService = require('../services/jobObservabilityService');
 const operationsLedgerService = require('../services/operationsLedgerService');
@@ -69,6 +70,10 @@ const manualJobHandlers = {
   'analytics.generate_all': {
     jobType: 'analytics',
     run: () => analyticsService.generateAllAnalytics()
+  },
+  'connectors.work_signals_sync': {
+    jobType: 'sync',
+    run: () => connectorSyncService.syncConnectedAccounts({ triggerType: 'manual' })
   },
   'interventions.process_all': {
     jobType: 'intervention',

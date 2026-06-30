@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const WorkSignal = require('../models/WorkSignal');
 const ConnectorAccount = require('../models/ConnectorAccount');
 const { getConnector, getConnectors } = require('./connectorRegistry');
+const workSignalAdapterService = require('./workSignalAdapterService');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const STATUS_ALIASES = {
@@ -82,6 +83,7 @@ class WorkSignalService {
   buildAdapterContract(connectorId) {
     const connector = getConnector(connectorId);
     if (!connector) return null;
+    const providerAdapter = workSignalAdapterService.getAdapter(connector.id);
 
     return {
       connectorId: connector.id,
@@ -90,6 +92,13 @@ class WorkSignalService {
       authType: connector.auth.type,
       syncTargets: connector.sync || [],
       outputModel: 'WorkSignal',
+      adapterStatus: providerAdapter ? 'implemented' : 'contract_only',
+      adapterCapabilities: providerAdapter?.capabilities || {
+        list: false,
+        fetchDelta: false,
+        normalize: false,
+        applyAction: false
+      },
       requiredFields: ['externalId', 'title'],
       optionalFields: [
         'sourceType',
@@ -107,6 +116,11 @@ class WorkSignalService {
       ],
       safeWritePolicy: 'Provider sync adapters may upsert normalized signals, but must not execute external provider actions.'
     };
+  }
+
+  normalizeProviderRecord(account, record = {}) {
+    const providerPayload = workSignalAdapterService.normalize(account, record);
+    return this.normalizeSignalPayload(account, providerPayload);
   }
 
   normalizeSignalPayload(account, payload = {}) {
@@ -186,6 +200,24 @@ class WorkSignalService {
     await account.save();
 
     return this.sanitizeSignal(signal);
+  }
+
+  async upsertProviderRecord(accountId, record = {}, options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const account = await ConnectorAccount.findOne({ _id: accountId, workspaceId });
+    if (!account) {
+      const error = new Error('Connector account not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const providerPayload = workSignalAdapterService.normalize(account, record);
+    return this.upsertSignal(account._id, providerPayload, {
+      ...options,
+      workspaceId,
+      actorId: options.actorId || 'provider-adapter'
+    });
   }
 
   async listSignals(options = {}) {

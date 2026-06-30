@@ -75,6 +75,13 @@ const trackedJobs = [
     label: 'Trello webhook processing',
     staleAfterMinutes: 24 * 60,
     manualTriggerAllowed: false
+  },
+  {
+    jobName: 'connectors.work_signals_sync',
+    jobType: 'sync',
+    label: 'Connector work signal sync',
+    staleAfterMinutes: 90,
+    manualTriggerAllowed: true
   }
 ];
 
