@@ -120,4 +120,4 @@ workItemSchema.statics.itemTypes = ITEM_TYPES;
 workItemSchema.statics.itemStatuses = ITEM_STATUSES;
 workItemSchema.statics.itemPriorities = ITEM_PRIORITIES;
 
-module.exports = mongoose.model('WorkItem', workItemSchema);
+module.exports = mongoose.models.WorkItem || mongoose.model('WorkItem', workItemSchema);

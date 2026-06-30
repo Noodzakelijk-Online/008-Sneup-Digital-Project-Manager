@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const sourceEvidenceSchema = new mongoose.Schema({
   type: {
     type: String,
-    enum: ['board', 'card', 'comment', 'member', 'analytics', 'intervention', 'manual', 'system'],
+    enum: ['board', 'card', 'comment', 'member', 'analytics', 'intervention', 'manual', 'system', 'work_item', 'work_graph'],
     default: 'system'
   },
   entityId: mongoose.Schema.Types.Mixed,

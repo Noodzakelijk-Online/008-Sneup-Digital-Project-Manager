@@ -19,6 +19,8 @@ const asDate = (value) => {
 };
 
 const signalId = (signal) => signal?._id || signal?.id;
+const OPEN_STATUSES = new Set(['open', 'in_progress', 'blocked', 'waiting', 'unknown']);
+const ROBERT_SENSITIVE_PATTERN = /\b(robert|client|legal|contract|money|budget|invoice|payment|government|tax|compliance|commitment|approval)\b/i;
 
 class WorkGraphService {
   buildProjection(signal) {
@@ -243,6 +245,29 @@ class WorkGraphService {
     };
   }
 
+  async listDecisionCandidates(options = {}) {
+    if (!this.isDatabaseReady()) {
+      return { count: 0, candidates: [] };
+    }
+
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const limit = Math.max(1, Math.min(Number.parseInt(options.limit, 10) || 50, 200));
+    const items = await WorkItem.find({
+      workspaceId,
+      status: { $in: [...OPEN_STATUSES] }
+    }).sort({ priority: 1, dueAt: 1, lastSeenAt: -1 }).limit(limit * 3);
+
+    const candidates = items
+      .map(item => this.buildDecisionCandidate(item))
+      .filter(Boolean)
+      .slice(0, limit);
+
+    return {
+      count: candidates.length,
+      candidates
+    };
+  }
+
   emptySummary() {
     return {
       counts: {
@@ -263,6 +288,162 @@ class WorkGraphService {
       result[row._id || 'unknown'] = row.count;
       return result;
     }, {});
+  }
+
+  buildDecisionCandidate(item) {
+    if (!item || ['done', 'archived'].includes(item.status)) return null;
+
+    const sensitive = this.requiresRobertReview(item);
+    const overdue = item.dueAt && item.dueAt < new Date() && OPEN_STATUSES.has(item.status);
+    const ownerless = !Array.isArray(item.ownerKeys) || item.ownerKeys.length === 0;
+    const critical = item.priority === 'critical';
+    const high = item.priority === 'high' || critical;
+
+    if (item.status === 'blocked') {
+      return this.decisionCandidate(item, {
+        findingType: 'graph_blocked_work',
+        ownerType: sensitive || high ? 'robert' : 'team',
+        riskLevel: critical ? 'critical' : high ? 'high' : 'medium',
+        actionType: high ? 'escalate' : 'follow_up',
+        title: `Unblock ${item.title}`,
+        recommendedAction: `Ask for blocker, owner, and next action on "${item.title}".`,
+        reason: 'The normalized work graph shows this item is blocked.'
+      });
+    }
+
+    if (overdue) {
+      return this.decisionCandidate(item, {
+        findingType: 'graph_overdue_work',
+        ownerType: sensitive || high ? 'robert' : 'team',
+        riskLevel: critical ? 'critical' : high ? 'high' : 'medium',
+        actionType: 'escalate',
+        title: `Recover overdue ${item.title}`,
+        recommendedAction: `Escalate overdue work and request a recovery date for "${item.title}".`,
+        reason: 'The normalized work graph shows this item is overdue and still open.'
+      });
+    }
+
+    if (sensitive) {
+      return this.decisionCandidate(item, {
+        findingType: 'graph_robert_review',
+        ownerType: 'robert',
+        riskLevel: high ? 'high' : 'medium',
+        actionType: 'manual_review',
+        title: `Robert review: ${item.title}`,
+        recommendedAction: `Keep "${item.title}" in Robert review before any provider action.`,
+        reason: 'The title, description, or labels indicate client, legal, money, contract, compliance, or Robert-only decision risk.'
+      });
+    }
+
+    if (ownerless) {
+      return this.decisionCandidate(item, {
+        findingType: 'graph_unowned_work',
+        ownerType: high ? 'robert' : 'va',
+        riskLevel: high ? 'high' : 'medium',
+        actionType: 'reassign',
+        title: `Assign owner: ${item.title}`,
+        recommendedAction: `Choose an accountable owner for "${item.title}".`,
+        reason: 'The normalized work graph has no owner for this open item.'
+      });
+    }
+
+    if (item.status === 'waiting') {
+      return this.decisionCandidate(item, {
+        findingType: 'graph_waiting_follow_up',
+        ownerType: 'team',
+        riskLevel: high ? 'high' : 'medium',
+        actionType: 'follow_up',
+        title: `Follow up waiting item: ${item.title}`,
+        recommendedAction: `Request the waiting-party status and next action for "${item.title}".`,
+        reason: 'The normalized work graph shows this item is waiting.'
+      });
+    }
+
+    return null;
+  }
+
+  decisionCandidate(item, spec) {
+    const itemId = item._id || item.id;
+    const payload = {
+      source: 'work_graph',
+      workItemId: itemId ? String(itemId) : undefined,
+      sourceProvider: item.sourceProvider,
+      externalId: item.externalId,
+      canonicalKey: item.canonicalKey,
+      providerUrl: item.url || '',
+      externalProviderWriteBlocked: true,
+      executable: false,
+      draftOnly: true,
+      requiredChange: 'Approve the decision, then convert it into an exact provider-specific action payload before execution.',
+      commentText: this.defaultCommentText(item, spec)
+    };
+
+    return {
+      workItemId: itemId ? String(itemId) : null,
+      findingType: spec.findingType,
+      title: spec.title,
+      description: spec.reason,
+      recommendedAction: spec.recommendedAction,
+      actionType: spec.actionType,
+      actionPayload: payload,
+      riskLevel: spec.riskLevel,
+      confidence: this.confidenceForCandidate(item, spec),
+      requiresApproval: true,
+      approvalReason: `${spec.reason} Provider writes are blocked until a human approves an exact action payload.`,
+      ownerType: spec.ownerType,
+      sourceEvidence: [this.evidenceForItem(item, spec)]
+    };
+  }
+
+  evidenceForItem(item, spec) {
+    return {
+      type: 'work_item',
+      entityId: item._id || item.id || item.externalId,
+      label: item.title,
+      url: item.url || undefined,
+      observedAt: item.lastSeenAt || item.updatedAt || new Date(),
+      data: {
+        reason: spec.reason,
+        sourceProvider: item.sourceProvider,
+        externalId: item.externalId,
+        canonicalKey: item.canonicalKey,
+        status: item.status,
+        priority: item.priority,
+        ownerKeys: item.ownerKeys || [],
+        labelKeys: item.labelKeys || [],
+        dueAt: item.dueAt || null
+      }
+    };
+  }
+
+  defaultCommentText(item, spec) {
+    if (spec.actionType === 'reassign') {
+      return 'Please confirm the accountable owner and next concrete action.';
+    }
+    if (spec.actionType === 'escalate') {
+      return 'This item needs recovery: please confirm blocker, owner, and recovery date.';
+    }
+    if (spec.actionType === 'follow_up') {
+      return 'Please provide current status and the next concrete action today.';
+    }
+    return 'Review this work item before any external provider action is taken.';
+  }
+
+  confidenceForCandidate(item, spec) {
+    if (item.status === 'blocked' || item.priority === 'critical') return 0.84;
+    if (spec.findingType === 'graph_overdue_work') return 0.8;
+    if (spec.findingType === 'graph_unowned_work') return 0.74;
+    if (spec.findingType === 'graph_robert_review') return 0.7;
+    return 0.66;
+  }
+
+  requiresRobertReview(item) {
+    const text = [
+      item.title,
+      item.description,
+      ...(item.labelKeys || [])
+    ].filter(Boolean).join(' ');
+    return ROBERT_SENSITIVE_PATTERN.test(text);
   }
 
   itemTypeForSignal(sourceType) {

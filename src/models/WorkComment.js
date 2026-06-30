@@ -50,4 +50,4 @@ const workCommentSchema = new mongoose.Schema({
 workCommentSchema.index({ workspaceId: 1, sourceProvider: 1, externalId: 1 }, { unique: true });
 workCommentSchema.index({ workspaceId: 1, workItemId: 1, providerCreatedAt: -1 });
 
-module.exports = mongoose.model('WorkComment', workCommentSchema);
+module.exports = mongoose.models.WorkComment || mongoose.model('WorkComment', workCommentSchema);

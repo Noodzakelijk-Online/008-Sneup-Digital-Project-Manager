@@ -675,6 +675,7 @@ describe('work signal normalization', () => {
     const WorkDependency = require('../src/models/WorkDependency');
     const WorkEvent = require('../src/models/WorkEvent');
     const WorkItem = require('../src/models/WorkItem');
+    const Recommendation = require('../src/models/Recommendation');
     const workGraphService = require('../src/services/workGraphService');
     const workspaceId = new mongoose.Types.ObjectId();
     const accountId = new mongoose.Types.ObjectId();
@@ -711,6 +712,10 @@ describe('work signal normalization', () => {
     expect(WorkComment.schema.path('body')).toBeTruthy();
     expect(WorkDependency.schema.path('dependencyType').enumValues).toContain('blocks');
     expect(WorkEvent.schema.path('eventKey')).toBeTruthy();
+    expect(Recommendation.schema.path('sourceEvidence').schema.path('type').enumValues).toEqual(expect.arrayContaining([
+      'work_item',
+      'work_graph'
+    ]));
     expect(projection).toMatchObject({
       sourceProvider: 'github',
       externalId: 'PR_kwDO123',
@@ -734,6 +739,84 @@ describe('work signal normalization', () => {
     expect(String(projection.workspaceId)).toBe(String(workspaceId));
     expect(String(projection.connectorAccountId)).toBe(String(accountId));
     expect(String(projection.sourceSignalId)).toBe(String(signalId));
+  });
+
+  test('routes graph work items into Robert, VA, and team decision candidates without provider writes', () => {
+    const workGraphService = require('../src/services/workGraphService');
+    const workspaceId = new mongoose.Types.ObjectId();
+    const accountId = new mongoose.Types.ObjectId();
+
+    const blocked = workGraphService.buildDecisionCandidate({
+      _id: new mongoose.Types.ObjectId(),
+      workspaceId,
+      connectorAccountId: accountId,
+      sourceProvider: 'jira_software',
+      externalId: 'OPS-42',
+      canonicalKey: 'jira_software:OPS-42',
+      title: 'Client launch blocker',
+      description: 'Waiting on client approval',
+      itemType: 'issue',
+      status: 'blocked',
+      priority: 'high',
+      ownerKeys: ['jira_software:actor:nina'],
+      labelKeys: ['client'],
+      url: 'https://jira.example/browse/OPS-42',
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    });
+    const ownerless = workGraphService.buildDecisionCandidate({
+      _id: new mongoose.Types.ObjectId(),
+      workspaceId,
+      connectorAccountId: accountId,
+      sourceProvider: 'asana',
+      externalId: 'task-77',
+      canonicalKey: 'asana:task-77',
+      title: 'Prepare QA checklist',
+      itemType: 'task',
+      status: 'open',
+      priority: 'normal',
+      ownerKeys: [],
+      labelKeys: ['qa'],
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    });
+    const sensitive = workGraphService.buildDecisionCandidate({
+      _id: new mongoose.Types.ObjectId(),
+      workspaceId,
+      connectorAccountId: accountId,
+      sourceProvider: 'microsoft_365',
+      externalId: 'mail-9',
+      canonicalKey: 'microsoft_365:mail-9',
+      title: 'Client contract budget approval',
+      itemType: 'message',
+      status: 'open',
+      priority: 'normal',
+      ownerKeys: ['microsoft_365:actor:ana'],
+      labelKeys: ['contract'],
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    });
+
+    expect(blocked).toMatchObject({
+      findingType: 'graph_blocked_work',
+      ownerType: 'robert',
+      actionType: 'escalate',
+      riskLevel: 'high',
+      requiresApproval: true
+    });
+    expect(ownerless).toMatchObject({
+      findingType: 'graph_unowned_work',
+      ownerType: 'va',
+      actionType: 'reassign',
+      riskLevel: 'medium'
+    });
+    expect(sensitive).toMatchObject({
+      findingType: 'graph_robert_review',
+      ownerType: 'robert',
+      actionType: 'manual_review'
+    });
+    expect([blocked, ownerless, sensitive].every(candidate =>
+      candidate.actionPayload.externalProviderWriteBlocked === true
+      && candidate.actionPayload.executable === false
+      && candidate.sourceEvidence[0].type === 'work_item'
+    )).toBe(true);
   });
 });
 

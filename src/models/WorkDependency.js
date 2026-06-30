@@ -60,4 +60,4 @@ const workDependencySchema = new mongoose.Schema({
 workDependencySchema.index({ workspaceId: 1, sourceProvider: 1, externalId: 1 }, { unique: true });
 workDependencySchema.index({ workspaceId: 1, dependencyType: 1, updatedAt: -1 });
 
-module.exports = mongoose.model('WorkDependency', workDependencySchema);
+module.exports = mongoose.models.WorkDependency || mongoose.model('WorkDependency', workDependencySchema);

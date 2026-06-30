@@ -54,4 +54,4 @@ workContainerSchema.index({ workspaceId: 1, sourceProvider: 1, externalId: 1 }, 
 workContainerSchema.index({ workspaceId: 1, containerType: 1, lastSeenAt: -1 });
 workContainerSchema.statics.containerTypes = CONTAINER_TYPES;
 
-module.exports = mongoose.model('WorkContainer', workContainerSchema);
+module.exports = mongoose.models.WorkContainer || mongoose.model('WorkContainer', workContainerSchema);

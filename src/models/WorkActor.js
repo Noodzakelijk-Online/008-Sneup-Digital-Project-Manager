@@ -49,4 +49,4 @@ const workActorSchema = new mongoose.Schema({
 workActorSchema.index({ workspaceId: 1, sourceProvider: 1, externalId: 1 }, { unique: true });
 workActorSchema.index({ workspaceId: 1, displayName: 1 });
 
-module.exports = mongoose.model('WorkActor', workActorSchema);
+module.exports = mongoose.models.WorkActor || mongoose.model('WorkActor', workActorSchema);

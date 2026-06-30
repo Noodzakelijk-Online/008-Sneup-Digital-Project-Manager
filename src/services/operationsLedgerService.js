@@ -11,8 +11,10 @@ const CardFinding = require('../models/CardFinding');
 const BoardHealthSnapshot = require('../models/BoardHealthSnapshot');
 const Card = require('../models/Card');
 const Member = require('../models/Member');
+const WorkItem = require('../models/WorkItem');
 const trelloClient = require('./trelloClient');
 const interventionPolicy = require('./interventionPolicy');
+const workGraphService = require('./workGraphService');
 const logger = require('../utils/logger');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
@@ -322,6 +324,103 @@ class OperationsLedgerService {
     return {
       recommendation,
       decisionQueueItem,
+      created: true
+    };
+  }
+
+  async createRecommendationFromWorkItem(workItemOrId, options = {}) {
+    this.requireDatabase();
+
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const workItem = typeof workItemOrId === 'object' && workItemOrId._id
+      ? workItemOrId
+      : await WorkItem.findOne({ _id: workItemOrId, workspaceId });
+
+    if (!workItem) {
+      const error = new Error('Work item not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const candidate = workGraphService.buildDecisionCandidate(workItem);
+    if (!candidate) {
+      const error = new Error('Work item does not currently need a decision queue item');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const existing = await Recommendation.findOne({
+      workspaceId,
+      findingType: candidate.findingType,
+      status: { $in: ['pending', 'approved', 'executing', 'change_requested'] },
+      'actionPayload.workItemId': String(workItem._id)
+    });
+
+    if (existing) {
+      const existingDecision = await DecisionQueueItem.findOne({
+        workspaceId,
+        recommendationId: existing._id,
+        status: 'open'
+      });
+      return {
+        recommendation: existing,
+        decisionQueueItem: existingDecision,
+        candidate,
+        created: false
+      };
+    }
+
+    const policy = interventionPolicy.classifyAction(candidate.actionType, {
+      severity: candidate.riskLevel
+    });
+    const recommendation = await Recommendation.create({
+      workspaceId,
+      findingType: candidate.findingType,
+      title: candidate.title,
+      description: candidate.description,
+      recommendedAction: candidate.recommendedAction,
+      actionType: candidate.actionType,
+      actionPayload: candidate.actionPayload,
+      riskLevel: candidate.riskLevel || policy.riskLevel,
+      confidence: candidate.confidence,
+      requiresApproval: candidate.requiresApproval,
+      approvalReason: candidate.approvalReason || policy.approvalReason,
+      ownerType: candidate.ownerType || policy.ownerType,
+      sourceEvidence: candidate.sourceEvidence
+    });
+
+    const decisionQueueItem = await DecisionQueueItem.create({
+      workspaceId,
+      recommendationId: recommendation._id,
+      ownerType: recommendation.ownerType,
+      title: recommendation.title,
+      question: this.buildDecisionQuestion(recommendation),
+      recommendedAnswer: 'yes',
+      options: ['yes', 'no', 'change'],
+      riskLevel: recommendation.riskLevel,
+      reason: recommendation.approvalReason,
+      sourceEvidence: recommendation.sourceEvidence,
+      dueAt: this.defaultDecisionDueAt(recommendation.riskLevel)
+    });
+
+    await this.recordAudit({
+      entityType: 'recommendation',
+      entityId: recommendation._id,
+      action: 'work_graph_recommendation_queued',
+      actor: options.actor || 'sneup',
+      source: 'worker',
+      riskLevel: recommendation.riskLevel,
+      recommendationId: recommendation._id,
+      afterState: {
+        workItem: workGraphService.sanitizeItem(workItem),
+        recommendation: recommendation.toObject()
+      }
+    });
+
+    return {
+      recommendation,
+      decisionQueueItem,
+      candidate,
       created: true
     };
   }

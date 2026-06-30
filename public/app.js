@@ -7,6 +7,7 @@ const state = {
   accounts: [],
   workSignals: [],
   workGraph: null,
+  workGraphCandidates: [],
   workSignalContracts: [],
   workSignalError: '',
   securityContext: null,
@@ -304,19 +305,22 @@ async function loadConnectors() {
 
 async function loadWorkSignals() {
   try {
-    const [signalsData, contractsData, graphData] = await Promise.all([
+    const [signalsData, contractsData, graphData, graphDecisionData] = await Promise.all([
       fetchApi('/api/work-signals?limit=100'),
       fetchApi('/api/work-signals/contracts'),
-      fetchApi('/api/work-signals/graph?limit=20')
+      fetchApi('/api/work-signals/graph?limit=20'),
+      fetchApi('/api/work-signals/graph/decisions?limit=20')
     ]);
     state.workSignals = signalsData.signals || [];
     state.workSignalContracts = contractsData.contracts || [];
     state.workGraph = graphData.graph || null;
+    state.workGraphCandidates = graphDecisionData.candidates || [];
     state.workSignalError = '';
     renderWorkSignals();
   } catch (error) {
     state.workSignals = [];
     state.workGraph = null;
+    state.workGraphCandidates = [];
     state.workSignalContracts = [];
     state.workSignalError = error.message;
     renderWorkSignals();
@@ -1338,6 +1342,7 @@ function renderWorkSignals() {
   const signals = state.workSignals || [];
   const contracts = state.workSignalContracts || [];
   const graph = state.workGraph || { counts: {}, byStatus: {}, byProvider: {}, items: [] };
+  const graphCandidates = state.workGraphCandidates || [];
   const providers = unique(signals.map(signal => signal.provider));
   const connectedProviderIds = new Set((state.accounts || []).map(account => account.connectorId));
   const connectedContracts = contracts.filter(contract => connectedProviderIds.has(contract.connectorId));
@@ -1356,6 +1361,7 @@ function renderWorkSignals() {
     ['Providers', providers.length],
     ['Graph items', graph.counts.items || 0],
     ['Graph actors', graph.counts.actors || 0],
+    ['Graph decisions', graphCandidates.length],
     ['Implemented adapters', implementedContracts.length],
     ['Connected adapters', connectedContracts.length]
   ].map(([label, value]) => `
@@ -1375,11 +1381,18 @@ function renderWorkSignals() {
   const graphNotice = graph.counts.items
     ? `<div class="notice">Normalized graph: ${escapeHtml(graph.counts.items)} items, ${escapeHtml(graph.counts.containers || 0)} containers, ${escapeHtml(graph.counts.events || 0)} events.</div>`
     : '';
-  els.workSignalList.innerHTML = notice + graphNotice + listOrEmpty(filteredSignals, renderWorkSignal);
+  const graphDecisionNotice = graphCandidates.length
+    ? `<div class="notice">Graph decisions: ${escapeHtml(countByOwner(graphCandidates, 'robert'))} Robert, ${escapeHtml(countByOwner(graphCandidates, 'va'))} VA, ${escapeHtml(countByOwner(graphCandidates, 'team'))} team.</div>`
+    : '';
+  els.workSignalList.innerHTML = notice + graphNotice + graphDecisionNotice + listOrEmpty(filteredSignals, renderWorkSignal);
   els.workSignalContracts.innerHTML = listOrEmpty(
     connectedContracts.length > 0 ? connectedContracts : contracts.slice(0, 12),
     contract => renderWorkSignalContract(contract, connectedProviderIds.has(contract.connectorId))
   );
+}
+
+function countByOwner(items, ownerType) {
+  return items.filter(item => item.ownerType === ownerType).length;
 }
 
 function renderWorkSignal(signal) {

@@ -1,5 +1,6 @@
 const express = require('express');
 const connectorSyncService = require('../services/connectorSyncService');
+const operationsLedgerService = require('../services/operationsLedgerService');
 const workGraphService = require('../services/workGraphService');
 const workSignalAdapterService = require('../services/workSignalAdapterService');
 const workSignalService = require('../services/workSignalService');
@@ -10,6 +11,7 @@ const logger = require('../utils/logger');
 const router = express.Router();
 
 router.param('accountId', validateObjectIdParam('accountId'));
+router.param('itemId', validateObjectIdParam('itemId'));
 
 const requestOptions = (req) => ({
   workspaceId: getRequestWorkspaceObjectId(req),
@@ -84,6 +86,39 @@ router.get('/graph', async (req, res) => {
     });
   } catch (error) {
     logger.error('Failed to summarize work graph:', error);
+    sendError(res, error);
+  }
+});
+
+router.get('/graph/decisions', async (req, res) => {
+  try {
+    const result = await workGraphService.listDecisionCandidates({
+      ...requestOptions(req),
+      limit: req.query.limit
+    });
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    logger.error('Failed to list work graph decision candidates:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/graph/items/:itemId/queue', requirePermission('autopilot:queue'), async (req, res) => {
+  try {
+    const result = await operationsLedgerService.createRecommendationFromWorkItem(req.params.itemId, {
+      workspaceId: getRequestWorkspaceObjectId(req),
+      actor: req.body.actor || req.auth?.actorId || 'api'
+    });
+    res.status(result.created ? 201 : 200).json({
+      success: true,
+      message: result.created ? 'Work graph decision queued for approval' : 'Work graph decision is already queued',
+      ...result
+    });
+  } catch (error) {
+    logger.error('Failed to queue work graph decision:', error);
     sendError(res, error);
   }
 });

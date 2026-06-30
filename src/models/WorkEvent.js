@@ -59,4 +59,4 @@ const workEventSchema = new mongoose.Schema({
 workEventSchema.index({ workspaceId: 1, sourceProvider: 1, eventKey: 1 }, { unique: true });
 workEventSchema.index({ workspaceId: 1, workItemId: 1, occurredAt: -1 });
 
-module.exports = mongoose.model('WorkEvent', workEventSchema);
+module.exports = mongoose.models.WorkEvent || mongoose.model('WorkEvent', workEventSchema);
