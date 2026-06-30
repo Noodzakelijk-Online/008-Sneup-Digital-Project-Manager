@@ -297,8 +297,11 @@ describe('request security boundaries', () => {
     expect(getPermissionsForRoles(['viewer'])).toEqual(expect.arrayContaining(['api:read', 'audit:read']));
     expect(getPermissionsForRoles(['viewer'])).not.toContain('trello-actions:execute-approved');
     expect(getPermissionsForRoles(['manager'])).not.toContain('identity:manage');
+    expect(getPermissionsForRoles(['manager'])).toContain('jobs:manage');
+    expect(getPermissionsForRoles(['operator'])).not.toContain('jobs:manage');
     expect(getPermissionsForRoles(['admin'])).toContain('identity:manage');
     expect(hasPermission({ roles: ['manager'] }, 'approvals:decide')).toBe(true);
+    expect(hasPermission({ roles: ['manager'] }, 'jobs:manage')).toBe(true);
     expect(hasPermission({ roles: ['operator'] }, 'approvals:decide')).toBe(false);
 
     const allowedReq = createRequest({
@@ -1308,6 +1311,44 @@ describe('job observability', () => {
       jobName: 'trello.incremental_sync',
       status: 'succeeded'
     });
+  });
+
+  test('marks paused jobs as operator controlled and trigger-aware', () => {
+    const jobObservabilityService = require('../src/services/jobObservabilityService');
+    const now = new Date('2026-06-29T08:00:00Z');
+    const runs = [
+      {
+        _id: 'run-paused',
+        jobName: 'analytics.generate_all',
+        jobType: 'analytics',
+        triggerType: 'scheduled',
+        status: 'succeeded',
+        startedAt: new Date('2026-06-29T07:45:00Z'),
+        finishedAt: new Date('2026-06-29T07:46:00Z'),
+        durationMs: 60000
+      }
+    ];
+    const controls = [
+      {
+        jobName: 'analytics.generate_all',
+        status: 'paused',
+        pausedAt: new Date('2026-06-29T07:55:00Z'),
+        pausedBy: 'Operations Lead',
+        pausedReason: 'Investigating source data drift'
+      }
+    ];
+
+    const dashboard = jobObservabilityService.buildDashboard(runs, now, controls);
+    const analytics = dashboard.health.find(job => job.jobName === 'analytics.generate_all');
+
+    expect(analytics).toMatchObject({
+      status: 'paused',
+      paused: true,
+      manualTriggerAllowed: true,
+      pausedBy: 'Operations Lead',
+      pausedReason: 'Investigating source data drift'
+    });
+    expect(dashboard.summary.pausedJobs).toBe(1);
   });
 
   test('tracks jobs without MongoDB and preserves failure propagation', async () => {

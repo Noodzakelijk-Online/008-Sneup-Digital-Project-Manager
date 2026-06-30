@@ -204,6 +204,9 @@ See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, a
 - `GET /api/jobs` - Job observability dashboard for sync, analytics, intervention, performance, and webhook jobs
 - `GET /api/jobs/health` - Compact job health and stale-data summary
 - `GET /api/jobs/runs` - Recent job run history with duration, counts, and failures
+- `POST /api/jobs/:jobName/pause` - Pause a registered background job so scheduled runs are recorded as skipped
+- `POST /api/jobs/:jobName/resume` - Resume a paused background job
+- `POST /api/jobs/:jobName/trigger` - Manually trigger an allowlisted safe job
 - `POST /api/interventions/:interventionId/record-response` - Record worker response to an intervention
 
 ### Webhooks

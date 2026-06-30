@@ -1,8 +1,127 @@
 const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger');
+const Board = require('../models/Board');
+const analyticsService = require('../services/analyticsService');
+const interventionEngine = require('../services/interventionEngine');
 const jobObservabilityService = require('../services/jobObservabilityService');
-const { clampInteger } = require('../utils/requestSecurity');
+const operationsLedgerService = require('../services/operationsLedgerService');
+const performanceTracker = require('../services/performanceTracker');
+const trelloSync = require('../services/trelloSync');
+const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId } = require('../services/workspaceScopeService');
+const { clampInteger, requirePermission } = require('../utils/requestSecurity');
+
+const actorFromRequest = (req) =>
+  req.auth?.displayName || req.auth?.actorId || 'sneup-operator';
+
+const plainState = (value) => {
+  if (!value) return {};
+  if (typeof value.toObject === 'function') return value.toObject();
+  return value;
+};
+
+const recordJobAudit = async (req, action, jobName, afterState = {}) => {
+  try {
+    await operationsLedgerService.recordAudit({
+      workspaceId: req.auth?.workspaceId,
+      entityType: 'job_control',
+      entityId: jobName,
+      action,
+      actor: actorFromRequest(req),
+      source: 'api',
+      riskLevel: action === 'job_manual_triggered' ? 'medium' : 'low',
+      afterState: plainState(afterState)
+    });
+  } catch (error) {
+    logger.warn(`Failed to record ${action} audit event for ${jobName}: ${error.message}`);
+  }
+};
+
+const calculateAllPerformance = async (period) => {
+  const workspaceId = getDefaultWorkspaceObjectId();
+  const boards = await Board.find(defaultWorkspaceQuery({ closed: false }));
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (const board of boards) {
+    try {
+      await performanceTracker.calculateBoardPerformance(board._id, period, { workspaceId });
+      successCount += 1;
+    } catch (error) {
+      failureCount += 1;
+      logger.error(`Failed to manually calculate ${period} performance for board ${board._id}:`, error);
+    }
+  }
+
+  return {
+    processedCount: boards.length,
+    successCount,
+    failureCount,
+    metadata: { period }
+  };
+};
+
+const manualJobHandlers = {
+  'trello.incremental_sync': {
+    jobType: 'sync',
+    run: () => trelloSync.syncRecentActivity()
+  },
+  'analytics.generate_all': {
+    jobType: 'analytics',
+    run: () => analyticsService.generateAllAnalytics()
+  },
+  'interventions.process_all': {
+    jobType: 'intervention',
+    run: async () => {
+      const workspaceId = getDefaultWorkspaceObjectId();
+      const boards = await Board.find(defaultWorkspaceQuery({ closed: false }));
+      let successCount = 0;
+      let failureCount = 0;
+
+      for (const board of boards) {
+        try {
+          await interventionEngine.processInterventions(board._id, { workspaceId });
+          successCount += 1;
+        } catch (error) {
+          failureCount += 1;
+          logger.error(`Failed to manually process interventions for board ${board._id}:`, error);
+        }
+      }
+
+      return {
+        processedCount: boards.length,
+        successCount,
+        failureCount
+      };
+    }
+  },
+  'interventions.follow_ups': {
+    jobType: 'intervention',
+    run: async () => {
+      await interventionEngine.processFollowUps();
+      return { processedCount: 1, successCount: 1, failureCount: 0 };
+    }
+  },
+  'interventions.escalations': {
+    jobType: 'intervention',
+    run: async () => {
+      await interventionEngine.processEscalations();
+      return { processedCount: 1, successCount: 1, failureCount: 0 };
+    }
+  },
+  'performance.daily': {
+    jobType: 'performance',
+    run: () => calculateAllPerformance('daily')
+  },
+  'performance.weekly': {
+    jobType: 'performance',
+    run: () => calculateAllPerformance('weekly')
+  },
+  'performance.monthly': {
+    jobType: 'performance',
+    run: () => calculateAllPerformance('monthly')
+  }
+};
 
 router.get('/', async (req, res) => {
   try {
@@ -65,6 +184,89 @@ router.get('/runs', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to list job runs'
+    });
+  }
+});
+
+router.post('/:jobName/pause', requirePermission('jobs:manage'), async (req, res) => {
+  try {
+    const control = await jobObservabilityService.setPaused(req.params.jobName, true, {
+      actor: actorFromRequest(req),
+      reason: req.body?.reason
+    });
+    await recordJobAudit(req, 'job_paused', req.params.jobName, control);
+
+    res.json({
+      success: true,
+      control
+    });
+  } catch (error) {
+    logger.error('Failed to pause job:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to pause job'
+    });
+  }
+});
+
+router.post('/:jobName/resume', requirePermission('jobs:manage'), async (req, res) => {
+  try {
+    const control = await jobObservabilityService.setPaused(req.params.jobName, false, {
+      actor: actorFromRequest(req)
+    });
+    await recordJobAudit(req, 'job_resumed', req.params.jobName, control);
+
+    res.json({
+      success: true,
+      control
+    });
+  } catch (error) {
+    logger.error('Failed to resume job:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to resume job'
+    });
+  }
+});
+
+router.post('/:jobName/trigger', requirePermission('jobs:manage'), async (req, res) => {
+  try {
+    const config = jobObservabilityService.ensureKnownJob(req.params.jobName);
+    const handler = manualJobHandlers[req.params.jobName];
+    if (!config.manualTriggerAllowed || !handler) {
+      return res.status(400).json({
+        success: false,
+        error: 'This job cannot be manually triggered'
+      });
+    }
+
+    if (await jobObservabilityService.isJobPaused(req.params.jobName)) {
+      return res.status(409).json({
+        success: false,
+        error: 'Resume this job before triggering it manually'
+      });
+    }
+
+    await jobObservabilityService.markManualRun(req.params.jobName, actorFromRequest(req));
+    const result = await jobObservabilityService.trackJob({
+      jobName: req.params.jobName,
+      jobType: handler.jobType,
+      triggerType: 'manual',
+      metadata: {
+        requestedBy: actorFromRequest(req)
+      }
+    }, handler.run);
+    await recordJobAudit(req, 'job_manual_triggered', req.params.jobName, result);
+
+    res.json({
+      success: true,
+      result
+    });
+  } catch (error) {
+    logger.error('Failed to trigger job:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to trigger job'
     });
   }
 });

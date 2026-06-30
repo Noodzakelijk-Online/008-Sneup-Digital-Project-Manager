@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const JobControl = require('../models/JobControl');
 const JobRun = require('../models/JobRun');
 const logger = require('../utils/logger');
 
@@ -9,61 +10,71 @@ const trackedJobs = [
     jobName: 'trello.full_sync',
     jobType: 'sync',
     label: 'Full Trello sync',
-    staleAfterMinutes: 26 * 60
+    staleAfterMinutes: 26 * 60,
+    manualTriggerAllowed: false
   },
   {
     jobName: 'trello.incremental_sync',
     jobType: 'sync',
     label: 'Incremental Trello sync',
-    staleAfterMinutes: 45
+    staleAfterMinutes: 45,
+    manualTriggerAllowed: true
   },
   {
     jobName: 'analytics.generate_all',
     jobType: 'analytics',
     label: 'Portfolio analytics',
-    staleAfterMinutes: 150
+    staleAfterMinutes: 150,
+    manualTriggerAllowed: true
   },
   {
     jobName: 'interventions.process_all',
     jobType: 'intervention',
     label: 'Intervention analysis',
-    staleAfterMinutes: 90
+    staleAfterMinutes: 90,
+    manualTriggerAllowed: true
   },
   {
     jobName: 'interventions.follow_ups',
     jobType: 'intervention',
     label: 'Follow-up processing',
-    staleAfterMinutes: 150
+    staleAfterMinutes: 150,
+    manualTriggerAllowed: true
   },
   {
     jobName: 'interventions.escalations',
     jobType: 'intervention',
     label: 'Escalation processing',
-    staleAfterMinutes: 270
+    staleAfterMinutes: 270,
+    manualTriggerAllowed: true
   },
   {
     jobName: 'performance.daily',
     jobType: 'performance',
     label: 'Daily performance',
-    staleAfterMinutes: 30 * 60
+    staleAfterMinutes: 30 * 60,
+    manualTriggerAllowed: true
   },
   {
     jobName: 'performance.weekly',
     jobType: 'performance',
     label: 'Weekly performance',
-    staleAfterMinutes: 8 * 24 * 60
+    staleAfterMinutes: 8 * 24 * 60,
+    manualTriggerAllowed: true
   },
   {
     jobName: 'performance.monthly',
     jobType: 'performance',
     label: 'Monthly performance',
-    staleAfterMinutes: 40 * 24 * 60
+    staleAfterMinutes: 40 * 24 * 60,
+    manualTriggerAllowed: true
   },
   {
     jobName: 'trello.webhook_event',
     jobType: 'webhook',
     label: 'Trello webhook processing',
-    staleAfterMinutes: 24 * 60
+    staleAfterMinutes: 24 * 60,
+    manualTriggerAllowed: false
   }
 ];
 
@@ -73,6 +84,11 @@ class JobObservabilityService {
   }
 
   async trackJob(options, callback) {
+    const paused = await this.isJobPaused(options.jobName);
+    if (paused) {
+      return this.recordSkippedRun(options, 'Job is paused by operator control');
+    }
+
     const run = await this.startRun(options);
 
     try {
@@ -138,6 +154,23 @@ class JobObservabilityService {
     return run.save();
   }
 
+  async recordSkippedRun(options = {}, reason = 'Skipped') {
+    const run = await this.startRun({
+      ...options,
+      metadata: {
+        ...(options.metadata || {}),
+        skippedReason: reason
+      }
+    });
+
+    return this.finishRun(run, 'skipped', {
+      processedCount: 0,
+      successCount: 0,
+      failureCount: 0,
+      metadata: { skippedReason: reason }
+    });
+  }
+
   async listRuns(filters = {}) {
     if (!this.isDatabaseReady()) {
       return this.getDemoRuns();
@@ -160,10 +193,11 @@ class JobObservabilityService {
       ...filters,
       limit: filters.limit || 250
     });
-    return this.buildDashboard(runs);
+    const controls = await this.listControls();
+    return this.buildDashboard(runs, new Date(), controls);
   }
 
-  buildDashboard(runs = [], now = new Date()) {
+  buildDashboard(runs = [], now = new Date(), controls = []) {
     const latestByJob = new Map();
     for (const run of runs) {
       if (!latestByJob.has(run.jobName)) {
@@ -171,13 +205,19 @@ class JobObservabilityService {
       }
     }
 
+    const controlsByJob = new Map(controls.map(control => [control.jobName, control]));
+
     const health = trackedJobs.map(config => {
       const latest = latestByJob.get(config.jobName);
       const lastSuccess = runs.find(run => run.jobName === config.jobName && run.status === 'succeeded');
+      const control = controlsByJob.get(config.jobName);
+      const paused = control?.status === 'paused';
       const stale = lastSuccess
         ? (now - new Date(lastSuccess.finishedAt || lastSuccess.startedAt)) > config.staleAfterMinutes * 60 * 1000
         : true;
-      const status = latest?.status === 'failed'
+      const status = paused
+        ? 'paused'
+        : latest?.status === 'failed'
         ? 'failed'
         : stale
           ? 'stale'
@@ -188,6 +228,8 @@ class JobObservabilityService {
         jobType: config.jobType,
         label: config.label,
         status,
+        paused,
+        manualTriggerAllowed: Boolean(config.manualTriggerAllowed),
         stale,
         staleAfterMinutes: config.staleAfterMinutes,
         lastRunAt: latest?.startedAt,
@@ -196,7 +238,10 @@ class JobObservabilityService {
         lastError: latest?.errorMessage || '',
         processedCount: latest?.processedCount || 0,
         successCount: latest?.successCount || 0,
-        failureCount: latest?.failureCount || 0
+        failureCount: latest?.failureCount || 0,
+        pausedAt: control?.pausedAt,
+        pausedBy: control?.pausedBy || '',
+        pausedReason: control?.pausedReason || ''
       };
     });
 
@@ -212,6 +257,7 @@ class JobObservabilityService {
         healthyJobs: health.filter(item => item.status === 'healthy').length,
         staleJobs: staleJobs.length,
         failedJobs: health.filter(item => item.status === 'failed').length,
+        pausedJobs: health.filter(item => item.status === 'paused').length,
         runningJobs: runningRuns.length,
         failedRuns: failedRuns.length
       },
@@ -241,6 +287,85 @@ class JobObservabilityService {
 
   getJobConfig(jobName) {
     return trackedJobs.find(job => job.jobName === jobName);
+  }
+
+  ensureKnownJob(jobName) {
+    const config = this.getJobConfig(jobName);
+    if (!config) {
+      const error = new Error('Job is not registered for operator control');
+      error.statusCode = 404;
+      throw error;
+    }
+    return config;
+  }
+
+  requireDatabaseForControls() {
+    if (!this.isDatabaseReady()) {
+      const error = new Error('MongoDB is required before job controls can be changed');
+      error.statusCode = 503;
+      throw error;
+    }
+  }
+
+  async listControls() {
+    if (!this.isDatabaseReady()) return [];
+    return JobControl.find({
+      jobName: { $in: trackedJobs.map(job => job.jobName) }
+    });
+  }
+
+  async getControl(jobName) {
+    this.ensureKnownJob(jobName);
+    if (!this.isDatabaseReady()) return null;
+    return JobControl.findOne({ jobName });
+  }
+
+  async isJobPaused(jobName) {
+    if (!jobName || !this.isDatabaseReady()) return false;
+    const control = await JobControl.findOne({ jobName }).select('status');
+    return control?.status === 'paused';
+  }
+
+  async setPaused(jobName, paused, options = {}) {
+    this.ensureKnownJob(jobName);
+    this.requireDatabaseForControls();
+
+    const actor = options.actor || 'sneup';
+    const update = paused
+      ? {
+        status: 'paused',
+        pausedAt: new Date(),
+        pausedBy: actor,
+        pausedReason: options.reason || 'Paused from Sneup command center'
+      }
+      : {
+        status: 'active',
+        resumedAt: new Date(),
+        resumedBy: actor
+      };
+
+    return JobControl.findOneAndUpdate(
+      { jobName },
+      { $set: update },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+  }
+
+  async markManualRun(jobName, actor = 'sneup') {
+    this.ensureKnownJob(jobName);
+    if (!this.isDatabaseReady()) return null;
+
+    return JobControl.findOneAndUpdate(
+      { jobName },
+      {
+        $set: {
+          lastManualRunAt: new Date(),
+          lastManualRunBy: actor
+        },
+        $setOnInsert: { status: 'active' }
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
   }
 
   getDemoRuns() {

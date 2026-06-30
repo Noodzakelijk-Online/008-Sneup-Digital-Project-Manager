@@ -501,12 +501,17 @@ function renderJobDashboard() {
       </div>
       <div class="meta">
         <span>${summary.healthyJobs || 0} healthy</span>
+        <span>${summary.pausedJobs || 0} paused</span>
         <span>${summary.runningJobs || 0} running</span>
         <span>${summary.failedRuns || 0} failed runs</span>
       </div>
     </div>
     ${listOrEmpty(displayJobs, renderJobHealthItem)}
   `;
+
+  document.querySelectorAll('[data-job-action]').forEach((button) => {
+    button.addEventListener('click', () => runJobAction(button.dataset.jobName, button.dataset.jobAction));
+  });
 }
 
 function renderOperationsLedger() {
@@ -610,7 +615,14 @@ function renderJobHealthItem(job) {
     ? 'critical'
     : job.status === 'stale'
       ? 'high'
-      : 'healthy';
+      : job.status === 'paused'
+        ? 'review'
+        : 'healthy';
+  const jobName = escapeHtml(job.jobName);
+  const controlsDisabled = state.jobDashboard?.mode !== 'live';
+  const canTrigger = job.manualTriggerAllowed && !job.paused && !controlsDisabled;
+  const pauseResumeAction = job.paused ? 'resume' : 'pause';
+  const pauseResumeLabel = job.paused ? 'Resume' : 'Pause';
   return `
     <div class="item">
       <div class="item-title">
@@ -621,8 +633,14 @@ function renderJobHealthItem(job) {
         <span>${escapeHtml(job.jobType || 'job')}</span>
         <span>Last run: ${formatDate(job.lastRunAt)}</span>
         <span>${Math.round((job.lastDurationMs || 0) / 1000)}s</span>
+        <span>${job.processedCount || 0} processed</span>
       </div>
+      ${job.pausedReason ? `<div class="meta">${escapeHtml(job.pausedReason)}</div>` : ''}
       ${job.lastError ? `<div class="meta">${escapeHtml(job.lastError)}</div>` : ''}
+      <div class="item-actions">
+        <button class="button" data-job-name="${jobName}" data-job-action="${pauseResumeAction}" type="button" ${controlsDisabled ? 'disabled' : ''}>${pauseResumeLabel}</button>
+        <button class="button primary" data-job-name="${jobName}" data-job-action="trigger" type="button" ${canTrigger ? '' : 'disabled'}>Run now</button>
+      </div>
     </div>
   `;
 }
@@ -888,6 +906,30 @@ async function runFollowUpAction(followUpId, action) {
     await loadOperationsLedger();
   } catch (error) {
     openNotice('Follow-up update failed', error.message);
+  }
+}
+
+async function runJobAction(jobName, action) {
+  if (!jobName || !action) return;
+
+  const actionLabels = {
+    pause: 'paused',
+    resume: 'resumed',
+    trigger: 'triggered'
+  };
+
+  try {
+    await fetchApi(`/api/jobs/${encodeURIComponent(jobName)}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reason: action === 'pause' ? 'Paused from Sneup command center' : undefined
+      })
+    });
+    await loadJobDashboard();
+    openNotice('Job control updated', `${jobName} ${actionLabels[action] || 'updated'}.`);
+  } catch (error) {
+    openNotice('Job control failed', error.message);
   }
 }
 

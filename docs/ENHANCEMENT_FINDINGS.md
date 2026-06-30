@@ -5,7 +5,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 ## Priority Summary
 
 - P0: 3 findings that block serious production use.
-- P1: 4 findings that materially improve trust, operability, and desktop adoption.
+- P1: 3 findings that materially improve trust, operability, and desktop adoption, plus 1 completed operations control finding.
 - P2: 6 findings that harden scale, quality, and workflow reach.
 - P3: 1 reporting enhancement with fast user-visible value.
 
@@ -19,7 +19,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 | ENH-004 | P1 | Trust | Recommendations need source evidence. | Add EvidenceRef objects to command queue, risks, focus items, and chat answers. |
 | ENH-005 | P1 | Forecasting | Forecasting needs capacity calendars and confidence ranges. | Model availability, holidays, skills, throughput, dependencies, and uncertainty. |
 | ENH-006 | P1 | Desktop | Installer needs first-run setup and release polish. | Add setup wizard, icon, publisher signing, and update feed. |
-| ENH-007 | P1 | Operations | Background jobs need observability and controls. | Add JobRun model and dashboard panels for job status, failures, retries, pause, and manual trigger. |
+| ENH-007 | P1 | Operations | Background jobs now have observability and controls. | Done: JobRun/JobControl records, stale/failed/paused dashboard health, and allowlisted pause/resume/manual trigger endpoints. |
 | ENH-008 | P2 | Dashboard | Inline dashboard assets keep CSP weaker than needed. | Split HTML, CSS, and JS, then remove inline script allowance. |
 | ENH-009 | P2 | AI quality | AI recommendations need regression evaluation. | Build representative scenarios and score correctness, evidence use, safety, and actionability. |
 | ENH-010 | P2 | Notifications | Risks and commands need delivery into team channels. | Add notification policies and Slack, Teams, email, and webhook senders. |
