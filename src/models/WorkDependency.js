@@ -16,7 +16,29 @@ const workDependencySchema = new mongoose.Schema({
   targetItemId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'WorkItem',
-    required: true,
+    index: true
+  },
+  sourceExternalId: {
+    type: String,
+    trim: true,
+    index: true
+  },
+  targetProvider: {
+    type: String,
+    trim: true,
+    index: true
+  },
+  targetExternalId: {
+    type: String,
+    trim: true,
+    index: true
+  },
+  targetTitle: String,
+  targetUrl: String,
+  resolutionStatus: {
+    type: String,
+    enum: ['resolved', 'unresolved'],
+    default: 'resolved',
     index: true
   },
   dependencyType: {
@@ -59,5 +81,6 @@ const workDependencySchema = new mongoose.Schema({
 
 workDependencySchema.index({ workspaceId: 1, sourceProvider: 1, externalId: 1 }, { unique: true });
 workDependencySchema.index({ workspaceId: 1, dependencyType: 1, updatedAt: -1 });
+workDependencySchema.index({ workspaceId: 1, targetProvider: 1, targetExternalId: 1, resolutionStatus: 1 });
 
 module.exports = mongoose.models.WorkDependency || mongoose.model('WorkDependency', workDependencySchema);

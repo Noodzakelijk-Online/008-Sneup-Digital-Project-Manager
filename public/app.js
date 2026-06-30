@@ -1815,11 +1815,13 @@ function renderGraphCandidateDetail(candidate) {
 }
 
 function renderGraphDependency(dependency) {
-  const peer = dependency.peerItem || dependency.targetItem || dependency.sourceItem || {};
+  const peer = dependency.peerItem || dependency.targetItem || dependency.unresolvedTarget || dependency.sourceItem || {};
   const providers = [
     dependency.sourceProvider,
+    dependency.targetProvider,
     dependency.sourceItem?.sourceProvider,
     dependency.targetItem?.sourceProvider,
+    dependency.unresolvedTarget?.sourceProvider,
     peer.sourceProvider
   ];
   const edgeLabel = dependency.sourceItem && dependency.targetItem
@@ -1838,16 +1840,17 @@ function renderGraphDependency(dependency) {
       <div class="meta">
         <span>${escapeHtml(dependency.direction || 'related')}</span>
         <span>${escapeHtml(dependency.relationship || 'Dependency relationship')}</span>
+        <span>${escapeHtml(dependency.resolutionStatus || 'resolved')}</span>
         <span>${Math.round((dependency.confidence || 0) * 100)}% confidence</span>
       </div>
       <div class="meta">
-        <span>${escapeHtml(peer.sourceProvider || dependency.sourceProvider || 'provider')}</span>
-        <span>${escapeHtml(peer.externalId || 'no external id')}</span>
+        <span>${escapeHtml(peer.sourceProvider || dependency.targetProvider || dependency.sourceProvider || 'provider')}</span>
+        <span>${escapeHtml(peer.externalId || dependency.targetExternalId || 'no external id')}</span>
         <span>${escapeHtml(peer.status || 'unknown')}</span>
       </div>
       <div class="item-actions">
         ${dependency.sourceItem?.url ? `<a class="button" href="${escapeHtml(dependency.sourceItem.url)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
-        ${dependency.targetItem?.url ? `<a class="button" href="${escapeHtml(dependency.targetItem.url)}" target="_blank" rel="noreferrer">Open target</a>` : ''}
+        ${(dependency.targetItem?.url || dependency.unresolvedTarget?.url || dependency.targetUrl) ? `<a class="button" href="${escapeHtml(dependency.targetItem?.url || dependency.unresolvedTarget?.url || dependency.targetUrl)}" target="_blank" rel="noreferrer">Open target</a>` : ''}
         ${peer.id ? `<button class="button" data-graph-detail="${escapeHtml(peer.id)}" type="button">Inspect graph</button>` : ''}
       </div>
     </div>

@@ -132,6 +132,7 @@ class WorkGraphService {
     await this.upsertComment(projection, item, now);
     await this.upsertEvent(projection, item);
     await this.upsertDependencies(projection, item, now);
+    await this.resolvePendingDependenciesForItem(projection, item, now);
 
     return this.sanitizeItem(item);
   }
@@ -217,12 +218,12 @@ class WorkGraphService {
 
   async upsertDependencies(projection, item, now) {
     for (const dependency of projection.dependencies || []) {
+      const targetProvider = dependency.targetProvider || projection.sourceProvider;
       const target = await WorkItem.findOne({
         workspaceId: projection.workspaceId,
-        sourceProvider: dependency.targetProvider || projection.sourceProvider,
+        sourceProvider: targetProvider,
         externalId: dependency.targetExternalId
       });
-      if (!target) continue;
 
       await WorkDependency.findOneAndUpdate({
         workspaceId: projection.workspaceId,
@@ -232,25 +233,55 @@ class WorkGraphService {
         $set: {
           workspaceId: projection.workspaceId,
           sourceItemId: item._id,
-          targetItemId: target._id,
+          ...(target ? { targetItemId: target._id } : {}),
           dependencyType: dependency.dependencyType,
+          sourceExternalId: projection.externalId,
           sourceProvider: projection.sourceProvider,
+          targetProvider,
+          targetExternalId: dependency.targetExternalId,
+          targetTitle: dependency.targetTitle || dependency.label || '',
+          targetUrl: dependency.targetUrl || dependency.url || '',
+          resolutionStatus: target ? 'resolved' : 'unresolved',
           externalId: dependency.externalId,
           confidence: dependency.confidence,
           evidenceRefs: dependency.evidenceRefs,
           metadata: {
             ...(dependency.metadata || {}),
-            targetProvider: dependency.targetProvider || projection.sourceProvider,
+            targetProvider,
             targetExternalId: dependency.targetExternalId,
+            targetTitle: dependency.targetTitle || dependency.label || '',
+            targetUrl: dependency.targetUrl || dependency.url || '',
+            resolutionStatus: target ? 'resolved' : 'unresolved',
             lastSeenAt: now
           }
-        }
+        },
+        ...(target ? {} : { $unset: { targetItemId: '' } })
       }, {
         new: true,
         upsert: true,
         setDefaultsOnInsert: true
       });
     }
+  }
+
+  async resolvePendingDependenciesForItem(projection, item, now) {
+    await WorkDependency.updateMany({
+      workspaceId: projection.workspaceId,
+      targetProvider: projection.sourceProvider,
+      targetExternalId: projection.externalId,
+      resolutionStatus: 'unresolved'
+    }, {
+      $set: {
+        targetItemId: item._id,
+        targetTitle: item.title,
+        targetUrl: item.url || '',
+        resolutionStatus: 'resolved',
+        'metadata.resolutionStatus': 'resolved',
+        'metadata.resolvedAt': now,
+        'metadata.targetTitle': item.title,
+        'metadata.targetUrl': item.url || ''
+      }
+    });
   }
 
   async getSummary(options = {}) {
@@ -852,6 +883,8 @@ class WorkGraphService {
       sourceExternalId: externalId,
       targetProvider: ref.targetProvider || provider,
       targetExternalId: String(ref.targetExternalId),
+      targetTitle: ref.targetTitle || ref.label || '',
+      targetUrl: ref.targetUrl || ref.url || '',
       dependencyType: this.normalizeDependencyType(ref.dependencyType),
       externalId: ref.externalId || `${provider}:${externalId}:${ref.dependencyType || 'unknown'}:${ref.targetProvider || provider}:${ref.targetExternalId}`,
       confidence: ref.confidence || 1,
@@ -1001,6 +1034,8 @@ class WorkGraphService {
       targetExternalId: String(targetExternalId),
       dependencyType,
       externalId: `${context.provider}:${context.externalId}:${context.relationField}:${relationId}:${targetProvider}:${targetExternalId}`,
+      targetTitle: context.label || (typeof target === 'object' ? pick(target.title, target.name, target.summary, target.fields?.summary) : undefined),
+      targetUrl: context.url || (typeof target === 'object' ? pick(target.url, target.html_url, target.htmlUrl, target.permalink_url, target.webUrl, target.self) : undefined),
       label: context.label || (typeof target === 'object' ? target.title || target.name || target.summary : undefined),
       url: context.url || (typeof target === 'object' ? pick(target.url, target.html_url, target.htmlUrl, target.permalink_url, target.webUrl, target.self) : undefined),
       confidence: typeof target === 'object' ? target.confidence : undefined,
@@ -1083,6 +1118,12 @@ class WorkGraphService {
       targetItemId: dependency.targetItemId ? String(dependency.targetItemId) : null,
       dependencyType: dependency.dependencyType,
       sourceProvider: dependency.sourceProvider,
+      sourceExternalId: dependency.sourceExternalId || dependency.metadata?.sourceExternalId || '',
+      targetProvider: dependency.targetProvider || dependency.metadata?.targetProvider || '',
+      targetExternalId: dependency.targetExternalId || dependency.metadata?.targetExternalId || '',
+      targetTitle: dependency.targetTitle || dependency.metadata?.targetTitle || '',
+      targetUrl: dependency.targetUrl || dependency.metadata?.targetUrl || '',
+      resolutionStatus: dependency.resolutionStatus || dependency.metadata?.resolutionStatus || 'resolved',
       externalId: dependency.externalId,
       confidence: dependency.confidence,
       evidenceRefs: dependency.evidenceRefs || [],
@@ -1113,7 +1154,24 @@ class WorkGraphService {
       targetItem: dependency.targetItemId && typeof dependency.targetItemId === 'object' && dependency.targetItemId._id
         ? this.sanitizeItem(dependency.targetItemId)
         : null,
+      unresolvedTarget: !dependency.targetItemId || typeof dependency.targetItemId !== 'object'
+        ? this.sanitizeUnresolvedTarget(dependency)
+        : null,
       relationship: this.dependencyRelationshipLabel(dependency.dependencyType, direction)
+    };
+  }
+
+  sanitizeUnresolvedTarget(dependency) {
+    const targetProvider = dependency.targetProvider || dependency.metadata?.targetProvider;
+    const targetExternalId = dependency.targetExternalId || dependency.metadata?.targetExternalId;
+    if (!targetProvider && !targetExternalId) return null;
+    return {
+      id: null,
+      sourceProvider: targetProvider || dependency.sourceProvider || 'provider',
+      externalId: targetExternalId || '',
+      title: dependency.targetTitle || dependency.metadata?.targetTitle || targetExternalId || 'Unresolved dependency target',
+      status: dependency.resolutionStatus || dependency.metadata?.resolutionStatus || 'unresolved',
+      url: dependency.targetUrl || dependency.metadata?.targetUrl || null
     };
   }
 
@@ -1198,6 +1256,7 @@ class WorkGraphService {
       add(dependency.sourceItem);
       add(dependency.targetItem);
       add(dependency.peerItem);
+      add(dependency.unresolvedTarget);
     });
     recommendations.forEach(recommendation => {
       if (!recommendation.providerUrl) return;
@@ -1227,8 +1286,10 @@ class WorkGraphService {
     items.forEach(item => addProvider(item.sourceProvider));
     dependencies.forEach(dependency => {
       addProvider(dependency.sourceProvider);
+      addProvider(dependency.targetProvider);
       addProvider(dependency.sourceItem?.sourceProvider);
       addProvider(dependency.targetItem?.sourceProvider);
+      addProvider(dependency.unresolvedTarget?.sourceProvider);
       if (dependency.dependencyType) dependencyTypes.add(dependency.dependencyType);
       if (dependency.direction) directions.add(dependency.direction);
     });

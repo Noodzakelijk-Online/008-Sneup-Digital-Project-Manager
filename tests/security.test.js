@@ -429,6 +429,7 @@ describe('workspace identity models', () => {
     const TrelloActionAttempt = require('../src/models/TrelloActionAttempt');
     const WorkerResponse = require('../src/models/WorkerResponse');
     const WorkSignal = require('../src/models/WorkSignal');
+    const WorkDependency = require('../src/models/WorkDependency');
     const User = require('../src/models/User');
     const Workspace = require('../src/models/Workspace');
 
@@ -472,6 +473,10 @@ describe('workspace identity models', () => {
     expect(Board.schema.path('workspaceId')).toBeTruthy();
     expect(Card.schema.path('workspaceId')).toBeTruthy();
     expect(ConnectorAccount.schema.path('workspaceId')).toBeTruthy();
+    expect(WorkDependency.schema.path('targetItemId').isRequired).toBeFalsy();
+    expect(WorkDependency.schema.path('targetProvider')).toBeTruthy();
+    expect(WorkDependency.schema.path('targetExternalId')).toBeTruthy();
+    expect(WorkDependency.schema.path('resolutionStatus').enumValues).toEqual(expect.arrayContaining(['resolved', 'unresolved']));
     for (const Model of [
       Approval,
       Analytics,
@@ -568,6 +573,20 @@ describe('connector registry', () => {
 });
 
 describe('work signal normalization', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.dontMock('mongoose');
+    jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/models/WorkActor');
+    jest.dontMock('../src/models/WorkComment');
+    jest.dontMock('../src/models/WorkContainer');
+    jest.dontMock('../src/models/WorkDependency');
+    jest.dontMock('../src/models/WorkEvent');
+    jest.dontMock('../src/models/WorkItem');
+    jest.dontMock('../src/models/Recommendation');
+    jest.resetModules();
+  });
+
   test('defines adapter contracts and normalizes provider payloads into WorkSignal fields', () => {
     const workSignalService = require('../src/services/workSignalService');
     const workspaceId = new mongoose.Types.ObjectId();
@@ -751,6 +770,115 @@ describe('work signal normalization', () => {
     expect(String(projection.workspaceId)).toBe(String(workspaceId));
     expect(String(projection.connectorAccountId)).toBe(String(accountId));
     expect(String(projection.sourceSignalId)).toBe(String(signalId));
+  });
+
+  test('persists unresolved cross-provider dependencies from synced work signals', async () => {
+    jest.resetModules();
+
+    const workspaceId = 'workspace-object-id';
+    const sourceItem = {
+      _id: 'item-source',
+      workspaceId,
+      sourceProvider: 'jira_software',
+      connectorAccountId: 'account-1',
+      sourceSignalId: 'signal-1',
+      externalId: 'OPS-42',
+      canonicalKey: 'jira_software:OPS-42',
+      title: 'Launch blocker',
+      description: 'Waiting on GitHub implementation.',
+      itemType: 'issue',
+      status: 'blocked',
+      priority: 'high',
+      url: 'https://jira.example/browse/OPS-42',
+      ownerKeys: [],
+      labelKeys: [],
+      evidenceRefs: [],
+      syncState: {},
+      firstSeenAt: new Date('2026-06-30T08:00:00Z'),
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    };
+    const findOneAndUpdateDependency = jest.fn().mockResolvedValue({ _id: 'dep-1' });
+    const resolvePending = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(() => workspaceId),
+      getDefaultWorkspaceObjectId: jest.fn(() => workspaceId)
+    }));
+    jest.doMock('../src/models/WorkItem', () => ({
+      itemTypes: ['task', 'project', 'message', 'issue', 'pull_request', 'document', 'event', 'risk', 'decision', 'other'],
+      findOneAndUpdate: jest.fn().mockResolvedValue(sourceItem),
+      findOne: jest.fn().mockResolvedValue(null)
+    }));
+    jest.doMock('../src/models/WorkActor', () => ({ findOneAndUpdate: jest.fn().mockResolvedValue({}) }));
+    jest.doMock('../src/models/WorkComment', () => ({ findOneAndUpdate: jest.fn().mockResolvedValue({}) }));
+    jest.doMock('../src/models/WorkContainer', () => ({ findOneAndUpdate: jest.fn().mockResolvedValue({}) }));
+    jest.doMock('../src/models/WorkEvent', () => ({ findOneAndUpdate: jest.fn().mockResolvedValue({}) }));
+    jest.doMock('../src/models/WorkDependency', () => ({
+      findOneAndUpdate: findOneAndUpdateDependency,
+      updateMany: resolvePending
+    }));
+    jest.doMock('../src/models/Recommendation', () => ({}));
+
+    const workGraphService = require('../src/services/workGraphService');
+    await workGraphService.upsertFromSignal({
+      _id: 'signal-1',
+      workspaceId,
+      connectorAccountId: 'account-1',
+      provider: 'jira_software',
+      externalId: 'OPS-42',
+      sourceType: 'issue',
+      title: 'Launch blocker',
+      description: 'Waiting on GitHub implementation.',
+      status: 'blocked',
+      priority: 'high',
+      url: 'https://jira.example/browse/OPS-42',
+      raw: {
+        blockedBy: [{
+          provider: 'github',
+          node_id: 'ISSUE_kwDO999',
+          title: 'Implement launch API',
+          html_url: 'https://github.example/issues/999'
+        }]
+      }
+    }, { actorId: 'sync-test' });
+
+    expect(findOneAndUpdateDependency).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId,
+        sourceProvider: 'jira_software',
+        externalId: 'jira_software:OPS-42:blockedBy:0:github:ISSUE_kwDO999'
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          sourceItemId: 'item-source',
+          sourceExternalId: 'OPS-42',
+          targetProvider: 'github',
+          targetExternalId: 'ISSUE_kwDO999',
+          targetTitle: 'Implement launch API',
+          targetUrl: 'https://github.example/issues/999',
+          resolutionStatus: 'unresolved',
+          dependencyType: 'blocked_by'
+        }),
+        $unset: { targetItemId: '' }
+      }),
+      expect.objectContaining({
+        upsert: true
+      })
+    );
+    expect(resolvePending).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetProvider: 'jira_software',
+        targetExternalId: 'OPS-42',
+        resolutionStatus: 'unresolved'
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          targetItemId: 'item-source',
+          resolutionStatus: 'resolved'
+        })
+      })
+    );
   });
 
   test('extracts provider-native work dependencies into graph projections', () => {
