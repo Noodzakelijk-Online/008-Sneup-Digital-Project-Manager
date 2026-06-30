@@ -1021,18 +1021,28 @@ class OperationsLedgerService {
       throw error;
     }
 
-    followUp.status = body.status || 'resolved';
+    const allowedStatuses = new Set(['resolved', 'cancelled', 'escalated']);
+    const nextStatus = body.status || 'resolved';
+    if (!allowedStatuses.has(nextStatus)) {
+      const error = new Error('Follow-up can only be resolved, cancelled, or escalated');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    followUp.status = nextStatus;
     followUp.resolvedAt = new Date();
+    followUp.resolvedBy = body.resolvedBy || 'sneup';
     followUp.resolutionNote = body.resolutionNote || '';
+    followUp.outcome = body.outcome || (nextStatus === 'escalated' ? 'needs_attention' : 'manual');
     await followUp.save();
 
     await this.recordAudit({
       entityType: 'follow_up_plan',
       entityId: followUp._id,
-      action: 'follow_up_resolved',
-      actor: body.resolvedBy || 'sneup',
+      action: nextStatus === 'escalated' ? 'follow_up_escalated' : 'follow_up_resolved',
+      actor: followUp.resolvedBy,
       source: 'api',
-      riskLevel: 'low',
+      riskLevel: nextStatus === 'escalated' ? 'medium' : 'low',
       recommendationId: followUp.recommendationId,
       afterState: followUp.toObject()
     });
@@ -1062,6 +1072,8 @@ class OperationsLedgerService {
       }
     }
 
+    const followUpResolution = await this.resolveFollowUpsForWorkerResponse(response, body);
+
     await this.recordAudit({
       entityType: 'worker_response',
       entityId: response._id,
@@ -1070,10 +1082,82 @@ class OperationsLedgerService {
       source: response.source,
       riskLevel: 'low',
       recommendationId: response.recommendationId,
-      afterState: response.toObject()
+      afterState: {
+        ...response.toObject(),
+        followUpResolution
+      }
     });
 
+    if (followUpResolution.modifiedCount > 0) {
+      await this.recordAudit({
+        entityType: 'worker_response',
+        entityId: response._id,
+        action: 'follow_ups_resolved_from_worker_response',
+        actor: body.actor || 'worker',
+        source: response.source,
+        riskLevel: followUpResolution.status === 'escalated' ? 'medium' : 'low',
+        recommendationId: response.recommendationId,
+        afterState: followUpResolution
+      });
+    }
+
     return response;
+  }
+
+  async resolveFollowUpsForWorkerResponse(response, body = {}) {
+    const responseType = body.responseType || response.responseType || 'other';
+    if (responseType === 'ignored') {
+      return { matchedCount: 0, modifiedCount: 0, status: 'open' };
+    }
+
+    const workspaceId = this.resolveWorkspaceId(body.workspaceId || response.workspaceId);
+    const matcher = {
+      workspaceId,
+      status: { $in: ['scheduled', 'due'] }
+    };
+
+    const or = [];
+    if (response.recommendationId) or.push({ recommendationId: response.recommendationId });
+    if (response.interventionId) or.push({ interventionId: response.interventionId });
+    if (response.cardId && response.memberId) {
+      or.push({
+        cardId: response.cardId,
+        memberId: response.memberId
+      });
+    } else if (response.cardId) {
+      or.push({ cardId: response.cardId });
+    }
+
+    if (or.length === 0) {
+      return { matchedCount: 0, modifiedCount: 0, status: 'unmatched' };
+    }
+
+    matcher.$or = or;
+
+    const needsAttention = ['blocked', 'needs_help'].includes(responseType);
+    const nextStatus = needsAttention ? 'escalated' : 'resolved';
+    const outcome = responseType === 'completed'
+      ? 'completed'
+      : needsAttention
+        ? 'needs_attention'
+        : 'response_received';
+
+    const result = await FollowUpPlan.updateMany(matcher, {
+      $set: {
+        status: nextStatus,
+        resolvedAt: new Date(),
+        resolvedBy: body.actor || 'worker',
+        resolutionNote: `Worker response recorded: ${responseType}`,
+        outcome
+      }
+    });
+
+    return {
+      matchedCount: result.matchedCount || result.n || 0,
+      modifiedCount: result.modifiedCount || result.nModified || 0,
+      status: nextStatus,
+      outcome
+    };
   }
 
   async scheduleFollowUp(recommendation) {

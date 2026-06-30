@@ -576,6 +576,9 @@ function renderOperationsLedger() {
   document.querySelectorAll('[data-decision-action]').forEach((button) => {
     button.addEventListener('click', () => runDecisionAction(button.dataset.decisionId, button.dataset.decisionAction));
   });
+  document.querySelectorAll('[data-followup-action]').forEach((button) => {
+    button.addEventListener('click', () => runFollowUpAction(button.dataset.followupId, button.dataset.followupAction));
+  });
   document.querySelectorAll('[data-payload-edit]').forEach((button) => {
     button.addEventListener('click', () => editRecommendationPayload(button.dataset.payloadEdit));
   });
@@ -766,6 +769,7 @@ function renderTrelloAttempt(attempt) {
 }
 
 function renderFollowUp(followUp) {
+  const followUpId = getId(followUp._id || followUp.id);
   return `
     <div class="item">
       <div class="item-title">
@@ -775,6 +779,10 @@ function renderFollowUp(followUp) {
       <div class="meta">
         <span>Due ${formatDate(followUp.dueAt)}</span>
         <span>${escapeHtml(followUp.nextAction || 'Review worker response')}</span>
+      </div>
+      <div class="item-actions">
+        <button class="button primary" data-followup-id="${followUpId}" data-followup-action="resolved" type="button">Resolved</button>
+        <button class="button" data-followup-id="${followUpId}" data-followup-action="escalated" type="button">Escalate</button>
       </div>
     </div>
   `;
@@ -854,6 +862,32 @@ async function runDecisionAction(itemId, action) {
     await loadOperationsLedger();
   } catch (error) {
     openNotice('Decision update failed', error.message);
+  }
+}
+
+async function runFollowUpAction(followUpId, action) {
+  if (!followUpId) return;
+
+  const status = action === 'escalated' ? 'escalated' : 'resolved';
+  const body = {
+    status,
+    resolvedBy: 'robert',
+    outcome: status === 'escalated' ? 'needs_attention' : 'manual',
+    resolutionNote: status === 'escalated'
+      ? 'Escalated from Sneup command center'
+      : 'Resolved from Sneup command center'
+  };
+
+  try {
+    await fetchApi(`/api/follow-ups/${followUpId}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    openNotice('Follow-up updated', status === 'escalated' ? 'Follow-up escalated.' : 'Follow-up resolved.');
+    await loadOperationsLedger();
+  } catch (error) {
+    openNotice('Follow-up update failed', error.message);
   }
 }
 

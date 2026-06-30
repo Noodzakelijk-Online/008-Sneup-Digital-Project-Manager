@@ -45,7 +45,14 @@ const followUpPlanSchema = new mongoose.Schema({
     index: true
   },
   resolvedAt: Date,
-  resolutionNote: String
+  resolvedBy: String,
+  resolutionNote: String,
+  outcome: {
+    type: String,
+    enum: ['response_received', 'completed', 'needs_attention', 'no_longer_needed', 'manual', 'unknown'],
+    default: 'unknown',
+    index: true
+  }
 }, {
   timestamps: true
 });

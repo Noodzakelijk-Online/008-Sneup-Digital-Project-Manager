@@ -1006,6 +1006,142 @@ describe('operations daily brief', () => {
   });
 });
 
+describe('follow-up accountability', () => {
+  afterEach(() => {
+    jest.dontMock('mongoose');
+    jest.dontMock('../src/models/WorkerResponse');
+    jest.dontMock('../src/models/FollowUpPlan');
+    jest.dontMock('../src/models/Intervention');
+    jest.dontMock('../src/models/AuditEvent');
+    jest.dontMock('../src/models/Recommendation');
+    jest.dontMock('../src/models/Approval');
+    jest.dontMock('../src/models/TrelloActionAttempt');
+    jest.dontMock('../src/models/DecisionQueueItem');
+    jest.dontMock('../src/models/CardFinding');
+    jest.dontMock('../src/models/BoardHealthSnapshot');
+    jest.dontMock('../src/models/Card');
+    jest.dontMock('../src/models/Member');
+    jest.dontMock('../src/services/trelloClient');
+    jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/services/operationsLedgerService');
+    jest.resetModules();
+  });
+
+  test('worker responses close matching open follow-up plans', async () => {
+    jest.resetModules();
+
+    const workspaceId = new mongoose.Types.ObjectId();
+    const recommendationId = new mongoose.Types.ObjectId();
+    const interventionId = new mongoose.Types.ObjectId();
+    const cardId = new mongoose.Types.ObjectId();
+    const memberId = new mongoose.Types.ObjectId();
+    const responseId = new mongoose.Types.ObjectId();
+
+    const response = {
+      _id: responseId,
+      workspaceId,
+      recommendationId,
+      interventionId,
+      cardId,
+      memberId,
+      responseText: 'Done and ready for review.',
+      responseType: 'completed',
+      source: 'api',
+      toObject() {
+        return {
+          _id: responseId,
+          workspaceId,
+          recommendationId,
+          interventionId,
+          cardId,
+          memberId,
+          responseText: this.responseText,
+          responseType: this.responseType,
+          source: this.source
+        };
+      }
+    };
+
+    const updateMany = jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 });
+    const auditCreate = jest.fn().mockResolvedValue({ _id: new mongoose.Types.ObjectId() });
+
+    jest.doMock('mongoose', () => ({
+      ...mongoose,
+      connection: { readyState: 1 }
+    }));
+    jest.doMock('../src/models/WorkerResponse', () => ({
+      create: jest.fn().mockResolvedValue(response)
+    }));
+    jest.doMock('../src/models/FollowUpPlan', () => ({
+      updateMany
+    }));
+    jest.doMock('../src/models/Intervention', () => ({
+      findOne: jest.fn().mockResolvedValue(null)
+    }));
+    jest.doMock('../src/models/AuditEvent', () => ({
+      create: auditCreate
+    }));
+    [
+      '../src/models/Recommendation',
+      '../src/models/Approval',
+      '../src/models/TrelloActionAttempt',
+      '../src/models/DecisionQueueItem',
+      '../src/models/CardFinding',
+      '../src/models/BoardHealthSnapshot',
+      '../src/models/Card',
+      '../src/models/Member'
+    ].forEach((modelPath) => {
+      jest.doMock(modelPath, () => ({}));
+    });
+    jest.doMock('../src/services/trelloClient', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn((value) => value || workspaceId)
+    }));
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    await expect(operationsLedgerService.recordWorkerResponse({
+      workspaceId,
+      recommendationId,
+      interventionId,
+      cardId,
+      memberId,
+      responseText: response.responseText,
+      responseType: response.responseType,
+      actor: 'worker-1'
+    })).resolves.toMatchObject({
+      responseType: 'completed'
+    });
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId,
+        status: { $in: ['scheduled', 'due'] },
+        $or: expect.arrayContaining([
+          { recommendationId },
+          { interventionId },
+          { cardId, memberId }
+        ])
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: 'resolved',
+          resolvedBy: 'worker-1',
+          resolutionNote: 'Worker response recorded: completed',
+          outcome: 'completed'
+        })
+      })
+    );
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'worker_response_recorded'
+    }));
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'follow_ups_resolved_from_worker_response',
+      actor: 'worker-1'
+    }));
+  });
+});
+
 describe('autopilot command approval queue', () => {
   beforeEach(() => {
     jest.resetModules();
