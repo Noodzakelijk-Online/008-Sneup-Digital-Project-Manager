@@ -477,6 +477,9 @@ describe('workspace identity models', () => {
     expect(WorkDependency.schema.path('targetProvider')).toBeTruthy();
     expect(WorkDependency.schema.path('targetExternalId')).toBeTruthy();
     expect(WorkDependency.schema.path('resolutionStatus').enumValues).toEqual(expect.arrayContaining(['resolved', 'unresolved']));
+    expect(WorkDependency.schema.path('freshnessStatus').enumValues).toEqual(expect.arrayContaining(['fresh', 'stale']));
+    expect(WorkDependency.schema.path('lastSeenAt')).toBeTruthy();
+    expect(WorkDependency.schema.path('staleSince')).toBeTruthy();
     for (const Model of [
       Approval,
       Analytics,
@@ -858,9 +861,11 @@ describe('work signal normalization', () => {
           targetTitle: 'Implement launch API',
           targetUrl: 'https://github.example/issues/999',
           resolutionStatus: 'unresolved',
+          freshnessStatus: 'fresh',
+          lastSeenAt: expect.any(Date),
           dependencyType: 'blocked_by'
         }),
-        $unset: { targetItemId: '' }
+        $unset: expect.objectContaining({ targetItemId: '' })
       }),
       expect.objectContaining({
         upsert: true
@@ -876,6 +881,18 @@ describe('work signal normalization', () => {
         $set: expect.objectContaining({
           targetItemId: 'item-source',
           resolutionStatus: 'resolved'
+        })
+      })
+    );
+    expect(resolvePending).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId,
+        freshnessStatus: { $ne: 'stale' }
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          freshnessStatus: 'stale',
+          staleReason: expect.stringContaining('not been observed')
         })
       })
     );
@@ -1057,6 +1074,30 @@ describe('work signal normalization', () => {
       labelKeys: ['contract'],
       lastSeenAt: new Date('2026-06-30T08:00:00Z')
     });
+    const staleDependencyReview = workGraphService.buildDecisionCandidate({
+      _id: new mongoose.Types.ObjectId(),
+      workspaceId,
+      connectorAccountId: accountId,
+      sourceProvider: 'jira_software',
+      externalId: 'OPS-99',
+      canonicalKey: 'jira_software:OPS-99',
+      title: 'Review old provider blocker',
+      itemType: 'issue',
+      status: 'blocked',
+      priority: 'normal',
+      ownerKeys: ['jira_software:actor:nina'],
+      labelKeys: [],
+      lastSeenAt: new Date('2026-06-30T08:00:00Z')
+    }, {
+      dependencyCount: 2,
+      activeDependencyCount: 0,
+      staleDependencyCount: 2,
+      blockingCount: 0,
+      blockedByCount: 0,
+      dependencyTypes: {
+        blocked_by: 2
+      }
+    });
 
     expect(blocked).toMatchObject({
       findingType: 'graph_blocked_work',
@@ -1090,6 +1131,16 @@ describe('work signal normalization', () => {
       ownerType: 'robert',
       actionType: 'manual_review'
     });
+    expect(staleDependencyReview).toMatchObject({
+      dependencySummary: expect.objectContaining({
+        dependencyCount: 2,
+        activeDependencyCount: 0,
+        staleDependencyCount: 2,
+        blockedByCount: 0
+      })
+    });
+    expect(staleDependencyReview.approvalReason).toContain('stale graph dependencies need review');
+    expect(staleDependencyReview.graphScore).toBeLessThan(blocked.graphScore);
     expect([blocked, ownerless, sensitive].every(candidate =>
       candidate.actionPayload.externalProviderWriteBlocked === true
       && candidate.actionPayload.executable === false

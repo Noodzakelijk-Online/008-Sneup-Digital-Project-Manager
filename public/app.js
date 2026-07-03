@@ -1816,6 +1816,7 @@ function renderGraphCandidateDetail(candidate) {
 
 function renderGraphDependency(dependency) {
   const peer = dependency.peerItem || dependency.targetItem || dependency.unresolvedTarget || dependency.sourceItem || {};
+  const freshness = dependency.freshnessStatus || 'fresh';
   const providers = [
     dependency.sourceProvider,
     dependency.targetProvider,
@@ -1836,18 +1837,22 @@ function renderGraphDependency(dependency) {
       <div class="item-title">
         <strong>${escapeHtml(peer.title || edgeLabel || 'Linked work item')}</strong>
         <span class="pill review">${escapeHtml(dependency.dependencyType || 'unknown')}</span>
+        ${freshness === 'stale' ? '<span class="pill critical">needs review</span>' : '<span class="pill healthy">fresh</span>'}
       </div>
       <div class="meta">
         <span>${escapeHtml(dependency.direction || 'related')}</span>
         <span>${escapeHtml(dependency.relationship || 'Dependency relationship')}</span>
         <span>${escapeHtml(dependency.resolutionStatus || 'resolved')}</span>
+        <span>${escapeHtml(freshness)}</span>
         <span>${Math.round((dependency.confidence || 0) * 100)}% confidence</span>
       </div>
       <div class="meta">
         <span>${escapeHtml(peer.sourceProvider || dependency.targetProvider || dependency.sourceProvider || 'provider')}</span>
         <span>${escapeHtml(peer.externalId || dependency.targetExternalId || 'no external id')}</span>
         <span>${escapeHtml(peer.status || 'unknown')}</span>
+        ${dependency.lastSeenAt ? `<span>seen ${formatDate(dependency.lastSeenAt)}</span>` : ''}
       </div>
+      ${dependency.staleReason ? `<div class="meta">${escapeHtml(dependency.staleReason)}</div>` : ''}
       <div class="item-actions">
         ${dependency.sourceItem?.url ? `<a class="button" href="${escapeHtml(dependency.sourceItem.url)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
         ${(dependency.targetItem?.url || dependency.unresolvedTarget?.url || dependency.targetUrl) ? `<a class="button" href="${escapeHtml(dependency.targetItem?.url || dependency.unresolvedTarget?.url || dependency.targetUrl)}" target="_blank" rel="noreferrer">Open target</a>` : ''}

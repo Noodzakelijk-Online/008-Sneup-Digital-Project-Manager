@@ -41,6 +41,21 @@ const workDependencySchema = new mongoose.Schema({
     default: 'resolved',
     index: true
   },
+  freshnessStatus: {
+    type: String,
+    enum: ['fresh', 'stale'],
+    default: 'fresh',
+    index: true
+  },
+  staleSince: {
+    type: Date,
+    index: true
+  },
+  staleReason: String,
+  lastSeenAt: {
+    type: Date,
+    index: true
+  },
   dependencyType: {
     type: String,
     enum: ['blocks', 'blocked_by', 'relates_to', 'duplicates', 'depends_on', 'unknown'],
@@ -82,5 +97,6 @@ const workDependencySchema = new mongoose.Schema({
 workDependencySchema.index({ workspaceId: 1, sourceProvider: 1, externalId: 1 }, { unique: true });
 workDependencySchema.index({ workspaceId: 1, dependencyType: 1, updatedAt: -1 });
 workDependencySchema.index({ workspaceId: 1, targetProvider: 1, targetExternalId: 1, resolutionStatus: 1 });
+workDependencySchema.index({ workspaceId: 1, freshnessStatus: 1, lastSeenAt: -1 });
 
 module.exports = mongoose.models.WorkDependency || mongoose.model('WorkDependency', workDependencySchema);

@@ -29,6 +29,7 @@ const asArray = (value) => {
 const pick = (...values) => values.find(value => value !== undefined && value !== null && value !== '');
 const OPEN_STATUSES = new Set(['open', 'in_progress', 'blocked', 'waiting', 'unknown']);
 const ROBERT_SENSITIVE_PATTERN = /\b(robert|client|legal|contract|money|budget|invoice|payment|government|tax|compliance|commitment|approval)\b/i;
+const DEFAULT_DEPENDENCY_STALE_AFTER_DAYS = 30;
 
 class WorkGraphService {
   buildProjection(signal) {
@@ -133,6 +134,7 @@ class WorkGraphService {
     await this.upsertEvent(projection, item);
     await this.upsertDependencies(projection, item, now);
     await this.resolvePendingDependenciesForItem(projection, item, now);
+    await this.markStaleDependencies(projection.workspaceId, { now });
 
     return this.sanitizeItem(item);
   }
@@ -242,6 +244,9 @@ class WorkGraphService {
           targetTitle: dependency.targetTitle || dependency.label || '',
           targetUrl: dependency.targetUrl || dependency.url || '',
           resolutionStatus: target ? 'resolved' : 'unresolved',
+          freshnessStatus: 'fresh',
+          lastSeenAt: now,
+          staleReason: '',
           externalId: dependency.externalId,
           confidence: dependency.confidence,
           evidenceRefs: dependency.evidenceRefs,
@@ -252,10 +257,16 @@ class WorkGraphService {
             targetTitle: dependency.targetTitle || dependency.label || '',
             targetUrl: dependency.targetUrl || dependency.url || '',
             resolutionStatus: target ? 'resolved' : 'unresolved',
+            freshnessStatus: 'fresh',
             lastSeenAt: now
           }
         },
-        ...(target ? {} : { $unset: { targetItemId: '' } })
+        $unset: {
+          staleSince: '',
+          'metadata.staleSince': '',
+          'metadata.staleReason': '',
+          ...(target ? {} : { targetItemId: '' })
+        }
       }, {
         new: true,
         upsert: true,
@@ -284,6 +295,42 @@ class WorkGraphService {
     });
   }
 
+  async markStaleDependencies(workspaceId, options = {}) {
+    const now = options.now || new Date();
+    const cutoff = new Date(now.getTime() - this.dependencyStaleAfterMs(options));
+    const staleReason = 'Provider dependency link has not been observed during recent syncs.';
+
+    return WorkDependency.updateMany({
+      workspaceId,
+      freshnessStatus: { $ne: 'stale' },
+      $or: [
+        { lastSeenAt: { $lt: cutoff } },
+        { lastSeenAt: { $exists: false }, updatedAt: { $lt: cutoff } },
+        { 'metadata.lastSeenAt': { $lt: cutoff } }
+      ]
+    }, {
+      $set: {
+        freshnessStatus: 'stale',
+        staleSince: now,
+        staleReason,
+        'metadata.freshnessStatus': 'stale',
+        'metadata.staleSince': now,
+        'metadata.staleReason': staleReason
+      }
+    });
+  }
+
+  dependencyStaleAfterMs(options = {}) {
+    const configuredDays = Number.parseInt(
+      options.staleAfterDays || process.env.SNEUP_DEPENDENCY_STALE_AFTER_DAYS,
+      10
+    );
+    const days = Number.isFinite(configuredDays) && configuredDays > 0
+      ? configuredDays
+      : DEFAULT_DEPENDENCY_STALE_AFTER_DAYS;
+    return days * 24 * 60 * 60 * 1000;
+  }
+
   async getSummary(options = {}) {
     if (!this.isDatabaseReady()) {
       return this.emptySummary();
@@ -291,7 +338,7 @@ class WorkGraphService {
 
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const limit = Math.max(1, Math.min(Number.parseInt(options.limit, 10) || 50, 200));
-    const [itemCount, actorCount, containerCount, commentCount, dependencyCount, eventCount, byStatus, byProvider, byDependencyType, recentItems, recentDependencies] = await Promise.all([
+    const [itemCount, actorCount, containerCount, commentCount, dependencyCount, eventCount, byStatus, byProvider, byDependencyType, byDependencyFreshness, recentItems, recentDependencies] = await Promise.all([
       WorkItem.countDocuments({ workspaceId }),
       WorkActor.countDocuments({ workspaceId }),
       WorkContainer.countDocuments({ workspaceId }),
@@ -313,6 +360,11 @@ class WorkGraphService {
         { $group: { _id: '$dependencyType', count: { $sum: 1 } } },
         { $sort: { count: -1 } }
       ]),
+      WorkDependency.aggregate([
+        { $match: { workspaceId } },
+        { $group: { _id: '$freshnessStatus', count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+      ]),
       WorkItem.find({ workspaceId }).sort({ priority: 1, dueAt: 1, lastSeenAt: -1 }).limit(limit),
       WorkDependency.find({ workspaceId }).sort({ updatedAt: -1 }).limit(Math.min(limit, 25))
     ]);
@@ -329,6 +381,7 @@ class WorkGraphService {
       byStatus: this.aggregateRows(byStatus),
       byProvider: this.aggregateRows(byProvider),
       byDependencyType: this.aggregateRows(byDependencyType),
+      byDependencyFreshness: this.aggregateRows(byDependencyFreshness),
       items: recentItems.map(item => this.sanitizeItem(item)),
       dependencies: recentDependencies.map(dependency => this.sanitizeDependency(dependency))
     };
@@ -562,6 +615,7 @@ class WorkGraphService {
       byStatus: {},
       byProvider: {},
       byDependencyType: {},
+      byDependencyFreshness: {},
       items: [],
       dependencies: []
     };
@@ -738,19 +792,24 @@ class WorkGraphService {
       const targetId = String(dependency.targetItemId?._id || dependency.targetItemId || '');
 
       if (byItem.has(sourceId)) {
-        this.addDependencyToSummary(byItem.get(sourceId), dependency.dependencyType, 'source');
+        this.addDependencyToSummary(byItem.get(sourceId), dependency.dependencyType, 'source', dependency.freshnessStatus);
       }
       if (byItem.has(targetId)) {
-        this.addDependencyToSummary(byItem.get(targetId), dependency.dependencyType, 'target');
+        this.addDependencyToSummary(byItem.get(targetId), dependency.dependencyType, 'target', dependency.freshnessStatus);
       }
     }
 
     return byItem;
   }
 
-  addDependencyToSummary(summary, dependencyType, direction) {
+  addDependencyToSummary(summary, dependencyType, direction, freshnessStatus = 'fresh') {
     summary.dependencyCount += 1;
     summary.dependencyTypes[dependencyType || 'unknown'] = (summary.dependencyTypes[dependencyType || 'unknown'] || 0) + 1;
+    if (freshnessStatus === 'stale') {
+      summary.staleDependencyCount = (Number(summary.staleDependencyCount) || 0) + 1;
+      return summary;
+    }
+    summary.activeDependencyCount = (Number(summary.activeDependencyCount) || 0) + 1;
 
     if (direction === 'source') {
       if (dependencyType === 'blocks') summary.blockingCount += 1;
@@ -768,6 +827,8 @@ class WorkGraphService {
   normalizeDependencySummary(summary = {}) {
     return {
       dependencyCount: Number(summary.dependencyCount) || 0,
+      activeDependencyCount: Number(summary.activeDependencyCount) || 0,
+      staleDependencyCount: Number(summary.staleDependencyCount) || 0,
       blockingCount: Number(summary.blockingCount) || 0,
       blockedByCount: Number(summary.blockedByCount) || 0,
       relatedCount: Number(summary.relatedCount) || 0,
@@ -781,6 +842,9 @@ class WorkGraphService {
     }
     if (dependencySummary.blockingCount > 0) {
       return `${reason} It is blocking ${dependencySummary.blockingCount} downstream graph item${dependencySummary.blockingCount === 1 ? '' : 's'}.`;
+    }
+    if (dependencySummary.staleDependencyCount > 0) {
+      return `${reason} ${dependencySummary.staleDependencyCount} stale graph dependenc${dependencySummary.staleDependencyCount === 1 ? 'y needs' : 'ies need'} review before it is trusted.`;
     }
     return reason;
   }
@@ -1124,6 +1188,10 @@ class WorkGraphService {
       targetTitle: dependency.targetTitle || dependency.metadata?.targetTitle || '',
       targetUrl: dependency.targetUrl || dependency.metadata?.targetUrl || '',
       resolutionStatus: dependency.resolutionStatus || dependency.metadata?.resolutionStatus || 'resolved',
+      freshnessStatus: dependency.freshnessStatus || dependency.metadata?.freshnessStatus || 'fresh',
+      staleSince: dependency.staleSince || dependency.metadata?.staleSince || null,
+      staleReason: dependency.staleReason || dependency.metadata?.staleReason || '',
+      lastSeenAt: dependency.lastSeenAt || dependency.metadata?.lastSeenAt || dependency.updatedAt || null,
       externalId: dependency.externalId,
       confidence: dependency.confidence,
       evidenceRefs: dependency.evidenceRefs || [],
