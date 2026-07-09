@@ -233,15 +233,15 @@ const CONNECTORS = [
     id: 'linear',
     name: 'Linear',
     category: 'software_delivery',
-    description: 'Teams, issues, cycles, projects, initiatives, roadmaps, comments, and labels.',
+    description: 'Read-only Linear issues with team, project, cycle, workflow, assignee, and label context.',
     auth: oauth2({
       envPrefix: 'LINEAR',
       authorizationUrl: 'https://linear.app/oauth/authorize',
       tokenUrl: 'https://api.linear.app/oauth/token',
-      scopes: ['read', 'write', 'issues:create'],
+      scopes: ['read'],
       docsUrl: 'https://linear.app/developers/oauth-2-0-authentication'
     }),
-    sync: ['teams', 'issues', 'projects', 'cycles', 'initiatives', 'comments']
+    sync: ['teams', 'issues', 'projects', 'cycles', 'labels']
   },
   {
     id: 'notion',

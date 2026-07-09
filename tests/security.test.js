@@ -548,7 +548,7 @@ describe('connector registry', () => {
     expect(getConnectors().length).toBeGreaterThanOrEqual(87);
     expect(Object.keys(getCategories())).toHaveLength(11);
     expect(getConnectors().map(connector => connector.id)).toEqual(
-      expect.arrayContaining(['trello', 'jira_software', 'asana', 'slack', 'github', 'notion', 'microsoft_365'])
+      expect.arrayContaining(['trello', 'jira_software', 'asana', 'slack', 'github', 'notion', 'microsoft_365', 'linear'])
     );
   });
 
@@ -557,6 +557,13 @@ describe('connector registry', () => {
 
     expect(microsoft.auth.scopes).toEqual(expect.arrayContaining(['Calendars.Read', 'Tasks.Read', 'Files.Read']));
     expect(microsoft.auth.scopes).not.toEqual(expect.arrayContaining(['Mail.Read', 'Calendars.ReadWrite', 'Tasks.ReadWrite', 'Files.Read.All', 'Sites.Read.All']));
+  });
+
+  test('does not request Linear write scopes for read-only connector ingestion', () => {
+    const linear = getConnectors().find(connector => connector.id === 'linear');
+
+    expect(linear.auth.scopes).toEqual(['read']);
+    expect(linear.auth.scopes).not.toEqual(expect.arrayContaining(['write', 'issues:create', 'comments:create', 'admin']));
   });
 
   test('supports connector search, category aliases, and pagination', () => {
@@ -836,9 +843,10 @@ describe('work signal normalization', () => {
       'slack',
       'github',
       'google_workspace',
-      'microsoft_365'
+      'microsoft_365',
+      'linear'
     ]));
-    expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(8);
+    expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(9);
     expect(normalized).toMatchObject({
       externalId: 'PR_kwDO123',
       sourceType: 'pull_request',
@@ -951,6 +959,20 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('microsoft_365').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Linear adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'issue-1' }] });
+    jest.doMock('../src/services/linearWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'linear' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('linear').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1377,6 +1399,79 @@ describe('work signal normalization', () => {
     expect(event.externalId).toBe('calendar:same-id');
     expect(task.externalId).toBe('todo:tasks:same-id');
     expect(file.externalId).toBe('onedrive:same-id');
+  });
+
+  test('Linear sync reads bounded issue pages with GraphQL query-only requests', async () => {
+    jest.dontMock('../src/services/linearWorkSignalClient');
+    jest.resetModules();
+    const { LinearWorkSignalClient } = require('../src/services/linearWorkSignalClient');
+    const http = {
+      post: jest.fn().mockResolvedValue({
+        data: {
+          data: {
+            issues: {
+              nodes: [{
+                id: 'issue-1',
+                identifier: 'SNEUP-9',
+                title: 'Ship Linear sync',
+                priority: 2,
+                state: { name: 'In Progress', type: 'started' },
+                labels: { nodes: [{ name: 'connector' }] },
+                assignee: { name: 'Robert' },
+                updatedAt: '2026-07-09T12:00:00.000Z'
+              }],
+              pageInfo: { hasNextPage: false, endCursor: null }
+            }
+          }
+        }
+      })
+    };
+    const client = new LinearWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'linear-access-token' })) }
+    });
+
+    const result = await client.fetchDelta({ connectorId: 'linear' }, '2026-07-09T11:00:00.000Z');
+
+    expect(http.post).toHaveBeenCalledTimes(1);
+    expect(http.post).toHaveBeenCalledWith(
+      'https://api.linear.app/graphql',
+      expect.objectContaining({ query: expect.stringContaining('query SneupWorkSignals') }),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer linear-access-token' }) })
+    );
+    const request = http.post.mock.calls[0][1];
+    expect(request.query).not.toMatch(/mutation|issueCreate|issueUpdate/i);
+    expect(request.variables).toEqual({ first: 100, after: null });
+    expect(result).toMatchObject({
+      nextCursor: '2026-07-09T12:00:00.000Z',
+      hasMore: false,
+      metadata: { source: 'linear_graphql', issues: 1 }
+    });
+  });
+
+  test('Linear normalization preserves issue status, priority, and project context', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'linear' }, {
+      id: 'issue-1',
+      identifier: 'SNEUP-9',
+      title: 'Ship Linear sync',
+      priority: 2,
+      state: { name: 'In Progress', type: 'started' },
+      assignee: { name: 'Robert' },
+      labels: { nodes: [{ name: 'connector' }] },
+      project: { name: 'Connector hub' },
+      updatedAt: '2026-07-09T12:00:00.000Z'
+    });
+
+    expect(normalized).toMatchObject({
+      externalId: 'issue-1',
+      sourceType: 'issue',
+      status: 'in_progress',
+      priority: 'high',
+      owners: ['Robert'],
+      labels: ['connector']
+    });
+    expect(normalized.raw.project.name).toBe('Connector hub');
   });
 
   test('projects provider signals into normalized work graph records', () => {

@@ -6,7 +6,8 @@ const FIRST_WAVE_ADAPTERS = [
   'slack',
   'github',
   'google_workspace',
-  'microsoft_365'
+  'microsoft_365',
+  'linear'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -15,6 +16,7 @@ const asanaWorkSignalClient = require('./asanaWorkSignalClient');
 const slackWorkSignalClient = require('./slackWorkSignalClient');
 const googleWorkspaceWorkSignalClient = require('./googleWorkspaceWorkSignalClient');
 const microsoft365WorkSignalClient = require('./microsoft365WorkSignalClient');
+const linearWorkSignalClient = require('./linearWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -302,6 +304,36 @@ microsoft365Adapter.capabilities.credentialBackedSync = true;
 microsoft365Adapter.list = async (account) => (await microsoft365WorkSignalClient.fetchDelta(account, null)).records;
 microsoft365Adapter.fetchDelta = (account, cursor) => microsoft365WorkSignalClient.fetchDelta(account, cursor);
 adapters.set('microsoft_365', microsoft365Adapter);
+
+const linearPriority = (value) => ({ 1: 'urgent', 2: 'high', 3: 'normal', 4: 'low' }[Number(value)] || 'unknown');
+const linearStatus = (issue) => {
+  const type = String(issue.state?.type || '').toLowerCase();
+  if (type === 'completed') return 'done';
+  if (type === 'canceled') return 'archived';
+  if (type === 'started') return 'in_progress';
+  if (type === 'backlog' || type === 'unstarted' || type === 'triage') return 'open';
+  return statusFromText(issue.state?.name, issue.completedAt ? 'completed' : '');
+};
+const linearAdapter = buildAdapter('linear', 'Linear issue adapter', (account, issue) => ({
+  externalId: pick(issue.externalId, issue.id, issue.identifier),
+  sourceType: 'issue',
+  title: pick(issue.title, issue.identifier),
+  description: pick(issue.description, ''),
+  status: linearStatus(issue),
+  priority: priorityFromText(linearPriority(issue.priority), issue.labels?.nodes || issue.labels),
+  url: pick(issue.url),
+  owners: userNames(issue.assignee),
+  labels: labelNames(issue.labels?.nodes || issue.labels),
+  dueAt: pick(issue.dueDate),
+  providerCreatedAt: pick(issue.createdAt),
+  providerUpdatedAt: pick(issue.updatedAt, issue.completedAt, issue.canceledAt),
+  evidenceRefs: baseEvidence(account, issue, 'Linear issue'),
+  raw: issue
+}));
+linearAdapter.capabilities.credentialBackedSync = true;
+linearAdapter.list = async (account) => (await linearWorkSignalClient.fetchDelta(account, null)).records;
+linearAdapter.fetchDelta = (account, cursor) => linearWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('linear', linearAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

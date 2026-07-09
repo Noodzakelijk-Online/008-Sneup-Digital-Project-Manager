@@ -15,7 +15,7 @@ const enhancements = [
     impact: 'Turns the connector marketplace from account linking into cross-tool project ingestion.',
     effort: 'XL',
     status: 'in-progress',
-    nextStep: 'Add a credential-backed Linear client, preserving bounded read-only sync and provider-specific health evidence.',
+    nextStep: 'Add the next credential-backed provider client, preserving bounded read-only sync and provider-specific health evidence.',
     acceptanceCriteria: [
       'Each adapter exposes list, fetchDelta, normalize, and applyAction methods.',
       'A scheduled job syncs connected accounts with retries and per-provider rate limits.',
