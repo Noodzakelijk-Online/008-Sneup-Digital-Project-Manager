@@ -312,7 +312,7 @@ const CONNECTORS = [
       envPrefix: 'SLACK',
       authorizationUrl: 'https://slack.com/oauth/v2/authorize',
       tokenUrl: 'https://slack.com/api/oauth.v2.access',
-      scopes: ['channels:read', 'groups:read', 'chat:write', 'users:read', 'files:read', 'team:read'],
+      scopes: ['channels:read', 'channels:history', 'groups:read', 'groups:history', 'users:read', 'team:read'],
       docsUrl: 'https://api.slack.com/authentication/oauth-v2'
     }),
     sync: ['channels', 'messages', 'users', 'files', 'notifications']

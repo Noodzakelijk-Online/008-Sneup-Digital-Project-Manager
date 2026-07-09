@@ -740,6 +740,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/trelloWorkSignalClient');
     jest.dontMock('../src/services/jiraWorkSignalClient');
     jest.dontMock('../src/services/asanaWorkSignalClient');
+    jest.dontMock('../src/services/slackWorkSignalClient');
     jest.resetModules();
   });
 
@@ -900,6 +901,20 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('asana').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Slack adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ ts: '1710000000.000001' }] });
+    jest.doMock('../src/services/slackWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'slack' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('slack').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1173,6 +1188,65 @@ describe('work signal normalization', () => {
       client.selectWorkspace({}, [{ gid: 'workspace-1' }, { gid: 'workspace-2' }]);
     } catch (error) {
       expect(error.statusCode).toBe(409);
+    }
+  });
+
+  test('Slack API sync reads bounded channel history without using a message-posting endpoint', async () => {
+    const { SlackWorkSignalClient } = require('../src/services/slackWorkSignalClient');
+    const http = {
+      get: jest.fn().mockResolvedValue({
+        data: {
+          ok: true,
+          channels: [{ id: 'C123', name: 'launch', is_private: false }]
+        }
+      }),
+      post: jest.fn()
+        .mockResolvedValueOnce({
+          data: { ok: true, team_id: 'T123', team: 'Sneup', url: 'https://sneup.slack.com/' }
+        })
+        .mockResolvedValueOnce({
+          data: {
+            ok: true,
+            messages: [{ type: 'message', user: 'U123', text: 'Launch owner needed', ts: '1783512000.000001' }]
+          }
+        })
+    };
+    const credentials = {
+      getAccountCredentials: jest.fn(() => ({ accessToken: 'slack-access-token' }))
+    };
+    const client = new SlackWorkSignalClient({ http, accountConnectorService: credentials });
+    const originalEnv = { ...process.env };
+    process.env.SNEUP_SLACK_MAX_CHANNELS = '5';
+    process.env.SNEUP_SLACK_MAX_MESSAGES_PER_CHANNEL = '15';
+    process.env.SNEUP_SLACK_MAX_TOTAL_MESSAGES = '30';
+    process.env.SNEUP_SLACK_CURSOR_LOOKBACK_MS = '60000';
+
+    try {
+      const result = await client.fetchDelta({ connectorId: 'slack' }, '2026-07-08T11:59:00.000Z');
+
+      expect(http.get).toHaveBeenCalledWith(
+        'https://slack.com/api/conversations.list',
+        expect.objectContaining({
+          params: expect.objectContaining({ limit: 5, types: 'public_channel,private_channel', exclude_archived: true }),
+          headers: expect.objectContaining({ Authorization: 'Bearer slack-access-token' })
+        })
+      );
+      expect(http.post.mock.calls[0][0]).toBe('https://slack.com/api/auth.test');
+      expect(http.post.mock.calls[1][0]).toBe('https://slack.com/api/conversations.history');
+      expect(http.post.mock.calls[1][1]).toMatchObject({ channel: 'C123', limit: 15, oldest: '1783511880' });
+      expect(http.post.mock.calls.map(call => call[0])).not.toContain('https://slack.com/api/chat.postMessage');
+      expect(result).toMatchObject({
+        nextCursor: '2026-07-08T12:00:00.000Z',
+        hasMore: false,
+        metadata: { source: 'slack_api', channels: 1, teamId: 'T123' }
+      });
+      expect(result.records[0]).toMatchObject({
+        text: 'Launch owner needed',
+        url: 'https://sneup.slack.com/archives/C123/p1783512000000001',
+        channel: { id: 'C123', name: 'launch' }
+      });
+    } finally {
+      process.env = originalEnv;
     }
   });
 

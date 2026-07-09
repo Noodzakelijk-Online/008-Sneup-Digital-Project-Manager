@@ -605,6 +605,7 @@ class AccountConnectorService {
         sites: Number(lastSync.sites || 0),
         workspaces: Number(lastSync.workspaces || 0),
         projects: Number(lastSync.projects || 0),
+        channels: Number(lastSync.channels || 0),
         finishedAt: lastSync.finishedAt
       } : undefined
     };

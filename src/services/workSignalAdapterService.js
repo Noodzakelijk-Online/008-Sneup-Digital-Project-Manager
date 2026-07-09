@@ -12,6 +12,7 @@ const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
 const jiraWorkSignalClient = require('./jiraWorkSignalClient');
 const asanaWorkSignalClient = require('./asanaWorkSignalClient');
+const slackWorkSignalClient = require('./slackWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -195,7 +196,7 @@ asanaAdapter.list = async (account) => (await asanaWorkSignalClient.fetchDelta(a
 asanaAdapter.fetchDelta = (account, cursor) => asanaWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('asana', asanaAdapter);
 
-adapters.set('slack', buildAdapter('slack', 'Slack message adapter', (account, message) => {
+const slackAdapter = buildAdapter('slack', 'Slack message adapter', (account, message) => {
   const text = pick(message.title, message.text, message.message, '');
   return {
     externalId: pick(message.externalId, message.client_msg_id, message.ts, message.id),
@@ -212,7 +213,11 @@ adapters.set('slack', buildAdapter('slack', 'Slack message adapter', (account, m
     evidenceRefs: baseEvidence(account, message, 'Slack message'),
     raw: message
   };
-}));
+});
+slackAdapter.capabilities.credentialBackedSync = true;
+slackAdapter.list = async (account) => (await slackWorkSignalClient.fetchDelta(account, null)).records;
+slackAdapter.fetchDelta = (account, cursor) => slackWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('slack', slackAdapter);
 
 const githubAdapter = buildAdapter('github', 'GitHub issue and pull request adapter', (account, item) => ({
   externalId: pick(item.externalId, item.node_id, item.id, item.number),
