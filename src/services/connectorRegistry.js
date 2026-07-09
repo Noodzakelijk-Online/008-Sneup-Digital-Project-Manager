@@ -273,8 +273,7 @@ const CONNECTORS = [
         'User.Read',
         'Mail.Read',
         'Calendars.Read',
-        'Files.Read.All',
-        'Sites.Read.All',
+        'Files.Read',
         'Tasks.Read'
       ],
       docsUrl: 'https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc'
