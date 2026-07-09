@@ -566,6 +566,13 @@ describe('connector registry', () => {
     expect(linear.auth.scopes).not.toEqual(expect.arrayContaining(['write', 'issues:create', 'comments:create', 'admin']));
   });
 
+  test('does not request monday.com board or update write scopes for read-only connector ingestion', () => {
+    const monday = getConnectors().find(connector => connector.id === 'monday');
+
+    expect(monday.auth.scopes).toEqual(expect.arrayContaining(['account:read', 'boards:read', 'users:read', 'updates:read']));
+    expect(monday.auth.scopes).not.toEqual(expect.arrayContaining(['boards:write', 'updates:write']));
+  });
+
   test('supports connector search, category aliases, and pagination', () => {
     const result = accountConnectorService.getCatalog({
       category: 'software delivery',
@@ -810,7 +817,7 @@ describe('work signal normalization', () => {
       normalize: true,
       applyAction: false
     });
-    expect(notionContract.adapterStatus).toBe('contract_only');
+    expect(notionContract.adapterStatus).toBe('implemented');
     expect(workSignalService.getAdapterContracts()).toHaveLength(getConnectors().length);
   });
 
@@ -844,9 +851,10 @@ describe('work signal normalization', () => {
       'github',
       'google_workspace',
       'microsoft_365',
-      'linear'
+      'linear',
+      'notion'
     ]));
-    expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(9);
+    expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(10);
     expect(normalized).toMatchObject({
       externalId: 'PR_kwDO123',
       sourceType: 'pull_request',
@@ -973,6 +981,20 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('linear').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Notion adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'page-1' }] });
+    jest.doMock('../src/services/notionWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'notion' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('notion').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1472,6 +1494,74 @@ describe('work signal normalization', () => {
       labels: ['connector']
     });
     expect(normalized.raw.project.name).toBe('Connector hub');
+  });
+
+  test('Notion sync reads bounded shared page and data-source metadata without page content or comments', async () => {
+    jest.dontMock('../src/services/notionWorkSignalClient');
+    jest.resetModules();
+    const { NotionWorkSignalClient } = require('../src/services/notionWorkSignalClient');
+    const http = {
+      post: jest.fn().mockResolvedValue({
+        data: {
+          results: [
+            {
+              object: 'page',
+              id: 'page-1',
+              url: 'https://www.notion.so/page-1',
+              created_time: '2026-07-09T09:00:00.000Z',
+              last_edited_time: '2026-07-09T12:00:00.000Z',
+              properties: { Name: { type: 'title', title: [{ plain_text: 'Launch brief' }] } }
+            },
+            {
+              object: 'data_source',
+              id: 'source-1',
+              title: [{ plain_text: 'Project tracker' }],
+              last_edited_time: '2026-07-09T11:00:00.000Z'
+            }
+          ],
+          has_more: false,
+          next_cursor: null
+        }
+      })
+    };
+    const client = new NotionWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'notion-access-token' })) }
+    });
+
+    const result = await client.fetchDelta({ connectorId: 'notion' }, '2026-07-09T10:00:00.000Z');
+
+    expect(http.post).toHaveBeenCalledWith(
+      'https://api.notion.com/v1/search',
+      expect.objectContaining({ page_size: 100, sort: { direction: 'descending', timestamp: 'last_edited_time' } }),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer notion-access-token', 'Notion-Version': '2026-03-11' }) })
+    );
+    expect(http.post.mock.calls.map(call => call[0]).join(' ')).not.toMatch(/blocks|comments|retrieve|content/i);
+    expect(result).toMatchObject({
+      nextCursor: '2026-07-09T12:00:00.000Z',
+      hasMore: false,
+      metadata: { source: 'notion_api', pages: 1, dataSources: 1 }
+    });
+  });
+
+  test('Notion normalization extracts title metadata without interpreting page content', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'notion' }, {
+      object: 'page',
+      id: 'page-1',
+      url: 'https://www.notion.so/page-1',
+      last_edited_time: '2026-07-09T12:00:00.000Z',
+      properties: { Name: { type: 'title', title: [{ plain_text: 'Launch brief' }] } }
+    });
+
+    expect(normalized).toMatchObject({
+      externalId: 'page:page-1',
+      sourceType: 'document',
+      title: 'Launch brief',
+      description: '',
+      status: 'open',
+      url: 'https://www.notion.so/page-1'
+    });
   });
 
   test('projects provider signals into normalized work graph records', () => {

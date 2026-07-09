@@ -149,6 +149,9 @@ class ConnectorSyncService {
         workspaces: delta.metadata?.workspaces || 0,
         projects: delta.metadata?.projects || 0,
         channels: delta.metadata?.channels || 0,
+        issues: delta.metadata?.issues || 0,
+        pages: delta.metadata?.pages || 0,
+        dataSources: delta.metadata?.dataSources || 0,
         finishedAt: new Date()
       }
     };

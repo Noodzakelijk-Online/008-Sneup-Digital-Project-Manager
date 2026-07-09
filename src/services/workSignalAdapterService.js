@@ -7,7 +7,8 @@ const FIRST_WAVE_ADAPTERS = [
   'github',
   'google_workspace',
   'microsoft_365',
-  'linear'
+  'linear',
+  'notion'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -17,6 +18,7 @@ const slackWorkSignalClient = require('./slackWorkSignalClient');
 const googleWorkspaceWorkSignalClient = require('./googleWorkspaceWorkSignalClient');
 const microsoft365WorkSignalClient = require('./microsoft365WorkSignalClient');
 const linearWorkSignalClient = require('./linearWorkSignalClient');
+const notionWorkSignalClient = require('./notionWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -334,6 +336,39 @@ linearAdapter.capabilities.credentialBackedSync = true;
 linearAdapter.list = async (account) => (await linearWorkSignalClient.fetchDelta(account, null)).records;
 linearAdapter.fetchDelta = (account, cursor) => linearWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('linear', linearAdapter);
+
+const plainText = (items) => asArray(items)
+  .map(item => item?.plain_text || item?.text?.content || item?.content || '')
+  .join(' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+const notionTitle = (record) => {
+  if (record.title) return plainText(record.title) || String(record.title);
+  const property = Object.values(record.properties || {}).find(value => value?.type === 'title' || Array.isArray(value?.title));
+  return plainText(property?.title) || record.id || 'Untitled Notion item';
+};
+const notionAdapter = buildAdapter('notion', 'Notion page and data-source adapter', (account, record) => {
+  const source = record.object === 'data_source' ? 'data_source' : 'page';
+  return {
+    externalId: pick(record.externalId, `${source}:${record.id || 'unknown'}`),
+    sourceType: 'document',
+    title: notionTitle(record),
+    description: '',
+    status: record.in_trash || record.is_archived || record.archived ? 'archived' : 'open',
+    priority: 'unknown',
+    url: pick(record.url, record.public_url),
+    owners: [],
+    labels: compact([record.parent?.type, record.parent?.data_source_id || record.parent?.database_id]),
+    providerCreatedAt: pick(record.created_time, record.createdAt),
+    providerUpdatedAt: pick(record.last_edited_time, record.lastEditedTime),
+    evidenceRefs: baseEvidence(account, record, source === 'data_source' ? 'Notion data source' : 'Notion page'),
+    raw: record
+  };
+});
+notionAdapter.capabilities.credentialBackedSync = true;
+notionAdapter.list = async (account) => (await notionWorkSignalClient.fetchDelta(account, null)).records;
+notionAdapter.fetchDelta = (account, cursor) => notionWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('notion', notionAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

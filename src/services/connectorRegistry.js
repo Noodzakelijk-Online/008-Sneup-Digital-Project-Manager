@@ -210,7 +210,7 @@ const CONNECTORS = [
       envPrefix: 'MONDAY',
       authorizationUrl: 'https://auth.monday.com/oauth2/authorize',
       tokenUrl: 'https://auth.monday.com/oauth2/token',
-      scopes: ['account:read', 'boards:read', 'boards:write', 'users:read', 'updates:read', 'updates:write'],
+      scopes: ['account:read', 'boards:read', 'users:read', 'updates:read'],
       docsUrl: 'https://developer.monday.com/apps/docs/oauth'
     }),
     sync: ['boards', 'items', 'columns', 'updates', 'users']
@@ -247,7 +247,7 @@ const CONNECTORS = [
     id: 'notion',
     name: 'Notion',
     category: 'docs_knowledge',
-    description: 'Pages, databases, project trackers, docs, owners, comments, and knowledge bases.',
+    description: 'Read-only shared Notion pages and data-source metadata for project trackers, docs, and knowledge bases.',
     auth: oauth2({
       envPrefix: 'NOTION',
       authorizationUrl: 'https://api.notion.com/v1/oauth/authorize',
@@ -257,7 +257,7 @@ const CONNECTORS = [
       extraAuthParams: { owner: 'user' },
       docsUrl: 'https://developers.notion.com/docs/authorization'
     }),
-    sync: ['pages', 'databases', 'comments', 'users']
+    sync: ['pages', 'databases']
   },
   {
     id: 'microsoft_365',
