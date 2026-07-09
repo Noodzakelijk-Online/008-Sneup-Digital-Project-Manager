@@ -52,6 +52,15 @@ const workDependencySchema = new mongoose.Schema({
     index: true
   },
   staleReason: String,
+  reviewStatus: {
+    type: String,
+    enum: ['unreviewed', 'confirmed', 'dismissed', 'refreshed'],
+    default: 'unreviewed',
+    index: true
+  },
+  reviewedAt: Date,
+  reviewedBy: String,
+  reviewReason: String,
   lastSeenAt: {
     type: Date,
     index: true
@@ -98,5 +107,6 @@ workDependencySchema.index({ workspaceId: 1, sourceProvider: 1, externalId: 1 },
 workDependencySchema.index({ workspaceId: 1, dependencyType: 1, updatedAt: -1 });
 workDependencySchema.index({ workspaceId: 1, targetProvider: 1, targetExternalId: 1, resolutionStatus: 1 });
 workDependencySchema.index({ workspaceId: 1, freshnessStatus: 1, lastSeenAt: -1 });
+workDependencySchema.index({ workspaceId: 1, reviewStatus: 1, reviewedAt: -1 });
 
 module.exports = mongoose.models.WorkDependency || mongoose.model('WorkDependency', workDependencySchema);

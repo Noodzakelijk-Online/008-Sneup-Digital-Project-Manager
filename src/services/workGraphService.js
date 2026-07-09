@@ -30,6 +30,7 @@ const pick = (...values) => values.find(value => value !== undefined && value !=
 const OPEN_STATUSES = new Set(['open', 'in_progress', 'blocked', 'waiting', 'unknown']);
 const ROBERT_SENSITIVE_PATTERN = /\b(robert|client|legal|contract|money|budget|invoice|payment|government|tax|compliance|commitment|approval)\b/i;
 const DEFAULT_DEPENDENCY_STALE_AFTER_DAYS = 30;
+const DEPENDENCY_REVIEW_ACTIONS = new Set(['confirm', 'dismiss', 'refresh']);
 
 class WorkGraphService {
   buildProjection(signal) {
@@ -295,6 +296,82 @@ class WorkGraphService {
     });
   }
 
+  async reviewDependency(dependencyId, options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const action = String(options.action || '').trim().toLowerCase();
+    if (!DEPENDENCY_REVIEW_ACTIONS.has(action)) {
+      const error = new Error('Dependency review action must be confirm, dismiss, or refresh');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const dependency = await WorkDependency.findOne({ _id: dependencyId, workspaceId });
+    if (!dependency) {
+      const error = new Error('Work graph dependency not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const now = new Date();
+    const actorId = options.actorId || options.actor || 'api';
+    const reason = String(options.reason || '').trim();
+    const baseSet = {
+      reviewedAt: now,
+      reviewedBy: actorId,
+      reviewReason: reason,
+      'metadata.reviewedAt': now,
+      'metadata.reviewedBy': actorId,
+      'metadata.reviewReason': reason,
+      'metadata.reviewAction': action
+    };
+    const update = {
+      $set: baseSet
+    };
+
+    if (action === 'dismiss') {
+      update.$set = {
+        ...update.$set,
+        freshnessStatus: 'stale',
+        reviewStatus: 'dismissed',
+        staleSince: dependency.staleSince || now,
+        staleReason: reason || 'Dismissed by graph dependency review.',
+        confidence: 0,
+        'metadata.freshnessStatus': 'stale',
+        'metadata.reviewStatus': 'dismissed',
+        'metadata.staleSince': dependency.staleSince || now,
+        'metadata.staleReason': reason || 'Dismissed by graph dependency review.'
+      };
+    } else {
+      const reviewStatus = action === 'refresh' ? 'refreshed' : 'confirmed';
+      update.$set = {
+        ...update.$set,
+        freshnessStatus: 'fresh',
+        reviewStatus,
+        lastSeenAt: now,
+        confidence: Math.max(Number(dependency.confidence) || 0, 0.8),
+        'metadata.freshnessStatus': 'fresh',
+        'metadata.reviewStatus': reviewStatus,
+        'metadata.lastSeenAt': now
+      };
+      update.$unset = {
+        staleSince: '',
+        staleReason: '',
+        'metadata.staleSince': '',
+        'metadata.staleReason': ''
+      };
+    }
+
+    const updated = await WorkDependency.findOneAndUpdate({
+      _id: dependencyId,
+      workspaceId
+    }, update, {
+      new: true
+    });
+
+    return this.sanitizeDependencyDetail(updated, null);
+  }
+
   async markStaleDependencies(workspaceId, options = {}) {
     const now = options.now || new Date();
     const cutoff = new Date(now.getTime() - this.dependencyStaleAfterMs(options));
@@ -311,9 +388,11 @@ class WorkGraphService {
     }, {
       $set: {
         freshnessStatus: 'stale',
+        reviewStatus: 'unreviewed',
         staleSince: now,
         staleReason,
         'metadata.freshnessStatus': 'stale',
+        'metadata.reviewStatus': 'unreviewed',
         'metadata.staleSince': now,
         'metadata.staleReason': staleReason
       }
@@ -1191,6 +1270,10 @@ class WorkGraphService {
       freshnessStatus: dependency.freshnessStatus || dependency.metadata?.freshnessStatus || 'fresh',
       staleSince: dependency.staleSince || dependency.metadata?.staleSince || null,
       staleReason: dependency.staleReason || dependency.metadata?.staleReason || '',
+      reviewStatus: dependency.reviewStatus || dependency.metadata?.reviewStatus || 'unreviewed',
+      reviewedAt: dependency.reviewedAt || dependency.metadata?.reviewedAt || null,
+      reviewedBy: dependency.reviewedBy || dependency.metadata?.reviewedBy || '',
+      reviewReason: dependency.reviewReason || dependency.metadata?.reviewReason || '',
       lastSeenAt: dependency.lastSeenAt || dependency.metadata?.lastSeenAt || dependency.updatedAt || null,
       externalId: dependency.externalId,
       confidence: dependency.confidence,

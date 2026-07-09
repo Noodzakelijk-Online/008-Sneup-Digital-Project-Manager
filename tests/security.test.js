@@ -391,8 +391,10 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('data-recommendation-evidence');
     expect(appJs).toContain('/api/recommendations/${recommendationId}/evidence');
     expect(appJs).toContain('data-graph-filter');
+    expect(appJs).toContain('data-graph-dependency-review');
     expect(appJs).toContain('renderGraphLedgerFilters(graphContext)');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
+    expect(fs.readFileSync(path.join(rootDir, 'src', 'routes', 'workSignals.js'), 'utf8')).toContain("router.post('/graph/dependencies/:dependencyId/review'");
     expect(recommendationRoutes).toContain("router.get('/:recommendationId/evidence'");
     expect(html).not.toMatch(/<style[\s>]/i);
     expect(html).not.toMatch(/<script>\s*[\s\S]*?<\/script>/i);
@@ -478,6 +480,7 @@ describe('workspace identity models', () => {
     expect(WorkDependency.schema.path('targetExternalId')).toBeTruthy();
     expect(WorkDependency.schema.path('resolutionStatus').enumValues).toEqual(expect.arrayContaining(['resolved', 'unresolved']));
     expect(WorkDependency.schema.path('freshnessStatus').enumValues).toEqual(expect.arrayContaining(['fresh', 'stale']));
+    expect(WorkDependency.schema.path('reviewStatus').enumValues).toEqual(expect.arrayContaining(['unreviewed', 'confirmed', 'dismissed', 'refreshed']));
     expect(WorkDependency.schema.path('lastSeenAt')).toBeTruthy();
     expect(WorkDependency.schema.path('staleSince')).toBeTruthy();
     for (const Model of [
@@ -896,6 +899,90 @@ describe('work signal normalization', () => {
         })
       })
     );
+  });
+
+  test('reviews stale graph dependencies without external provider writes', async () => {
+    jest.resetModules();
+
+    const workspaceId = 'workspace-object-id';
+    const staleDependency = {
+      _id: 'dep-1',
+      workspaceId,
+      sourceItemId: 'item-source',
+      targetItemId: 'item-target',
+      sourceProvider: 'jira_software',
+      sourceExternalId: 'OPS-42',
+      targetProvider: 'github',
+      targetExternalId: 'ISSUE_kwDO999',
+      dependencyType: 'blocked_by',
+      externalId: 'jira_software:OPS-42:blockedBy:0:github:ISSUE_kwDO999',
+      freshnessStatus: 'stale',
+      reviewStatus: 'unreviewed',
+      staleSince: new Date('2026-06-01T08:00:00Z'),
+      staleReason: 'Provider dependency link has not been observed during recent syncs.',
+      confidence: 0.6,
+      metadata: {}
+    };
+    const findOneAndUpdateDependency = jest.fn().mockImplementation((query, update) => Promise.resolve({
+      ...staleDependency,
+      ...update.$set,
+      metadata: {
+        ...staleDependency.metadata,
+        ...Object.fromEntries(Object.entries(update.$set || {})
+          .filter(([key]) => key.startsWith('metadata.'))
+          .map(([key, value]) => [key.replace('metadata.', ''), value]))
+      }
+    }));
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(() => workspaceId),
+      getDefaultWorkspaceObjectId: jest.fn(() => workspaceId)
+    }));
+    jest.doMock('../src/models/WorkDependency', () => ({
+      findOne: jest.fn().mockResolvedValue(staleDependency),
+      findOneAndUpdate: findOneAndUpdateDependency
+    }));
+    jest.doMock('../src/models/WorkActor', () => ({}));
+    jest.doMock('../src/models/WorkComment', () => ({}));
+    jest.doMock('../src/models/WorkContainer', () => ({}));
+    jest.doMock('../src/models/WorkEvent', () => ({}));
+    jest.doMock('../src/models/WorkItem', () => ({}));
+    jest.doMock('../src/models/Recommendation', () => ({}));
+
+    const workGraphService = require('../src/services/workGraphService');
+    const dismissed = await workGraphService.reviewDependency('dep-1', {
+      workspaceId,
+      actorId: 'robert',
+      action: 'dismiss',
+      reason: 'GitHub issue was closed outside Sneup.'
+    });
+
+    expect(findOneAndUpdateDependency).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'dep-1', workspaceId }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          reviewedBy: 'robert',
+          reviewStatus: 'dismissed',
+          freshnessStatus: 'stale',
+          confidence: 0,
+          staleReason: 'GitHub issue was closed outside Sneup.'
+        })
+      }),
+      expect.objectContaining({ new: true })
+    );
+    expect(dismissed).toMatchObject({
+      id: 'dep-1',
+      freshnessStatus: 'stale',
+      reviewStatus: 'dismissed',
+      reviewedBy: 'robert',
+      confidence: 0
+    });
+
+    await expect(workGraphService.reviewDependency('dep-1', {
+      workspaceId,
+      action: 'delete'
+    })).rejects.toThrow('confirm, dismiss, or refresh');
   });
 
   test('extracts provider-native work dependencies into graph projections', () => {

@@ -1174,6 +1174,12 @@ function bindGraphActions() {
   document.querySelectorAll('[data-graph-queue]').forEach((button) => {
     button.addEventListener('click', () => queueGraphDecision(button.dataset.graphQueue));
   });
+  document.querySelectorAll('[data-graph-dependency-review]').forEach((button) => {
+    button.addEventListener('click', () => reviewGraphDependency(
+      button.dataset.graphDependencyReview,
+      button.dataset.graphDependencyAction
+    ));
+  });
 }
 
 function bindGraphLedgerFilters() {
@@ -1614,6 +1620,12 @@ function renderWorkSignals() {
   document.querySelectorAll('[data-graph-queue]').forEach((button) => {
     button.addEventListener('click', () => queueGraphDecision(button.dataset.graphQueue));
   });
+  document.querySelectorAll('[data-graph-dependency-review]').forEach((button) => {
+    button.addEventListener('click', () => reviewGraphDependency(
+      button.dataset.graphDependencyReview,
+      button.dataset.graphDependencyAction
+    ));
+  });
 }
 
 function countByOwner(items, ownerType) {
@@ -1704,6 +1716,33 @@ async function queueGraphDecision(itemId) {
     await Promise.all([loadWorkSignals(), loadOperationsLedger()]);
   } catch (error) {
     openNotice('Graph queue failed', error.message);
+  }
+}
+
+async function reviewGraphDependency(dependencyId, action) {
+  if (!dependencyId || !action) return;
+  const labels = {
+    confirm: 'Dependency confirmed',
+    dismiss: 'Dependency dismissed',
+    refresh: 'Dependency refreshed'
+  };
+
+  try {
+    await fetchApi(`/api/work-signals/graph/dependencies/${dependencyId}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action,
+        actor: 'robert',
+        reason: action === 'dismiss'
+          ? 'Dismissed from graph review.'
+          : 'Reviewed from graph detail.'
+      })
+    });
+    openNotice(labels[action] || 'Dependency reviewed', 'The graph dependency review was recorded inside Sneup. No provider write was executed.');
+    await Promise.all([loadWorkSignals(), loadOperationsLedger()]);
+  } catch (error) {
+    openNotice('Dependency review failed', error.message);
   }
 }
 
@@ -1851,12 +1890,18 @@ function renderGraphDependency(dependency) {
         <span>${escapeHtml(peer.externalId || dependency.targetExternalId || 'no external id')}</span>
         <span>${escapeHtml(peer.status || 'unknown')}</span>
         ${dependency.lastSeenAt ? `<span>seen ${formatDate(dependency.lastSeenAt)}</span>` : ''}
+        <span>${escapeHtml(dependency.reviewStatus || 'unreviewed')}</span>
       </div>
       ${dependency.staleReason ? `<div class="meta">${escapeHtml(dependency.staleReason)}</div>` : ''}
       <div class="item-actions">
         ${dependency.sourceItem?.url ? `<a class="button" href="${escapeHtml(dependency.sourceItem.url)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
         ${(dependency.targetItem?.url || dependency.unresolvedTarget?.url || dependency.targetUrl) ? `<a class="button" href="${escapeHtml(dependency.targetItem?.url || dependency.unresolvedTarget?.url || dependency.targetUrl)}" target="_blank" rel="noreferrer">Open target</a>` : ''}
         ${peer.id ? `<button class="button" data-graph-detail="${escapeHtml(peer.id)}" type="button">Inspect graph</button>` : ''}
+        ${freshness === 'stale' && dependency.id ? `
+          <button class="button" data-graph-dependency-review="${escapeHtml(dependency.id)}" data-graph-dependency-action="confirm" type="button">Confirm edge</button>
+          <button class="button" data-graph-dependency-review="${escapeHtml(dependency.id)}" data-graph-dependency-action="refresh" type="button">Refresh trust</button>
+          <button class="button danger" data-graph-dependency-review="${escapeHtml(dependency.id)}" data-graph-dependency-action="dismiss" type="button">Dismiss edge</button>
+        ` : ''}
       </div>
     </div>
   `;

@@ -12,6 +12,7 @@ const router = express.Router();
 
 router.param('accountId', validateObjectIdParam('accountId'));
 router.param('itemId', validateObjectIdParam('itemId'));
+router.param('dependencyId', validateObjectIdParam('dependencyId'));
 
 const requestOptions = (req) => ({
   workspaceId: getRequestWorkspaceObjectId(req),
@@ -139,6 +140,25 @@ router.post('/graph/items/:itemId/queue', requirePermission('autopilot:queue'), 
     });
   } catch (error) {
     logger.error('Failed to queue work graph decision:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/graph/dependencies/:dependencyId/review', requirePermission('analysis:run'), async (req, res) => {
+  try {
+    const dependency = await workGraphService.reviewDependency(req.params.dependencyId, {
+      ...requestOptions(req),
+      action: req.body.action,
+      reason: req.body.reason,
+      actorId: req.body.actor || req.auth?.actorId || 'api'
+    });
+    res.json({
+      success: true,
+      message: 'Work graph dependency review recorded',
+      dependency
+    });
+  } catch (error) {
+    logger.error('Failed to review work graph dependency:', error);
     sendError(res, error);
   }
 });
