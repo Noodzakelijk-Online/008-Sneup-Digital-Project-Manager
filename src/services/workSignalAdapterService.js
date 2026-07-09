@@ -13,6 +13,7 @@ const trelloWorkSignalClient = require('./trelloWorkSignalClient');
 const jiraWorkSignalClient = require('./jiraWorkSignalClient');
 const asanaWorkSignalClient = require('./asanaWorkSignalClient');
 const slackWorkSignalClient = require('./slackWorkSignalClient');
+const googleWorkspaceWorkSignalClient = require('./googleWorkspaceWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -240,7 +241,7 @@ githubAdapter.list = async (account) => (await githubWorkSignalClient.fetchDelta
 githubAdapter.fetchDelta = (account, cursor) => githubWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('github', githubAdapter);
 
-adapters.set('google_workspace', buildAdapter('google_workspace', 'Google Workspace artifact adapter', (account, item) => {
+const googleWorkspaceAdapter = buildAdapter('google_workspace', 'Google Workspace artifact adapter', (account, item) => {
   const mime = String(item.mimeType || item.kind || '').toLowerCase();
   const sourceType = mime.includes('calendar') || item.start ? 'event'
     : mime.includes('mail') || item.threadId ? 'message'
@@ -261,7 +262,11 @@ adapters.set('google_workspace', buildAdapter('google_workspace', 'Google Worksp
     evidenceRefs: baseEvidence(account, item, 'Google Workspace item'),
     raw: item
   };
-}));
+});
+googleWorkspaceAdapter.capabilities.credentialBackedSync = true;
+googleWorkspaceAdapter.list = async (account) => (await googleWorkspaceWorkSignalClient.fetchDelta(account, null)).records;
+googleWorkspaceAdapter.fetchDelta = (account, cursor) => googleWorkspaceWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('google_workspace', googleWorkspaceAdapter);
 
 adapters.set('microsoft_365', buildAdapter('microsoft_365', 'Microsoft 365 work item adapter', (account, item) => ({
   externalId: pick(item.externalId, item.id),
