@@ -246,8 +246,12 @@ const googleWorkspaceAdapter = buildAdapter('google_workspace', 'Google Workspac
   const sourceType = mime.includes('calendar') || item.start ? 'event'
     : mime.includes('mail') || item.threadId ? 'message'
       : 'document';
+  const nativeId = pick(item.id, item.threadId, 'unknown');
+  const externalId = pick(item.externalId, sourceType === 'event'
+    ? `calendar:${item.calendar?.id || 'default'}:${nativeId}`
+    : `drive:${nativeId}`);
   return {
-    externalId: pick(item.externalId, item.id, item.threadId),
+    externalId,
     sourceType,
     title: pick(item.title, item.name, item.summary, item.subject),
     description: pick(item.description, item.snippet, ''),

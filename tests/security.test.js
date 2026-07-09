@@ -1295,6 +1295,21 @@ describe('work signal normalization', () => {
     expect(result.records).toHaveLength(2);
   });
 
+  test('Google Workspace normalization separates Calendar and Drive identifier namespaces', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'google_workspace' };
+
+    const event = workSignalAdapterService.normalize(account, {
+      id: 'same-id',
+      start: { dateTime: '2026-07-08T10:00:00Z' },
+      calendar: { id: 'primary' }
+    });
+    const file = workSignalAdapterService.normalize(account, { id: 'same-id', mimeType: 'application/pdf' });
+
+    expect(event.externalId).toBe('calendar:primary:same-id');
+    expect(file.externalId).toBe('drive:same-id');
+  });
+
   test('projects provider signals into normalized work graph records', () => {
     const WorkActor = require('../src/models/WorkActor');
     const WorkComment = require('../src/models/WorkComment');
