@@ -171,7 +171,7 @@ See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, a
 - `GET /api/work-signals/contracts` - List normalized sync adapter contracts for all connectors
 - `GET /api/work-signals/adapters` - List implemented first-wave read-only provider adapters
 - `GET /api/work-signals` - List normalized cross-tool work signals for the current workspace
-- `GET /api/work-signals/graph` - Summarize normalized WorkItem/WorkActor/WorkContainer graph records, dependency types, and dependency freshness
+- `GET /api/work-signals/graph` - Summarize normalized WorkItem/WorkActor/WorkContainer graph records, dependency types, freshness, review outcomes, and connector stale-edge quality
 - `GET /api/work-signals/graph/decisions` - List graph-derived Robert/VA/team decision candidates
 - `GET /api/work-signals/graph/items/:itemId` - Inspect a graph item with dependency edges, recent graph events, and queued recommendation history
 - `POST /api/work-signals/graph/items/:itemId/queue` - Queue a graph item as an approval-gated recommendation

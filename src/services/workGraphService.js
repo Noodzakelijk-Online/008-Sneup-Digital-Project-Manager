@@ -417,7 +417,7 @@ class WorkGraphService {
 
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const limit = Math.max(1, Math.min(Number.parseInt(options.limit, 10) || 50, 200));
-    const [itemCount, actorCount, containerCount, commentCount, dependencyCount, eventCount, byStatus, byProvider, byDependencyType, byDependencyFreshness, recentItems, recentDependencies] = await Promise.all([
+    const [itemCount, actorCount, containerCount, commentCount, dependencyCount, eventCount, byStatus, byProvider, byDependencyType, byDependencyFreshness, byDependencyReviewStatus, dependencyReviewQuality, recentItems, recentDependencies] = await Promise.all([
       WorkItem.countDocuments({ workspaceId }),
       WorkActor.countDocuments({ workspaceId }),
       WorkContainer.countDocuments({ workspaceId }),
@@ -444,9 +444,39 @@ class WorkGraphService {
         { $group: { _id: '$freshnessStatus', count: { $sum: 1 } } },
         { $sort: { count: -1 } }
       ]),
+      WorkDependency.aggregate([
+        { $match: { workspaceId } },
+        { $group: { _id: { $ifNull: ['$reviewStatus', 'unreviewed'] }, count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+      ]),
+      WorkDependency.aggregate([
+        { $match: { workspaceId } },
+        {
+          $group: {
+            _id: '$sourceProvider',
+            dependencies: { $sum: 1 },
+            stale: { $sum: { $cond: [{ $eq: ['$freshnessStatus', 'stale'] }, 1, 0] } },
+            staleUnreviewed: {
+              $sum: {
+                $cond: [{
+                  $and: [
+                    { $eq: ['$freshnessStatus', 'stale'] },
+                    { $eq: [{ $ifNull: ['$reviewStatus', 'unreviewed'] }, 'unreviewed'] }
+                  ]
+                }, 1, 0]
+              }
+            },
+            confirmed: { $sum: { $cond: [{ $eq: ['$reviewStatus', 'confirmed'] }, 1, 0] } },
+            refreshed: { $sum: { $cond: [{ $eq: ['$reviewStatus', 'refreshed'] }, 1, 0] } },
+            dismissed: { $sum: { $cond: [{ $eq: ['$reviewStatus', 'dismissed'] }, 1, 0] } }
+          }
+        },
+        { $sort: { staleUnreviewed: -1, stale: -1, dependencies: -1, _id: 1 } }
+      ]),
       WorkItem.find({ workspaceId }).sort({ priority: 1, dueAt: 1, lastSeenAt: -1 }).limit(limit),
       WorkDependency.find({ workspaceId }).sort({ updatedAt: -1 }).limit(Math.min(limit, 25))
     ]);
+    const providerReviewQuality = this.providerReviewQualityRows(dependencyReviewQuality);
 
     return {
       counts: {
@@ -461,6 +491,9 @@ class WorkGraphService {
       byProvider: this.aggregateRows(byProvider),
       byDependencyType: this.aggregateRows(byDependencyType),
       byDependencyFreshness: this.aggregateRows(byDependencyFreshness),
+      byDependencyReviewStatus: this.aggregateRows(byDependencyReviewStatus),
+      reviewMetrics: this.dependencyReviewMetrics(byDependencyFreshness, byDependencyReviewStatus, providerReviewQuality),
+      providerReviewQuality,
       items: recentItems.map(item => this.sanitizeItem(item)),
       dependencies: recentDependencies.map(dependency => this.sanitizeDependency(dependency))
     };
@@ -695,6 +728,9 @@ class WorkGraphService {
       byProvider: {},
       byDependencyType: {},
       byDependencyFreshness: {},
+      byDependencyReviewStatus: {},
+      reviewMetrics: this.dependencyReviewMetrics(),
+      providerReviewQuality: [],
       items: [],
       dependencies: []
     };
@@ -730,6 +766,55 @@ class WorkGraphService {
       result[row._id || 'unknown'] = row.count;
       return result;
     }, {});
+  }
+
+  providerReviewQualityRows(rows = []) {
+    return rows.map(row => {
+      const dependencies = Number(row.dependencies) || 0;
+      const stale = Number(row.stale) || 0;
+      const pendingReview = Number(row.staleUnreviewed) || 0;
+      const confirmed = Number(row.confirmed) || 0;
+      const refreshed = Number(row.refreshed) || 0;
+      const dismissed = Number(row.dismissed) || 0;
+      const reviewed = confirmed + refreshed + dismissed;
+      const reviewable = pendingReview + reviewed;
+
+      return {
+        provider: row._id || 'unknown',
+        dependencies,
+        stale,
+        pendingReview,
+        confirmed,
+        refreshed,
+        dismissed,
+        reviewed,
+        staleRate: dependencies ? Math.round((stale / dependencies) * 100) : 0,
+        reviewCoverage: reviewable ? Math.round((reviewed / reviewable) * 100) : 100,
+        status: pendingReview > 0 ? 'needs_review' : stale > 0 ? 'reviewed_stale' : 'stable'
+      };
+    });
+  }
+
+  dependencyReviewMetrics(freshnessRows = [], reviewRows = [], providerReviewQuality = []) {
+    const freshness = this.aggregateRows(freshnessRows);
+    const reviewStatus = this.aggregateRows(reviewRows);
+    const pendingReview = providerReviewQuality.reduce((total, row) => total + (Number(row.pendingReview) || 0), 0);
+    const confirmed = Number(reviewStatus.confirmed) || 0;
+    const refreshed = Number(reviewStatus.refreshed) || 0;
+    const dismissed = Number(reviewStatus.dismissed) || 0;
+    const reviewed = confirmed + refreshed + dismissed;
+    const reviewable = pendingReview + reviewed;
+
+    return {
+      stale: Number(freshness.stale) || 0,
+      fresh: Number(freshness.fresh) || 0,
+      pendingReview,
+      reviewed,
+      confirmed,
+      refreshed,
+      dismissed,
+      reviewCoverage: reviewable ? Math.round((reviewed / reviewable) * 100) : 100
+    };
   }
 
   buildDecisionCandidate(item, dependencySummary = {}) {

@@ -1561,7 +1561,7 @@ function renderWorkSignals() {
 
   const signals = state.workSignals || [];
   const contracts = state.workSignalContracts || [];
-  const graph = state.workGraph || { counts: {}, byStatus: {}, byProvider: {}, items: [] };
+  const graph = state.workGraph || { counts: {}, byStatus: {}, byProvider: {}, reviewMetrics: {}, providerReviewQuality: [], items: [] };
   const graphCandidates = state.workGraphCandidates || [];
   const providers = unique(signals.map(signal => signal.provider));
   const connectedProviderIds = new Set((state.accounts || []).map(account => account.connectorId));
@@ -1582,6 +1582,7 @@ function renderWorkSignals() {
     ['Graph items', graph.counts.items || 0],
     ['Graph actors', graph.counts.actors || 0],
     ['Graph deps', graph.counts.dependencies || 0],
+    ['Stale graph edges', graph.reviewMetrics?.pendingReview || 0],
     ['Graph decisions', graphCandidates.length],
     ['Implemented adapters', implementedContracts.length],
     ['Connected adapters', connectedContracts.length]
@@ -1602,13 +1603,14 @@ function renderWorkSignals() {
   const graphNotice = graph.counts.items
     ? `<div class="notice">Normalized graph: ${escapeHtml(graph.counts.items)} items, ${escapeHtml(graph.counts.containers || 0)} containers, ${escapeHtml(graph.counts.dependencies || 0)} dependencies, ${escapeHtml(graph.counts.events || 0)} events.</div>`
     : '';
+  const graphReviewNotice = renderGraphReviewQuality(graph);
   const graphDecisionNotice = graphCandidates.length
     ? `<div class="notice">Graph decisions: ${escapeHtml(countByOwner(graphCandidates, 'robert'))} Robert, ${escapeHtml(countByOwner(graphCandidates, 'va'))} VA, ${escapeHtml(countByOwner(graphCandidates, 'team'))} team.</div>`
     : '';
   const graphDecisionCards = graphCandidates.length
     ? `<div class="list graph-decision-list">${graphCandidates.map(renderGraphDecisionCandidate).join('')}</div>`
     : '';
-  els.workSignalList.innerHTML = notice + graphNotice + graphDecisionNotice + graphDecisionCards + listOrEmpty(filteredSignals, renderWorkSignal);
+  els.workSignalList.innerHTML = notice + graphNotice + graphReviewNotice + graphDecisionNotice + graphDecisionCards + listOrEmpty(filteredSignals, renderWorkSignal);
   els.workSignalContracts.innerHTML = listOrEmpty(
     connectedContracts.length > 0 ? connectedContracts : contracts.slice(0, 12),
     contract => renderWorkSignalContract(contract, connectedProviderIds.has(contract.connectorId))
@@ -1630,6 +1632,26 @@ function renderWorkSignals() {
 
 function countByOwner(items, ownerType) {
   return items.filter(item => item.ownerType === ownerType).length;
+}
+
+function renderGraphReviewQuality(graph = {}) {
+  const metrics = graph.reviewMetrics || {};
+  const providers = (graph.providerReviewQuality || [])
+    .filter(provider => provider.pendingReview || provider.stale || provider.reviewed)
+    .slice(0, 5);
+  if (!metrics.pendingReview && !providers.length) return '';
+
+  const providerSummary = providers.map(provider => {
+    const label = `${provider.provider}: ${provider.stale || 0} stale, ${provider.pendingReview || 0} pending`;
+    return escapeHtml(label);
+  }).join(' | ');
+  const outcomeSummary = [
+    metrics.confirmed ? `${metrics.confirmed} confirmed` : '',
+    metrics.refreshed ? `${metrics.refreshed} refreshed` : '',
+    metrics.dismissed ? `${metrics.dismissed} dismissed` : ''
+  ].filter(Boolean).join(', ');
+
+  return `<div class="notice">Graph trust: ${escapeHtml(metrics.pendingReview || 0)} stale edges need review; ${escapeHtml(metrics.reviewCoverage || 0)}% of reviewable edges have an outcome.${outcomeSummary ? ` Outcomes: ${escapeHtml(outcomeSummary)}.` : ''}${providerSummary ? ` Connector detail: ${providerSummary}.` : ''}</div>`;
 }
 
 function renderWorkSignal(signal) {

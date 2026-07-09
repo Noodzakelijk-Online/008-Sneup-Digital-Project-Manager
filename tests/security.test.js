@@ -392,6 +392,7 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('/api/recommendations/${recommendationId}/evidence');
     expect(appJs).toContain('data-graph-filter');
     expect(appJs).toContain('data-graph-dependency-review');
+    expect(appJs).toContain('renderGraphReviewQuality(graph)');
     expect(appJs).toContain('renderGraphLedgerFilters(graphContext)');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
     expect(fs.readFileSync(path.join(rootDir, 'src', 'routes', 'workSignals.js'), 'utf8')).toContain("router.post('/graph/dependencies/:dependencyId/review'");
@@ -983,6 +984,86 @@ describe('work signal normalization', () => {
       workspaceId,
       action: 'delete'
     })).rejects.toThrow('confirm, dismiss, or refresh');
+  });
+
+  test('summarizes stale-edge review outcomes and connector quality without provider writes', async () => {
+    jest.resetModules();
+
+    const workspaceId = 'workspace-object-id';
+    const chain = (items) => {
+      const query = {
+        sort: jest.fn(() => query),
+        limit: jest.fn().mockResolvedValue(items)
+      };
+      return query;
+    };
+    const dependencyAggregate = jest.fn()
+      .mockResolvedValueOnce([{ _id: 'blocks', count: 8 }])
+      .mockResolvedValueOnce([{ _id: 'fresh', count: 8 }, { _id: 'stale', count: 4 }])
+      .mockResolvedValueOnce([
+        { _id: 'unreviewed', count: 9 },
+        { _id: 'confirmed', count: 1 },
+        { _id: 'refreshed', count: 1 },
+        { _id: 'dismissed', count: 1 }
+      ])
+      .mockResolvedValueOnce([
+        { _id: 'jira_software', dependencies: 7, stale: 3, staleUnreviewed: 2, confirmed: 1, refreshed: 0, dismissed: 0 },
+        { _id: 'github', dependencies: 5, stale: 1, staleUnreviewed: 1, confirmed: 0, refreshed: 1, dismissed: 1 }
+      ]);
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(() => workspaceId),
+      getDefaultWorkspaceObjectId: jest.fn(() => workspaceId)
+    }));
+    jest.doMock('../src/models/WorkItem', () => ({
+      countDocuments: jest.fn().mockResolvedValue(6),
+      aggregate: jest.fn()
+        .mockResolvedValueOnce([{ _id: 'open', count: 4 }])
+        .mockResolvedValueOnce([{ _id: 'jira_software', count: 4 }]),
+      find: jest.fn(() => chain([]))
+    }));
+    jest.doMock('../src/models/WorkActor', () => ({ countDocuments: jest.fn().mockResolvedValue(2) }));
+    jest.doMock('../src/models/WorkComment', () => ({ countDocuments: jest.fn().mockResolvedValue(3) }));
+    jest.doMock('../src/models/WorkContainer', () => ({ countDocuments: jest.fn().mockResolvedValue(2) }));
+    jest.doMock('../src/models/WorkEvent', () => ({ countDocuments: jest.fn().mockResolvedValue(5) }));
+    jest.doMock('../src/models/WorkDependency', () => ({
+      countDocuments: jest.fn().mockResolvedValue(12),
+      aggregate: dependencyAggregate,
+      find: jest.fn(() => chain([]))
+    }));
+    jest.doMock('../src/models/Recommendation', () => ({}));
+
+    const workGraphService = require('../src/services/workGraphService');
+    const summary = await workGraphService.getSummary({ workspaceId: 'tenant-a' });
+
+    expect(summary).toMatchObject({
+      byDependencyFreshness: { fresh: 8, stale: 4 },
+      byDependencyReviewStatus: { unreviewed: 9, confirmed: 1, refreshed: 1, dismissed: 1 },
+      reviewMetrics: {
+        stale: 4,
+        pendingReview: 3,
+        reviewed: 3,
+        reviewCoverage: 50
+      }
+    });
+    expect(summary.providerReviewQuality).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provider: 'jira_software',
+        stale: 3,
+        pendingReview: 2,
+        reviewCoverage: 33,
+        status: 'needs_review'
+      }),
+      expect.objectContaining({
+        provider: 'github',
+        stale: 1,
+        pendingReview: 1,
+        dismissed: 1,
+        status: 'needs_review'
+      })
+    ]));
+    expect(dependencyAggregate).toHaveBeenCalledTimes(4);
   });
 
   test('extracts provider-native work dependencies into graph projections', () => {
