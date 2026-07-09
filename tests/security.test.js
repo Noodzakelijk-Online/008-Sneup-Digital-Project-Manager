@@ -741,6 +741,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/jiraWorkSignalClient');
     jest.dontMock('../src/services/asanaWorkSignalClient');
     jest.dontMock('../src/services/slackWorkSignalClient');
+    jest.dontMock('../src/services/googleWorkspaceWorkSignalClient');
     jest.resetModules();
   });
 
@@ -915,6 +916,20 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('slack').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Google Workspace adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'event-1' }] });
+    jest.doMock('../src/services/googleWorkspaceWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'google_workspace' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('google_workspace').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1248,6 +1263,36 @@ describe('work signal normalization', () => {
     } finally {
       process.env = originalEnv;
     }
+  });
+
+  test('Google Workspace sync reads Calendar events and Drive metadata without file-content endpoints', async () => {
+    const { GoogleWorkspaceWorkSignalClient } = require('../src/services/googleWorkspaceWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { items: [{ id: 'primary', summary: 'Primary' }] } })
+        .mockResolvedValueOnce({ data: { files: [{ id: 'file-1', name: 'Launch brief', mimeType: 'application/pdf', modifiedTime: '2026-07-08T12:00:00.000Z' }] } })
+        .mockResolvedValueOnce({ data: { items: [{ id: 'event-1', summary: 'Launch review', updated: '2026-07-08T13:00:00.000Z', start: { dateTime: '2026-07-09T09:00:00Z' } }] } })
+    };
+    const client = new GoogleWorkspaceWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'google-access-token' })) },
+      now: () => new Date('2026-07-08T10:00:00.000Z')
+    });
+
+    const result = await client.fetchDelta({ connectorId: 'google_workspace' }, '2026-07-08T11:00:00.000Z');
+
+    expect(http.get.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining([
+      'https://www.googleapis.com/calendar/v3/users/me/calendarList',
+      'https://www.googleapis.com/drive/v3/files',
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+    ]));
+    expect(http.get.mock.calls.map(call => call[0]).join(' ')).not.toMatch(/download|export|alt=media|gmail/i);
+    expect(http.get.mock.calls[1][1].params.fields).toContain('mimeType');
+    expect(result).toMatchObject({
+      nextCursor: '2026-07-08T13:00:00.000Z',
+      metadata: { source: 'google_workspace_api', calendars: 1, files: 1 }
+    });
+    expect(result.records).toHaveLength(2);
   });
 
   test('projects provider signals into normalized work graph records', () => {
