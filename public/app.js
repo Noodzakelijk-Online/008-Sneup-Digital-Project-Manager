@@ -2018,6 +2018,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-jira-site]').forEach((button) => {
     button.addEventListener('click', () => openJiraSiteModal(button.dataset.jiraSite));
   });
+  document.querySelectorAll('[data-asana-workspace]').forEach((button) => {
+    button.addEventListener('click', () => openAsanaWorkspaceModal(button.dataset.asanaWorkspace));
+  });
 }
 
 function renderCategories() {
@@ -2045,14 +2048,17 @@ function renderConnector(connector, account) {
   const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
   const canSync = Boolean(account && contract?.adapterStatus === 'implemented');
   const isJira = connector.id === 'jira_software' || connector.id === 'jira_service_management';
+  const isAsana = connector.id === 'asana';
   const selectedJiraCloudId = account?.metadata?.fields?.cloudId;
+  const selectedAsanaWorkspaceGid = account?.metadata?.fields?.asanaWorkspaceGid;
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
       : lastSync.source === 'jira_api' ? 'Jira API'
-      : 'Sync';
+        : lastSync.source === 'asana_api' ? 'Asana API'
+          : 'Sync';
   const syncSummary = canSync && lastSync.finishedAt
-    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}</div>`
+    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}${lastSync.workspaces ? `<span>${lastSync.workspaces} Asana workspace${lastSync.workspaces === 1 ? '' : 's'}</span>` : ''}${lastSync.projects ? `<span>${lastSync.projects} projects</span>` : ''}</div>`
     : '';
   return `
     <div class="connector-card">
@@ -2071,6 +2077,7 @@ function renderConnector(connector, account) {
       <div class="connector-actions">
         <span class="meta">${connector.sync.slice(0, 3).map(escapeHtml).join('  |  ')}</span>
         ${isJira && account ? `<button class="button" data-jira-site="${escapeHtml(account.id)}" type="button">${selectedJiraCloudId ? 'Jira site selected' : 'Select Jira site'}</button>` : ''}
+        ${isAsana && account ? `<button class="button" data-asana-workspace="${escapeHtml(account.id)}" type="button">${selectedAsanaWorkspaceGid ? 'Asana workspace selected' : 'Select Asana workspace'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         <button class="button ${configured || connector.auth.type !== 'oauth2' ? 'primary' : ''}" data-connect="${connector.id}" type="button">
           ${connected ? 'Reconnect' : 'Connect'}
@@ -2078,6 +2085,59 @@ function renderConnector(connector, account) {
       </div>
     </div>
   `;
+}
+
+async function openAsanaWorkspaceModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  try {
+    const data = await fetchApi(`/api/connectors/accounts/${accountId}/asana-workspaces`);
+    const workspaces = data.workspaces || [];
+    if (workspaces.length === 0) {
+      openNotice('Asana workspace selection', 'No Asana workspaces are currently authorized for this account. Reconnect it with workspace read access.');
+      return;
+    }
+
+    const selectedWorkspaceGid = account.metadata?.fields?.asanaWorkspaceGid || (workspaces.length === 1 ? workspaces[0].workspaceGid : '');
+    els.modalTitle.textContent = 'Select Asana workspace';
+    els.modalBody.innerHTML = `
+      <form id="asanaWorkspaceForm">
+        <div class="field">
+          <label for="asanaWorkspaceGid">Authorized workspace</label>
+          <select id="asanaWorkspaceGid" name="workspaceGid" required>
+            <option value="" ${selectedWorkspaceGid ? '' : 'selected'} disabled>Select a workspace</option>
+            ${workspaces.map(workspace => `<option value="${escapeHtml(workspace.workspaceGid)}" ${workspace.workspaceGid === selectedWorkspaceGid ? 'selected' : ''}>${escapeHtml(workspace.name)}${workspace.organization ? ' (organization)' : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div class="notice">Sneup will only ingest read-only project tasks from the selected workspace.</div>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelAsanaWorkspace">Cancel</button>
+          <button class="button primary" type="submit">Use this workspace</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelAsanaWorkspace').addEventListener('click', closeModal);
+    document.getElementById('asanaWorkspaceForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target).entries());
+      try {
+        await fetchApi(`/api/connectors/accounts/${accountId}/asana-workspace`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        closeModal();
+        openNotice('Asana workspace selected', 'Sneup will use this workspace for the next read-only sync.');
+        await loadConnectors();
+      } catch (error) {
+        openNotice('Asana workspace selection', error.message);
+      }
+    });
+  } catch (error) {
+    openNotice('Asana workspace selection', error.message);
+  }
 }
 
 async function openJiraSiteModal(accountId) {

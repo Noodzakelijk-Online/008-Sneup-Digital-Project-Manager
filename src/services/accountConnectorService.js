@@ -68,6 +68,43 @@ class AccountConnectorService {
     return this.sanitizeAccount(account);
   }
 
+  async getAsanaWorkspaces(accountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireAsanaAccount(account);
+    return this.fetchAsanaWorkspaces(account);
+  }
+
+  async selectAsanaWorkspace(accountId, workspaceGid, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireAsanaAccount(account);
+    const requestedWorkspaceGid = String(workspaceGid || '').trim();
+    if (!/^[A-Za-z0-9_-]{5,100}$/.test(requestedWorkspaceGid)) {
+      const error = new Error('A valid Asana workspace ID is required.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const workspaces = await this.fetchAsanaWorkspaces(account);
+    const workspace = workspaces.find(item => item.workspaceGid === requestedWorkspaceGid);
+    if (!workspace) {
+      const error = new Error('That Asana workspace is no longer authorized for this account.');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: {
+        ...(account.metadata?.fields || {}),
+        asanaWorkspaceGid: workspace.workspaceGid
+      }
+    };
+    account.status = 'connected';
+    account.lastError = undefined;
+    await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   getCatalog(filters = {}) {
     const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
     const filteredConnectors = this.filterConnectors(category, search);
@@ -347,6 +384,14 @@ class AccountConnectorService {
     }
   }
 
+  requireAsanaAccount(account) {
+    if (account.connectorId !== 'asana') {
+      const error = new Error('Asana workspace selection is only available for Asana connector accounts.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   async fetchJiraSites(account) {
     const credentials = this.getAccountCredentials(account);
     const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
@@ -372,6 +417,34 @@ class AccountConnectorService {
         cloudId: site.id,
         name: String(site.name || site.url || site.id),
         url: site.url || undefined
+      }));
+  }
+
+  async fetchAsanaWorkspaces(account) {
+    const credentials = this.getAccountCredentials(account);
+    const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
+    if (!accessToken) {
+      const error = new Error('Asana access token is missing. Reconnect this account to continue.');
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const apiUrl = String(process.env.SNEUP_ASANA_API_URL || 'https://app.asana.com/api/1.0').replace(/\/$/, '');
+    const response = await this.http.get(`${apiUrl}/workspaces`, {
+      params: { limit: 100, opt_fields: 'gid,name,is_organization' },
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`
+      },
+      timeout: 15000
+    });
+
+    return (Array.isArray(response.data?.data) ? response.data.data : [])
+      .filter(workspace => workspace?.gid || workspace?.id)
+      .map(workspace => ({
+        workspaceGid: String(workspace.gid || workspace.id),
+        name: String(workspace.name || workspace.gid || workspace.id),
+        organization: Boolean(workspace.is_organization)
       }));
   }
 
@@ -530,6 +603,8 @@ class AccountConnectorService {
         repositories: Number(lastSync.repositories || 0),
         boards: Number(lastSync.boards || 0),
         sites: Number(lastSync.sites || 0),
+        workspaces: Number(lastSync.workspaces || 0),
+        projects: Number(lastSync.projects || 0),
         finishedAt: lastSync.finishedAt
       } : undefined
     };

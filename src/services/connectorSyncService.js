@@ -146,6 +146,8 @@ class ConnectorSyncService {
         repositories: delta.metadata?.repositories || 0,
         boards: delta.metadata?.boards || 0,
         sites: delta.metadata?.sites || 0,
+        workspaces: delta.metadata?.workspaces || 0,
+        projects: delta.metadata?.projects || 0,
         finishedAt: new Date()
       }
     };

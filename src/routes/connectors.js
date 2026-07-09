@@ -123,6 +123,36 @@ router.post('/accounts/:accountId/jira-site', requirePermission('connectors:mana
   }
 });
 
+router.get('/accounts/:accountId/asana-workspaces', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const workspaces = await accountConnectorService.getAsanaWorkspaces(req.params.accountId, connectorRequestOptions(req));
+    res.json({
+      success: true,
+      workspaces
+    });
+  } catch (error) {
+    logger.error('Failed to list Asana workspaces:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/asana-workspace', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.selectAsanaWorkspace(
+      req.params.accountId,
+      req.body.workspaceGid,
+      connectorRequestOptions(req)
+    );
+    res.json({
+      success: true,
+      account
+    });
+  } catch (error) {
+    logger.error('Failed to select Asana workspace:', error);
+    sendError(res, error);
+  }
+});
+
 router.get('/:connectorId', (req, res) => {
   try {
     const connector = accountConnectorService.getConnectorDetails(req.params.connectorId);

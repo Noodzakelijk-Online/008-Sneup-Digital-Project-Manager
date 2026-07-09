@@ -196,7 +196,7 @@ const CONNECTORS = [
       envPrefix: 'ASANA',
       authorizationUrl: 'https://app.asana.com/-/oauth_authorize',
       tokenUrl: 'https://app.asana.com/-/oauth_token',
-      scopes: ['default'],
+      scopes: ['workspaces:read', 'projects:read', 'project_sections:read', 'tasks:read'],
       docsUrl: 'https://developers.asana.com/docs/oauth'
     }),
     sync: ['workspaces', 'portfolios', 'projects', 'tasks', 'goals', 'users']

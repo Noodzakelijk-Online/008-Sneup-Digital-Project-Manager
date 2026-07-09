@@ -671,6 +671,57 @@ describe('connector registry', () => {
       else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;
     }
   });
+
+  test('lists Asana workspaces with an in-process token and persists only the selected workspace ID', async () => {
+    const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
+    process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';
+    const originalHttp = accountConnectorService.http;
+    const get = jest.fn().mockResolvedValue({
+      data: {
+        data: [
+          { gid: 'workspace-1001', name: 'Delivery', is_organization: true },
+          { gid: 'workspace-1002', name: 'Personal', is_organization: false }
+        ]
+      }
+    });
+    accountConnectorService.http = { get };
+    const account = {
+      _id: 'account-2',
+      workspaceId: 'workspace-1',
+      connectorId: 'asana',
+      connectorName: 'Asana',
+      category: 'work_management',
+      authType: 'oauth2',
+      status: 'failed',
+      credentials: { accessToken: accountConnectorService.encrypt('asana-token-value') },
+      metadata: { fields: {} },
+      save: jest.fn().mockResolvedValue(undefined)
+    };
+    const accountSpy = jest.spyOn(accountConnectorService, 'getManagedAccount').mockResolvedValue(account);
+
+    try {
+      const workspaces = await accountConnectorService.getAsanaWorkspaces('account-2', { workspaceId: 'workspace-1' });
+      expect(workspaces).toEqual([
+        { workspaceGid: 'workspace-1001', name: 'Delivery', organization: true },
+        { workspaceGid: 'workspace-1002', name: 'Personal', organization: false }
+      ]);
+      expect(get).toHaveBeenCalledWith(
+        'https://app.asana.com/api/1.0/workspaces',
+        expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer asana-token-value' }) })
+      );
+
+      const selected = await accountConnectorService.selectAsanaWorkspace('account-2', 'workspace-1001', { workspaceId: 'workspace-1' });
+      expect(account.metadata.fields).toEqual({ asanaWorkspaceGid: 'workspace-1001' });
+      expect(account.save).toHaveBeenCalledTimes(1);
+      expect(selected.metadata.fields).toEqual({ asanaWorkspaceGid: 'workspace-1001' });
+      expect(selected).not.toHaveProperty('credentials');
+    } finally {
+      accountSpy.mockRestore();
+      accountConnectorService.http = originalHttp;
+      if (originalEncryptionKey === undefined) delete process.env.CONNECTOR_ENCRYPTION_KEY;
+      else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;
+    }
+  });
 });
 
 describe('work signal normalization', () => {
@@ -688,6 +739,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/githubWorkSignalClient');
     jest.dontMock('../src/services/trelloWorkSignalClient');
     jest.dontMock('../src/services/jiraWorkSignalClient');
+    jest.dontMock('../src/services/asanaWorkSignalClient');
     jest.resetModules();
   });
 
@@ -834,6 +886,20 @@ describe('work signal normalization', () => {
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('jira_software').capabilities.credentialBackedSync).toBe(true);
     expect(workSignalAdapterService.getAdapter('jira_service_management').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Asana adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ gid: 'task-1' }] });
+    jest.doMock('../src/services/asanaWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'asana' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('asana').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1026,6 +1092,85 @@ describe('work signal normalization', () => {
     ])).toThrow('multiple sites');
     try {
       client.selectResource({}, [{ id: 'cloud-1' }, { id: 'cloud-2' }]);
+    } catch (error) {
+      expect(error.statusCode).toBe(409);
+    }
+  });
+
+  test('Asana API sync reads a selected workspace through bounded project task requests', async () => {
+    const { AsanaWorkSignalClient } = require('../src/services/asanaWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({
+          data: { data: [{ gid: 'workspace-1', name: 'Delivery', is_organization: true }] }
+        })
+        .mockResolvedValueOnce({
+          data: { data: [{ gid: 'project-1', name: 'Launch', permalink_url: 'https://app.asana.com/0/project-1/list' }] }
+        })
+        .mockResolvedValueOnce({
+          data: {
+            data: [{
+              gid: 'task-1',
+              name: 'Approve launch plan',
+              modified_at: '2026-07-09T12:00:00.000Z',
+              completed: false,
+              dependencies: [{ gid: 'task-0' }],
+              permalink_url: 'https://app.asana.com/0/task-1'
+            }]
+          }
+        })
+    };
+    const credentials = {
+      getAccountCredentials: jest.fn(() => ({ accessToken: 'asana-access-token' }))
+    };
+    const client = new AsanaWorkSignalClient({
+      http,
+      accountConnectorService: credentials,
+      now: () => new Date('2026-07-10T00:00:00.000Z')
+    });
+    const originalEnv = { ...process.env };
+    process.env.SNEUP_ASANA_MAX_PROJECTS = '10';
+    process.env.SNEUP_ASANA_MAX_TASKS_PER_PROJECT = '100';
+    process.env.SNEUP_ASANA_MAX_TOTAL_TASKS = '100';
+    process.env.SNEUP_ASANA_CURSOR_LOOKBACK_MS = '60000';
+
+    try {
+      const result = await client.fetchDelta({ connectorId: 'asana', metadata: { fields: { asanaWorkspaceGid: 'workspace-1' } } }, '2026-07-09T11:30:00.000Z');
+
+      expect(http.get).toHaveBeenCalledTimes(3);
+      expect(http.get.mock.calls[0][0]).toBe('https://app.asana.com/api/1.0/workspaces');
+      expect(http.get.mock.calls[1][0]).toBe('https://app.asana.com/api/1.0/workspaces/workspace-1/projects');
+      expect(http.get.mock.calls[2][0]).toBe('https://app.asana.com/api/1.0/projects/project-1/tasks');
+      expect(http.get.mock.calls[2][1].params).toMatchObject({
+        limit: 100,
+        modified_since: '2026-07-09T11:29:00.000Z',
+        completed_since: '2026-07-09T11:29:00.000Z'
+      });
+      expect(result).toMatchObject({
+        nextCursor: '2026-07-09T12:00:00.000Z',
+        hasMore: false,
+        metadata: { source: 'asana_api', workspaces: 1, projects: 1, workspaceGid: 'workspace-1' }
+      });
+      expect(result.records[0]).toMatchObject({
+        gid: 'task-1',
+        project: { gid: 'project-1', name: 'Launch' },
+        workspace: { gid: 'workspace-1', name: 'Delivery' }
+      });
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  test('Asana sync rejects ambiguous multi-workspace access instead of choosing a workspace', () => {
+    const { AsanaWorkSignalClient } = require('../src/services/asanaWorkSignalClient');
+    const client = new AsanaWorkSignalClient({ accountConnectorService: {} });
+
+    expect(() => client.selectWorkspace({}, [
+      { gid: 'workspace-1', name: 'One' },
+      { gid: 'workspace-2', name: 'Two' }
+    ])).toThrow('multiple workspaces');
+    try {
+      client.selectWorkspace({}, [{ gid: 'workspace-1' }, { gid: 'workspace-2' }]);
     } catch (error) {
       expect(error.statusCode).toBe(409);
     }
