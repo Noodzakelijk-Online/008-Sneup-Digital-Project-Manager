@@ -14,6 +14,7 @@ const jiraWorkSignalClient = require('./jiraWorkSignalClient');
 const asanaWorkSignalClient = require('./asanaWorkSignalClient');
 const slackWorkSignalClient = require('./slackWorkSignalClient');
 const googleWorkspaceWorkSignalClient = require('./googleWorkspaceWorkSignalClient');
+const microsoft365WorkSignalClient = require('./microsoft365WorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -272,27 +273,35 @@ googleWorkspaceAdapter.list = async (account) => (await googleWorkspaceWorkSigna
 googleWorkspaceAdapter.fetchDelta = (account, cursor) => googleWorkspaceWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('google_workspace', googleWorkspaceAdapter);
 
-adapters.set('microsoft_365', buildAdapter('microsoft_365', 'Microsoft 365 work item adapter', (account, item) => ({
-  externalId: pick(item.externalId, item.id),
-  sourceType: item.start || item.end ? 'event' : item.bodyPreview || item.subject ? 'message' : 'task',
-  title: pick(item.title, item.subject, item.name),
-  description: pick(item.description, item.bodyPreview, item.body?.content, ''),
-  status: statusFromText(item.status, item.completedDateTime ? 'completed' : ''),
-  priority: priorityFromText(item.importance, item.priority, item.categories),
-  url: pick(item.url, item.webUrl, item.webLink),
-  owners: userNames([
-    item.assignedTo,
-    item.createdBy?.user,
-    item.organizer?.emailAddress,
-    item.from?.emailAddress
-  ]),
-  labels: labelNames(item.categories),
-  dueAt: pick(item.dueAt, item.dueDateTime?.dateTime, item.end?.dateTime),
-  providerCreatedAt: pick(item.providerCreatedAt, item.createdDateTime),
-  providerUpdatedAt: pick(item.providerUpdatedAt, item.lastModifiedDateTime),
-  evidenceRefs: baseEvidence(account, item, 'Microsoft 365 item'),
-  raw: item
-})));
+const microsoft365Adapter = buildAdapter('microsoft_365', 'Microsoft 365 work item adapter', (account, item) => {
+  const source = item.microsoftSource || (item.start || item.end ? 'calendar' : item.file || item.folder ? 'onedrive' : 'todo');
+  const nativeId = pick(item.id, 'unknown');
+  const externalId = pick(item.externalId, source === 'calendar'
+    ? `calendar:${nativeId}`
+    : source === 'onedrive'
+      ? `onedrive:${nativeId}`
+      : `todo:${item.todoList?.id || 'default'}:${nativeId}`);
+  return {
+    externalId,
+    sourceType: source === 'calendar' ? 'event' : source === 'onedrive' ? 'document' : 'task',
+    title: pick(item.title, item.subject, item.name),
+    description: pick(item.description, ''),
+    status: item.deleted || item.isCancelled ? 'archived' : statusFromText(item.status, item.completedDateTime ? 'completed' : ''),
+    priority: priorityFromText(item.importance, item.priority, item.categories),
+    url: pick(item.url, item.webUrl, item.webLink),
+    owners: userNames([item.assignedTo, item.createdBy?.user, item.organizer?.emailAddress]),
+    labels: labelNames(item.categories),
+    dueAt: pick(item.dueAt, item.dueDateTime?.dateTime, item.end?.dateTime),
+    providerCreatedAt: pick(item.providerCreatedAt, item.createdDateTime),
+    providerUpdatedAt: pick(item.providerUpdatedAt, item.lastModifiedDateTime),
+    evidenceRefs: baseEvidence(account, item, 'Microsoft 365 item'),
+    raw: item
+  };
+});
+microsoft365Adapter.capabilities.credentialBackedSync = true;
+microsoft365Adapter.list = async (account) => (await microsoft365WorkSignalClient.fetchDelta(account, null)).records;
+microsoft365Adapter.fetchDelta = (account, cursor) => microsoft365WorkSignalClient.fetchDelta(account, cursor);
+adapters.set('microsoft_365', microsoft365Adapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

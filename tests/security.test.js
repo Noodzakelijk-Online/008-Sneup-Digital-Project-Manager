@@ -556,7 +556,7 @@ describe('connector registry', () => {
     const microsoft = getConnectors().find(connector => connector.id === 'microsoft_365');
 
     expect(microsoft.auth.scopes).toEqual(expect.arrayContaining(['Calendars.Read', 'Tasks.Read', 'Files.Read']));
-    expect(microsoft.auth.scopes).not.toEqual(expect.arrayContaining(['Calendars.ReadWrite', 'Tasks.ReadWrite', 'Files.Read.All', 'Sites.Read.All']));
+    expect(microsoft.auth.scopes).not.toEqual(expect.arrayContaining(['Mail.Read', 'Calendars.ReadWrite', 'Tasks.ReadWrite', 'Files.Read.All', 'Sites.Read.All']));
   });
 
   test('supports connector search, category aliases, and pagination', () => {
@@ -939,6 +939,20 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('google_workspace').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Microsoft 365 adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'event-1' }] });
+    jest.doMock('../src/services/microsoft365WorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'microsoft_365' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('microsoft_365').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -1315,6 +1329,54 @@ describe('work signal normalization', () => {
 
     expect(event.externalId).toBe('calendar:primary:same-id');
     expect(file.externalId).toBe('drive:same-id');
+  });
+
+  test('Microsoft 365 sync reads bounded Calendar, To Do, and OneDrive metadata without mail, content, or provider writes', async () => {
+    jest.dontMock('../src/services/microsoft365WorkSignalClient');
+    jest.resetModules();
+    const { Microsoft365WorkSignalClient } = require('../src/services/microsoft365WorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { value: [{ id: 'same-id', subject: 'Launch review', start: { dateTime: '2026-07-09T09:00:00Z' }, end: { dateTime: '2026-07-09T10:00:00Z' }, lastModifiedDateTime: '2026-07-08T13:00:00.000Z' }] } })
+        .mockResolvedValueOnce({ data: { value: [{ id: 'tasks', displayName: 'Tasks' }] } })
+        .mockResolvedValueOnce({ data: { value: [{ id: 'same-id', name: 'Launch brief', file: {}, lastModifiedDateTime: '2026-07-08T12:00:00.000Z' }] } })
+        .mockResolvedValueOnce({ data: { value: [{ id: 'same-id', title: 'Approve launch brief', status: 'notStarted', lastModifiedDateTime: '2026-07-08T12:30:00.000Z' }] } })
+    };
+    const client = new Microsoft365WorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'microsoft-access-token' })) }
+    });
+
+    const result = await client.fetchDelta({ connectorId: 'microsoft_365' }, '2026-07-08T11:00:00.000Z');
+
+    expect(http.get.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining([
+      'https://graph.microsoft.com/v1.0/me/events',
+      'https://graph.microsoft.com/v1.0/me/todo/lists',
+      'https://graph.microsoft.com/v1.0/me/drive/root/children',
+      'https://graph.microsoft.com/v1.0/me/todo/lists/tasks/tasks'
+    ]));
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/mail|messages|content|download|export|\$value|bodyPreview/i);
+    expect(http.get.mock.calls.map(call => Object.keys(call[1]?.headers || {})).flat()).not.toContain('Content-Type');
+    expect(result).toMatchObject({
+      nextCursor: '2026-07-08T13:00:00.000Z',
+      hasMore: false,
+      metadata: { source: 'microsoft_graph', events: 1, taskLists: 1, todoTasks: 1, files: 1 }
+    });
+    expect(result.records.map(record => record.microsoftSource)).toEqual(expect.arrayContaining(['calendar', 'todo', 'onedrive']));
+  });
+
+  test('Microsoft 365 normalization separates Calendar, To Do, and OneDrive identifier namespaces', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'microsoft_365' };
+
+    const event = workSignalAdapterService.normalize(account, { id: 'same-id', microsoftSource: 'calendar', start: { dateTime: '2026-07-08T10:00:00Z' } });
+    const task = workSignalAdapterService.normalize(account, { id: 'same-id', microsoftSource: 'todo', todoList: { id: 'tasks' } });
+    const file = workSignalAdapterService.normalize(account, { id: 'same-id', microsoftSource: 'onedrive', file: {} });
+
+    expect(event.externalId).toBe('calendar:same-id');
+    expect(task.externalId).toBe('todo:tasks:same-id');
+    expect(file.externalId).toBe('onedrive:same-id');
   });
 
   test('projects provider signals into normalized work graph records', () => {

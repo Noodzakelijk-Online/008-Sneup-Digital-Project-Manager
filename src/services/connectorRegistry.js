@@ -263,7 +263,7 @@ const CONNECTORS = [
     id: 'microsoft_365',
     name: 'Microsoft 365',
     category: 'calendar_email',
-    description: 'Outlook, Teams, Planner, To Do, OneDrive, SharePoint, calendars, mail, files, and users through Microsoft Graph.',
+    description: 'Read-only Outlook Calendar, Microsoft To Do, and signed-in-user OneDrive metadata through Microsoft Graph.',
     auth: oauth2({
       envPrefix: 'MICROSOFT',
       authorizationUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
@@ -271,14 +271,13 @@ const CONNECTORS = [
       scopes: [
         'offline_access',
         'User.Read',
-        'Mail.Read',
         'Calendars.Read',
         'Files.Read',
         'Tasks.Read'
       ],
       docsUrl: 'https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc'
     }),
-    sync: ['mail', 'calendar', 'files', 'planner', 'todo', 'sharepoint', 'users']
+    sync: ['calendar', 'todo', 'files']
   },
   {
     id: 'google_workspace',
