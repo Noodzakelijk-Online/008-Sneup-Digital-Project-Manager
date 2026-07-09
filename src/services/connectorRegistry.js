@@ -272,10 +272,10 @@ const CONNECTORS = [
         'offline_access',
         'User.Read',
         'Mail.Read',
-        'Calendars.ReadWrite',
+        'Calendars.Read',
         'Files.Read.All',
         'Sites.Read.All',
-        'Tasks.ReadWrite'
+        'Tasks.Read'
       ],
       docsUrl: 'https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc'
     }),

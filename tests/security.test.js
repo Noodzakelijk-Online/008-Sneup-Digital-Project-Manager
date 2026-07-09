@@ -552,6 +552,13 @@ describe('connector registry', () => {
     );
   });
 
+  test('does not request Microsoft 365 write scopes for read-only connector ingestion', () => {
+    const microsoft = getConnectors().find(connector => connector.id === 'microsoft_365');
+
+    expect(microsoft.auth.scopes).toEqual(expect.arrayContaining(['Calendars.Read', 'Tasks.Read']));
+    expect(microsoft.auth.scopes).not.toEqual(expect.arrayContaining(['Calendars.ReadWrite', 'Tasks.ReadWrite']));
+  });
+
   test('supports connector search, category aliases, and pagination', () => {
     const result = accountConnectorService.getCatalog({
       category: 'software delivery',
