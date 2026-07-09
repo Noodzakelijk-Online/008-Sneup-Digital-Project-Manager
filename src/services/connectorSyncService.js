@@ -150,6 +150,7 @@ class ConnectorSyncService {
         projects: delta.metadata?.projects || 0,
         channels: delta.metadata?.channels || 0,
         issues: delta.metadata?.issues || 0,
+        items: delta.metadata?.items || 0,
         pages: delta.metadata?.pages || 0,
         dataSources: delta.metadata?.dataSources || 0,
         finishedAt: new Date()

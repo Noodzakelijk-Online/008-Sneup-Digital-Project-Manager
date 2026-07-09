@@ -566,11 +566,11 @@ describe('connector registry', () => {
     expect(linear.auth.scopes).not.toEqual(expect.arrayContaining(['write', 'issues:create', 'comments:create', 'admin']));
   });
 
-  test('does not request monday.com board or update write scopes for read-only connector ingestion', () => {
+  test('requests only the monday.com board read scope for read-only connector ingestion', () => {
     const monday = getConnectors().find(connector => connector.id === 'monday');
 
-    expect(monday.auth.scopes).toEqual(expect.arrayContaining(['account:read', 'boards:read', 'users:read', 'updates:read']));
-    expect(monday.auth.scopes).not.toEqual(expect.arrayContaining(['boards:write', 'updates:write']));
+    expect(monday.auth.scopes).toEqual(['boards:read']);
+    expect(monday.auth.scopes).not.toEqual(expect.arrayContaining(['account:read', 'boards:write', 'users:read', 'updates:read', 'updates:write']));
   });
 
   test('supports connector search, category aliases, and pagination', () => {
@@ -995,6 +995,20 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('notion').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('monday.com adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'item-1' }] });
+    jest.doMock('../src/services/mondayWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'monday' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('monday').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1561,6 +1575,62 @@ describe('work signal normalization', () => {
       description: '',
       status: 'open',
       url: 'https://www.notion.so/page-1'
+    });
+  });
+
+  test('monday.com sync reads bounded board and item metadata with GraphQL query-only requests', async () => {
+    jest.dontMock('../src/services/mondayWorkSignalClient');
+    jest.resetModules();
+    const { MondayWorkSignalClient } = require('../src/services/mondayWorkSignalClient');
+    const http = {
+      post: jest.fn()
+        .mockResolvedValueOnce({
+          data: { data: { boards: [{ id: 'board-1', name: 'Launch', url: 'https://monday.com/board-1', state: 'active', updated_at: '2026-07-09T12:00:00.000Z' }] } }
+        })
+        .mockResolvedValueOnce({
+          data: { data: { boards: [{ id: 'board-1', name: 'Launch', url: 'https://monday.com/board-1', items_page: {
+            cursor: null,
+            items: [{
+              id: 'item-1', name: 'Ship connector', url: 'https://monday.com/item-1', created_at: '2026-07-09T09:00:00.000Z', updated_at: '2026-07-09T12:00:00.000Z',
+              group: { id: 'group-1', title: 'In progress' },
+              column_values: [{ id: 'status', type: 'color', text: 'In Progress' }, { id: 'priority', type: 'color', text: 'High' }, { id: 'owner', type: 'people', text: 'Robert' }]
+            }]
+          } }] } }
+        })
+    };
+    const client = new MondayWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'monday-access-token' })) }
+    });
+
+    const result = await client.fetchDelta({ connectorId: 'monday' }, '2026-07-09T11:00:00.000Z');
+
+    expect(http.post).toHaveBeenCalledTimes(2);
+    expect(http.post).toHaveBeenCalledWith(
+      'https://api.monday.com/v2',
+      expect.objectContaining({ query: expect.stringContaining('query SneupMondayBoards') }),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'monday-access-token', 'API-Version': '2025-10' }) })
+    );
+    const queries = http.post.mock.calls.map(call => call[1].query).join(' ');
+    expect(queries).not.toMatch(/mutation|create_|change_|delete_|update_/i);
+    expect(queries).not.toMatch(/updates|description|assets|file/i);
+    expect(result).toMatchObject({
+      nextCursor: '2026-07-09T12:00:00.000Z',
+      hasMore: false,
+      metadata: { source: 'monday_api', boards: 1, items: 1 }
+    });
+  });
+
+  test('monday.com normalization preserves board context without item descriptions', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'monday' }, {
+      id: 'item-1', name: 'Ship connector', url: 'https://monday.com/item-1', created_at: '2026-07-09T09:00:00.000Z', updated_at: '2026-07-09T12:00:00.000Z',
+      board: { id: 'board-1', name: 'Launch' }, group: { title: 'In progress' },
+      column_values: [{ type: 'color', text: 'In Progress' }, { type: 'color', text: 'High' }, { type: 'people', text: 'Robert' }]
+    });
+
+    expect(normalized).toMatchObject({
+      externalId: 'board:board-1:item-1', sourceType: 'task', title: 'Ship connector', description: '', status: 'in_progress', priority: 'high', owners: ['Robert'], labels: ['Launch', 'In progress']
     });
   });
 

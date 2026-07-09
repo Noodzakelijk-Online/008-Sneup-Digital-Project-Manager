@@ -8,7 +8,8 @@ const FIRST_WAVE_ADAPTERS = [
   'google_workspace',
   'microsoft_365',
   'linear',
-  'notion'
+  'notion',
+  'monday'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -19,6 +20,7 @@ const googleWorkspaceWorkSignalClient = require('./googleWorkspaceWorkSignalClie
 const microsoft365WorkSignalClient = require('./microsoft365WorkSignalClient');
 const linearWorkSignalClient = require('./linearWorkSignalClient');
 const notionWorkSignalClient = require('./notionWorkSignalClient');
+const mondayWorkSignalClient = require('./mondayWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -369,6 +371,36 @@ notionAdapter.capabilities.credentialBackedSync = true;
 notionAdapter.list = async (account) => (await notionWorkSignalClient.fetchDelta(account, null)).records;
 notionAdapter.fetchDelta = (account, cursor) => notionWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('notion', notionAdapter);
+
+const mondayColumnText = (item) => compact((item.column_values || []).map(column => column.text));
+const mondayAdapter = buildAdapter('monday', 'monday.com board item adapter', (account, item) => {
+  const columnText = mondayColumnText(item);
+  const people = (item.column_values || [])
+    .filter(column => /people|person/i.test(String(column.type || '')))
+    .flatMap(column => String(column.text || '').split(','));
+  const dueAt = (item.column_values || [])
+    .find(column => /date/i.test(String(column.type || '')))?.text;
+  return {
+    externalId: pick(item.externalId, `board:${item.board?.id || 'unknown'}:${item.id || 'unknown'}`),
+    sourceType: 'task',
+    title: pick(item.name, item.title),
+    description: '',
+    status: statusFromText(...columnText),
+    priority: priorityFromText(...columnText),
+    url: pick(item.url, item.board?.url),
+    owners: compact(people),
+    labels: compact([item.board?.name, item.group?.title]),
+    dueAt,
+    providerCreatedAt: pick(item.created_at, item.createdAt),
+    providerUpdatedAt: pick(item.updated_at, item.updatedAt, item.board?.updated_at),
+    evidenceRefs: baseEvidence(account, item, 'monday.com board item'),
+    raw: item
+  };
+});
+mondayAdapter.capabilities.credentialBackedSync = true;
+mondayAdapter.list = async (account) => (await mondayWorkSignalClient.fetchDelta(account, null)).records;
+mondayAdapter.fetchDelta = (account, cursor) => mondayWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('monday', mondayAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

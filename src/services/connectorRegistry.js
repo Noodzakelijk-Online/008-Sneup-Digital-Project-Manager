@@ -205,15 +205,15 @@ const CONNECTORS = [
     id: 'monday',
     name: 'monday.com',
     category: 'work_management',
-    description: 'Boards, groups, items, columns, updates, automations, users, and workspaces.',
+    description: 'Read-only monday.com board items with group, status, people, priority, and date metadata.',
     auth: oauth2({
       envPrefix: 'MONDAY',
       authorizationUrl: 'https://auth.monday.com/oauth2/authorize',
       tokenUrl: 'https://auth.monday.com/oauth2/token',
-      scopes: ['account:read', 'boards:read', 'users:read', 'updates:read'],
+      scopes: ['boards:read'],
       docsUrl: 'https://developer.monday.com/apps/docs/oauth'
     }),
-    sync: ['boards', 'items', 'columns', 'updates', 'users']
+    sync: ['boards', 'items']
   },
   {
     id: 'clickup',
