@@ -59,6 +59,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/models/WorkEvent');
     jest.dontMock('../src/models/WorkItem');
     jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/services/githubWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -394,6 +395,7 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('data-graph-dependency-review');
     expect(appJs).toContain('renderGraphReviewQuality(graph)');
     expect(appJs).toContain('provider retries');
+    expect(appJs).toContain('data-connector-sync');
     expect(appJs).toContain('renderGraphLedgerFilters(graphContext)');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
     expect(fs.readFileSync(path.join(rootDir, 'src', 'routes', 'workSignals.js'), 'utf8')).toContain("router.post('/graph/dependencies/:dependencyId/review'");
@@ -578,6 +580,48 @@ describe('connector registry', () => {
     expect(pageTwo.connectors).toHaveLength(3);
     expect(pageTwo.connectors[0]).not.toMatchObject(aliasResult.connectors[0]);
   });
+
+  test('decrypts connector credentials only for in-process sync and redacts private account metadata', () => {
+    const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
+    process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';
+
+    try {
+      const encryptedToken = accountConnectorService.encrypt('github-token-value');
+      const credentials = accountConnectorService.getAccountCredentials({
+        credentials: { accessToken: encryptedToken }
+      });
+      const account = accountConnectorService.sanitizeAccount({
+        _id: 'account-1',
+        workspaceId: 'workspace-1',
+        connectorId: 'github',
+        connectorName: 'GitHub',
+        category: 'software_delivery',
+        authType: 'oauth2',
+        status: 'connected',
+        credentials: { accessToken: encryptedToken },
+        metadata: {
+          workSignalCursor: '2026-07-10T00:00:00.000Z',
+          syncRecords: [{ title: 'Private issue payload' }],
+          lastWorkSignalSync: {
+            source: 'github_api',
+            signalCount: 4,
+            finishedAt: new Date('2026-07-10T00:00:00Z')
+          }
+        }
+      });
+
+      expect(credentials).toEqual({ accessToken: 'github-token-value' });
+      expect(account).not.toHaveProperty('credentials');
+      expect(account.metadata).toMatchObject({
+        lastWorkSignalSync: { source: 'github_api', signalCount: 4 }
+      });
+      expect(account.metadata).not.toHaveProperty('workSignalCursor');
+      expect(account.metadata).not.toHaveProperty('syncRecords');
+    } finally {
+      if (originalEncryptionKey === undefined) delete process.env.CONNECTOR_ENCRYPTION_KEY;
+      else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;
+    }
+  });
 });
 
 describe('work signal normalization', () => {
@@ -592,6 +636,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/models/WorkEvent');
     jest.dontMock('../src/models/WorkItem');
     jest.dontMock('../src/models/Recommendation');
+    jest.dontMock('../src/services/githubWorkSignalClient');
     jest.resetModules();
   });
 
@@ -695,6 +740,75 @@ describe('work signal normalization', () => {
     await expect(workSignalAdapterService.applyAction(account, {
       type: 'comment'
     })).rejects.toThrow('read-only');
+  });
+
+  test('GitHub adapter delegates live delta reads to its credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ node_id: 'ISSUE_1' }] });
+    jest.doMock('../src/services/githubWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'github' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('github').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
+    const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({
+          data: [{
+            id: 7,
+            node_id: 'R_7',
+            full_name: 'Noodzakelijk-Online/sneup',
+            html_url: 'https://github.com/Noodzakelijk-Online/sneup',
+            owner: { login: 'Noodzakelijk-Online' }
+          }],
+          headers: {}
+        })
+        .mockResolvedValueOnce({
+          data: [{
+            node_id: 'PR_9',
+            title: 'Ship live connector sync',
+            pull_request: {},
+            state: 'open',
+            updated_at: '2026-07-09T12:00:00Z'
+          }],
+          headers: {}
+        })
+    };
+    const credentials = { getAccountCredentials: jest.fn(() => ({ accessToken: 'test-token' })) };
+    const client = new GitHubWorkSignalClient({ http, accountConnectorService: credentials });
+    const originalEnv = { ...process.env };
+    process.env.SNEUP_GITHUB_MAX_REPOSITORIES = '3';
+    process.env.SNEUP_GITHUB_MAX_ITEMS_PER_REPOSITORY = '100';
+    process.env.SNEUP_GITHUB_MAX_TOTAL_ITEMS = '100';
+    process.env.SNEUP_GITHUB_CURSOR_LOOKBACK_MS = '60000';
+
+    try {
+      const result = await client.fetchDelta({ connectorId: 'github' }, '2026-07-09T11:30:00.000Z');
+
+      expect(http.get).toHaveBeenCalledTimes(2);
+      expect(http.get.mock.calls[0][0]).toBe('https://api.github.com/user/repos');
+      expect(http.get.mock.calls[1][0]).toBe('https://api.github.com/repos/Noodzakelijk-Online/sneup/issues');
+      expect(http.get.mock.calls[1][1].params.since).toBe('2026-07-09T11:29:00.000Z');
+      expect(http.get.mock.calls[1][1].headers.Authorization).toBe('Bearer test-token');
+      expect(result).toMatchObject({
+        nextCursor: '2026-07-09T12:00:00.000Z',
+        hasMore: false,
+        metadata: { source: 'github_api', repositories: 1 }
+      });
+      expect(result.records[0]).toMatchObject({
+        node_id: 'PR_9',
+        repository: { full_name: 'Noodzakelijk-Online/sneup' }
+      });
+    } finally {
+      process.env = originalEnv;
+    }
   });
 
   test('projects provider signals into normalized work graph records', () => {

@@ -1998,7 +1998,7 @@ function renderConnectors() {
   const selectedCategory = state.categories.find(category => category.id === state.category);
   els.connectorHeading.textContent = selectedCategory ? selectedCategory.name : 'All connectors';
 
-  const connectedIds = new Set(state.accounts.map(account => account.connectorId));
+  const accountsByConnectorId = new Map(state.accounts.map(account => [account.connectorId, account]));
   const filtered = state.connectors.filter((connector) => {
     const categoryMatch = state.category === 'all' || connector.category === state.category;
     const text = `${connector.name} ${connector.description} ${connector.categoryName}`.toLowerCase();
@@ -2007,10 +2007,13 @@ function renderConnectors() {
 
   els.connectorGrid.innerHTML = filtered.length === 0
     ? '<div class="empty">No connectors match this view.</div>'
-    : filtered.map(connector => renderConnector(connector, connectedIds.has(connector.id))).join('');
+    : filtered.map(connector => renderConnector(connector, accountsByConnectorId.get(connector.id))).join('');
 
   document.querySelectorAll('[data-connect]').forEach((button) => {
     button.addEventListener('click', () => startConnection(button.dataset.connect));
+  });
+  document.querySelectorAll('[data-connector-sync]').forEach((button) => {
+    button.addEventListener('click', () => syncConnectorAccount(button.dataset.connectorSync));
   });
 }
 
@@ -2031,10 +2034,17 @@ function renderCategories() {
   });
 }
 
-function renderConnector(connector, connected) {
+function renderConnector(connector, account) {
+  const connected = Boolean(account);
   const initials = connector.name.split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase();
   const configured = connector.auth.configured;
   const authLabel = connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type.replaceAll('_', ' ');
+  const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
+  const canSync = Boolean(account && contract?.adapterStatus === 'implemented');
+  const lastSync = account?.metadata?.lastWorkSignalSync || {};
+  const syncSummary = canSync && lastSync.finishedAt
+    ? `<div class="meta"><span>${lastSync.source === 'github_api' ? 'Live API' : 'Sync'} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}</div>`
+    : '';
   return `
     <div class="connector-card">
       <div class="connector-top">
@@ -2048,14 +2058,32 @@ function renderConnector(connector, connected) {
         <span class="pill ${connected ? 'connected' : configured ? 'review' : 'high'}">${connected ? 'connected' : configured ? 'ready' : 'setup'}</span>
       </div>
       <p>${escapeHtml(connector.description)}</p>
+      ${syncSummary}
       <div class="connector-actions">
         <span class="meta">${connector.sync.slice(0, 3).map(escapeHtml).join('  |  ')}</span>
+        ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         <button class="button ${configured || connector.auth.type !== 'oauth2' ? 'primary' : ''}" data-connect="${connector.id}" type="button">
-          ${connected ? 'Manage' : 'Connect'}
+          ${connected ? 'Reconnect' : 'Connect'}
         </button>
       </div>
     </div>
   `;
+}
+
+async function syncConnectorAccount(accountId) {
+  if (!accountId) return;
+  try {
+    const data = await fetchApi(`/api/work-signals/accounts/${accountId}/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const result = data.result || {};
+    openNotice('Connector synced', `${result.signalCount || 0} work signals updated${result.retryCount ? ` after ${result.retryCount} ${result.retryCount === 1 ? 'retry' : 'retries'}` : ''}.`);
+    await Promise.all([loadConnectors(), loadWorkSignals(), loadJobDashboard()]);
+  } catch (error) {
+    openNotice('Connector sync unavailable', error.message);
+  }
 }
 
 async function startConnection(connectorId) {

@@ -8,6 +8,7 @@ const FIRST_WAVE_ADAPTERS = [
   'google_workspace',
   'microsoft_365'
 ];
+const githubWorkSignalClient = require('./githubWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -193,7 +194,7 @@ adapters.set('slack', buildAdapter('slack', 'Slack message adapter', (account, m
   };
 }));
 
-adapters.set('github', buildAdapter('github', 'GitHub issue and pull request adapter', (account, item) => ({
+const githubAdapter = buildAdapter('github', 'GitHub issue and pull request adapter', (account, item) => ({
   externalId: pick(item.externalId, item.node_id, item.id, item.number),
   sourceType: item.pull_request || item.merge_commit_sha ? 'pull_request' : 'issue',
   title: pick(item.title, item.name),
@@ -208,7 +209,11 @@ adapters.set('github', buildAdapter('github', 'GitHub issue and pull request ada
   providerUpdatedAt: pick(item.providerUpdatedAt, item.updated_at, item.closed_at),
   evidenceRefs: baseEvidence(account, item, item.pull_request ? 'GitHub pull request' : 'GitHub issue'),
   raw: item
-})));
+}));
+githubAdapter.capabilities.credentialBackedSync = true;
+githubAdapter.list = async (account) => (await githubWorkSignalClient.fetchDelta(account, null)).records;
+githubAdapter.fetchDelta = (account, cursor) => githubWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('github', githubAdapter);
 
 adapters.set('google_workspace', buildAdapter('google_workspace', 'Google Workspace artifact adapter', (account, item) => {
   const mime = String(item.mimeType || item.kind || '').toLowerCase();

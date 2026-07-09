@@ -414,13 +414,50 @@ class AccountConnectorService {
       accountName: account.accountName,
       externalAccountId: account.externalAccountId,
       scopes: account.scopes || [],
-      metadata: account.metadata || {},
+      metadata: this.sanitizeAccountMetadata(account.metadata),
       lastValidatedAt: account.lastValidatedAt,
       lastSyncAt: account.lastSyncAt,
       lastError: account.lastError,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt
     };
+  }
+
+  sanitizeAccountMetadata(metadata = {}) {
+    const lastSync = metadata?.lastWorkSignalSync || {};
+    return {
+      fields: metadata?.fields || {},
+      sync: Array.isArray(metadata?.sync) ? metadata.sync : [],
+      workSignalAdapter: metadata?.workSignalAdapter,
+      lastWorkSignalSync: Object.keys(lastSync).length > 0 ? {
+        signalCount: Number(lastSync.signalCount || 0),
+        hasMore: Boolean(lastSync.hasMore),
+        retryCount: Number(lastSync.retryCount || 0),
+        rateLimitWaitMs: Number(lastSync.rateLimitWaitMs || 0),
+        attemptCount: Number(lastSync.attemptCount || 0),
+        source: lastSync.source || undefined,
+        repositories: Number(lastSync.repositories || 0),
+        finishedAt: lastSync.finishedAt
+      } : undefined
+    };
+  }
+
+  getAccountCredentials(account) {
+    const credentials = account?.credentials || {};
+    const result = {};
+
+    if (credentials.accessToken) result.accessToken = this.decrypt(credentials.accessToken);
+    if (credentials.refreshToken) result.refreshToken = this.decrypt(credentials.refreshToken);
+    if (credentials.apiKey) {
+      const decrypted = this.decrypt(credentials.apiKey);
+      try {
+        Object.assign(result, JSON.parse(decrypted));
+      } catch (error) {
+        result.apiKey = decrypted;
+      }
+    }
+
+    return result;
   }
 
   resolveWorkspaceId(workspaceId) {
@@ -518,6 +555,23 @@ class AccountConnectorService {
     const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
     return `${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString('base64url')}`;
+  }
+
+  decrypt(value) {
+    try {
+      const [encodedIv, encodedTag, encodedPayload] = String(value || '').split('.');
+      if (!encodedIv || !encodedTag || !encodedPayload) throw new Error('Invalid encrypted payload');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', this.getEncryptionKey(), Buffer.from(encodedIv, 'base64url'));
+      decipher.setAuthTag(Buffer.from(encodedTag, 'base64url'));
+      return Buffer.concat([
+        decipher.update(Buffer.from(encodedPayload, 'base64url')),
+        decipher.final()
+      ]).toString('utf8');
+    } catch (error) {
+      const credentialError = new Error('Connector credentials could not be decrypted. Reconnect this account to continue syncing.');
+      credentialError.statusCode = 503;
+      throw credentialError;
+    }
   }
 
   getEncryptionKey() {

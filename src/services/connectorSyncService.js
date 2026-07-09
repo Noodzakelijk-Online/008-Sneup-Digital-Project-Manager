@@ -142,6 +142,8 @@ class ConnectorSyncService {
         retryCount: syncResult.retryCount,
         rateLimitWaitMs: syncResult.rateLimitWaitMs,
         attemptCount: syncResult.attemptCount,
+        source: delta.metadata?.source,
+        repositories: delta.metadata?.repositories || 0,
         finishedAt: new Date()
       }
     };
