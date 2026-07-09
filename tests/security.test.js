@@ -393,6 +393,7 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('data-graph-filter');
     expect(appJs).toContain('data-graph-dependency-review');
     expect(appJs).toContain('renderGraphReviewQuality(graph)');
+    expect(appJs).toContain('provider retries');
     expect(appJs).toContain('renderGraphLedgerFilters(graphContext)');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
     expect(fs.readFileSync(path.join(rootDir, 'src', 'routes', 'workSignals.js'), 'utf8')).toContain("router.post('/graph/dependencies/:dependencyId/review'");
@@ -2693,6 +2694,40 @@ describe('autopilot command approval queue', () => {
 });
 
 describe('job observability', () => {
+  test('paces connector syncs and retries transient provider failures without busy looping', async () => {
+    const { ProviderSyncPolicyService } = require('../src/services/providerSyncPolicyService');
+    let clock = 1000;
+    const sleep = jest.fn(async (ms) => {
+      clock += ms;
+    });
+    const policy = new ProviderSyncPolicyService({
+      now: () => clock,
+      sleep
+    });
+    const fetchDelta = jest.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('Too many requests'), { statusCode: 429, retryAfterMs: 100 }))
+      .mockResolvedValueOnce({ records: [{ id: 'issue-1' }] });
+
+    const result = await policy.run('github', fetchDelta, {
+      minIntervalMs: 500,
+      maxRetries: 2,
+      retryBaseMs: 50,
+      retryMaxMs: 1000
+    });
+
+    expect(result).toMatchObject({
+      retryCount: 1,
+      attemptCount: 2,
+      rateLimitWaitMs: 400,
+      result: { records: [{ id: 'issue-1' }] }
+    });
+    expect(fetchDelta).toHaveBeenCalledTimes(2);
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([100, 400]);
+
+    await policy.run('github', async () => ({ records: [] }), { minIntervalMs: 500 });
+    expect(sleep.mock.calls.at(-1)[0]).toBe(500);
+  });
+
   test('builds job health with stale and failed classifications', () => {
     const jobObservabilityService = require('../src/services/jobObservabilityService');
     const now = new Date('2026-06-29T08:00:00Z');
@@ -2708,7 +2743,8 @@ describe('job observability', () => {
         durationMs: 60000,
         processedCount: 4,
         successCount: 4,
-        failureCount: 0
+        failureCount: 0,
+        metadata: { retryCount: 2, rateLimitWaitMs: 1500 }
       },
       {
         _id: 'run-2',
@@ -2745,6 +2781,7 @@ describe('job observability', () => {
     const interventions = dashboard.health.find(job => job.jobName === 'interventions.process_all');
 
     expect(incrementalSync.status).toBe('healthy');
+    expect(incrementalSync.metadata).toMatchObject({ retryCount: 2, rateLimitWaitMs: 1500 });
     expect(analytics.status).toBe('failed');
     expect(interventions.status).toBe('stale');
     expect(dashboard.summary.failedRuns).toBe(1);

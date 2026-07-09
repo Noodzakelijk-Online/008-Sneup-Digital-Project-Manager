@@ -77,6 +77,8 @@ const createWindow = async () => {
 
 const start = async () => {
   try {
+    // Packaged applications are read-only inside app.asar, so logs live with user data.
+    process.env.SNEUP_LOG_DIR = process.env.SNEUP_LOG_DIR || path.join(app.getPath('userData'), 'logs');
     const sneup = require('../src/index');
     await sneup.initApp();
     await waitForSneup();

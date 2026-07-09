@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const schedule = require('node-schedule');
 const ConnectorAccount = require('../models/ConnectorAccount');
 const jobObservabilityService = require('./jobObservabilityService');
+const providerSyncPolicyService = require('./providerSyncPolicyService');
 const workSignalAdapterService = require('./workSignalAdapterService');
 const workSignalService = require('./workSignalService');
 const logger = require('../utils/logger');
@@ -53,18 +54,32 @@ class ConnectorSyncService {
     let successCount = 0;
     let failureCount = 0;
     let signalCount = 0;
+    let retryCount = 0;
+    let rateLimitWaitMs = 0;
+    const providerStats = {};
 
     for (const account of accounts) {
       try {
         const result = await this.syncAccount(account, options);
         successCount += 1;
         signalCount += result.signalCount;
+        retryCount += result.retryCount || 0;
+        rateLimitWaitMs += result.rateLimitWaitMs || 0;
+        this.recordProviderStats(providerStats, result.connectorId, result);
       } catch (error) {
         failureCount += 1;
         account.status = 'failed';
-        account.lastError = error.message;
+        account.lastError = this.safeErrorMessage(error);
         await account.save();
-        logger.error(`Failed to sync connector account ${account._id}:`, error);
+        const policy = error.connectorSyncPolicy || {};
+        retryCount += policy.retryCount || 0;
+        rateLimitWaitMs += policy.rateLimitWaitMs || 0;
+        this.recordProviderStats(providerStats, account.connectorId, {
+          retryCount: policy.retryCount || 0,
+          rateLimitWaitMs: policy.rateLimitWaitMs || 0,
+          failed: true
+        });
+        logger.error(`Failed to sync connector account ${account._id}: ${this.safeErrorMessage(error)}`);
       }
     }
 
@@ -74,7 +89,10 @@ class ConnectorSyncService {
       failureCount,
       metadata: {
         signalCount,
-        adapterCount: connectorIds.length
+        adapterCount: connectorIds.length,
+        retryCount,
+        rateLimitWaitMs,
+        providerStats
       }
     };
   }
@@ -95,7 +113,12 @@ class ConnectorSyncService {
     }
 
     const cursor = account.metadata?.workSignalCursor || null;
-    const delta = await workSignalAdapterService.fetchDelta(account, cursor);
+    const syncResult = await providerSyncPolicyService.run(
+      account.connectorId,
+      () => workSignalAdapterService.fetchDelta(account, cursor),
+      options
+    );
+    const delta = syncResult.result || {};
     let signalCount = 0;
 
     for (const record of delta.records || []) {
@@ -116,6 +139,9 @@ class ConnectorSyncService {
       lastWorkSignalSync: {
         signalCount,
         hasMore: Boolean(delta.hasMore),
+        retryCount: syncResult.retryCount,
+        rateLimitWaitMs: syncResult.rateLimitWaitMs,
+        attemptCount: syncResult.attemptCount,
         finishedAt: new Date()
       }
     };
@@ -125,8 +151,34 @@ class ConnectorSyncService {
       accountId: String(account._id),
       connectorId: account.connectorId,
       signalCount,
-      nextCursor: delta.nextCursor || cursor
+      nextCursor: delta.nextCursor || cursor,
+      retryCount: syncResult.retryCount,
+      rateLimitWaitMs: syncResult.rateLimitWaitMs,
+      attemptCount: syncResult.attemptCount
     };
+  }
+
+  recordProviderStats(stats, connectorId, result = {}) {
+    const provider = connectorId || 'unknown';
+    const current = stats[provider] || {
+      accounts: 0,
+      failures: 0,
+      retryCount: 0,
+      rateLimitWaitMs: 0
+    };
+    current.accounts += 1;
+    current.failures += result.failed ? 1 : 0;
+    current.retryCount += result.retryCount || 0;
+    current.rateLimitWaitMs += result.rateLimitWaitMs || 0;
+    stats[provider] = current;
+  }
+
+  safeErrorMessage(error) {
+    const message = String(error?.response?.data?.message || error?.message || 'Connector sync failed');
+    return message
+      .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=:-]+/gi, '$1 [redacted]')
+      .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)=([^\s&]+)/gi, '$1=[redacted]')
+      .slice(0, 500);
   }
 
   requireDatabase() {

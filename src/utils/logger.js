@@ -2,8 +2,8 @@ const winston = require('winston');
 const path = require('path');
 const fs = require('fs');
 
-// Create logs directory if it doesn't exist
-const logsDir = path.join(__dirname, '../../logs');
+// Desktop builds provide a writable per-user location; server deployments keep local logs.
+const logsDir = process.env.SNEUP_LOG_DIR || path.join(__dirname, '../../logs');
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true });
 }

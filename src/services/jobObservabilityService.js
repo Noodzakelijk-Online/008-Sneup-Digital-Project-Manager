@@ -246,6 +246,7 @@ class JobObservabilityService {
         processedCount: latest?.processedCount || 0,
         successCount: latest?.successCount || 0,
         failureCount: latest?.failureCount || 0,
+        metadata: latest?.metadata || {},
         pausedAt: control?.pausedAt,
         pausedBy: control?.pausedBy || '',
         pausedReason: control?.pausedReason || ''

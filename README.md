@@ -177,7 +177,7 @@ See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, a
 - `POST /api/work-signals/graph/items/:itemId/queue` - Queue a graph item as an approval-gated recommendation
 - `POST /api/work-signals/graph/dependencies/:dependencyId/review` - Confirm, refresh, or dismiss a stale dependency edge inside Sneup without provider writes
 - `POST /api/work-signals/accounts/:accountId/upsert` - Upsert one normalized work signal from a linked connector account
-- `POST /api/work-signals/accounts/:accountId/sync` - Run a read-only adapter sync for one connected account
+- `POST /api/work-signals/accounts/:accountId/sync` - Run a read-only adapter sync for one connected account with bounded provider pacing and transient-failure retries
 
 ### Operations Ledger and Approvals
 
