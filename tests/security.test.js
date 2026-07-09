@@ -62,6 +62,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/workspaceScopeService');
     jest.dontMock('../src/services/githubWorkSignalClient');
     jest.dontMock('../src/services/trelloWorkSignalClient');
+    jest.dontMock('../src/services/jiraWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -624,6 +625,52 @@ describe('connector registry', () => {
       else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;
     }
   });
+
+  test('lists Jira sites with an in-process token and persists only the selected cloud ID', async () => {
+    const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
+    process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';
+    const originalHttp = accountConnectorService.http;
+    const get = jest.fn().mockResolvedValue({
+      data: [
+        { id: 'cloud-0001', name: 'Delivery', url: 'https://delivery.atlassian.net', scopes: ['read:jira-work'] },
+        { id: 'cloud-0002', name: 'Knowledge', url: 'https://knowledge.atlassian.net', scopes: ['read:confluence-content.all'] }
+      ]
+    });
+    accountConnectorService.http = { get };
+    const account = {
+      _id: 'account-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'jira_software',
+      connectorName: 'Jira Software',
+      category: 'software_delivery',
+      authType: 'oauth2',
+      status: 'failed',
+      credentials: { accessToken: accountConnectorService.encrypt('jira-token-value') },
+      metadata: { fields: {} },
+      save: jest.fn().mockResolvedValue(undefined)
+    };
+    const accountSpy = jest.spyOn(accountConnectorService, 'getManagedAccount').mockResolvedValue(account);
+
+    try {
+      const sites = await accountConnectorService.getJiraSites('account-1', { workspaceId: 'workspace-1' });
+      expect(sites).toEqual([{ cloudId: 'cloud-0001', name: 'Delivery', url: 'https://delivery.atlassian.net' }]);
+      expect(get).toHaveBeenCalledWith(
+        'https://api.atlassian.com/oauth/token/accessible-resources',
+        expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer jira-token-value' }) })
+      );
+
+      const selected = await accountConnectorService.selectJiraSite('account-1', 'cloud-0001', { workspaceId: 'workspace-1' });
+      expect(account.metadata.fields).toEqual({ cloudId: 'cloud-0001' });
+      expect(account.save).toHaveBeenCalledTimes(1);
+      expect(selected.metadata.fields).toEqual({ cloudId: 'cloud-0001' });
+      expect(selected).not.toHaveProperty('credentials');
+    } finally {
+      accountSpy.mockRestore();
+      accountConnectorService.http = originalHttp;
+      if (originalEncryptionKey === undefined) delete process.env.CONNECTOR_ENCRYPTION_KEY;
+      else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;
+    }
+  });
 });
 
 describe('work signal normalization', () => {
@@ -640,6 +687,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/models/Recommendation');
     jest.dontMock('../src/services/githubWorkSignalClient');
     jest.dontMock('../src/services/trelloWorkSignalClient');
+    jest.dontMock('../src/services/jiraWorkSignalClient');
     jest.resetModules();
   });
 
@@ -773,6 +821,21 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('trello').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Jira adapters delegate live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'issue-1' }] });
+    jest.doMock('../src/services/jiraWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'jira_software' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('jira_software').capabilities.credentialBackedSync).toBe(true);
+    expect(workSignalAdapterService.getAdapter('jira_service_management').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -882,6 +945,89 @@ describe('work signal normalization', () => {
       });
     } finally {
       process.env = originalEnv;
+    }
+  });
+
+  test('Jira API sync discovers one authorized site and reads bounded issue pages', async () => {
+    const { JiraWorkSignalClient } = require('../src/services/jiraWorkSignalClient');
+    const http = {
+      get: jest.fn().mockResolvedValue({
+        data: [{
+          id: 'cloud-1',
+          name: 'Delivery',
+          url: 'https://delivery.atlassian.net',
+          scopes: ['read:jira-work', 'read:jira-user']
+        }]
+      }),
+      post: jest.fn().mockResolvedValue({
+        data: {
+          issues: [{
+            id: '1001',
+            key: 'DEL-12',
+            fields: {
+              summary: 'Confirm release owner',
+              updated: '2026-07-09T12:00:00.000Z',
+              project: { key: 'DEL', name: 'Delivery' }
+            }
+          }]
+        }
+      })
+    };
+    const credentials = {
+      getAccountCredentials: jest.fn(() => ({ accessToken: 'jira-access-token' }))
+    };
+    const client = new JiraWorkSignalClient({ http, accountConnectorService: credentials });
+    const originalEnv = { ...process.env };
+    process.env.SNEUP_JIRA_MAX_ISSUES = '100';
+    process.env.SNEUP_JIRA_PAGE_SIZE = '50';
+    process.env.SNEUP_JIRA_CURSOR_LOOKBACK_MS = '60000';
+
+    try {
+      const result = await client.fetchDelta({ connectorId: 'jira_software' }, '2026-07-09T11:30:00.000Z');
+
+      expect(http.get).toHaveBeenCalledWith(
+        'https://api.atlassian.com/oauth/token/accessible-resources',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer jira-access-token' })
+        })
+      );
+      expect(http.post).toHaveBeenCalledWith(
+        'https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/search/jql',
+        expect.objectContaining({
+          maxResults: 50,
+          jql: expect.stringContaining('updated >= "2026-07-09 11:29"')
+        }),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer jira-access-token' })
+        })
+      );
+      expect(result).toMatchObject({
+        nextCursor: '2026-07-09T12:00:00.000Z',
+        hasMore: false,
+        metadata: { source: 'jira_api', sites: 1, cloudId: 'cloud-1' }
+      });
+      expect(result.records[0]).toMatchObject({
+        key: 'DEL-12',
+        url: 'https://delivery.atlassian.net/browse/DEL-12',
+        site: { id: 'cloud-1', name: 'Delivery' }
+      });
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  test('Jira sync rejects ambiguous multi-site access instead of choosing a workspace', () => {
+    const { JiraWorkSignalClient } = require('../src/services/jiraWorkSignalClient');
+    const client = new JiraWorkSignalClient({ accountConnectorService: {} });
+
+    expect(() => client.selectResource({}, [
+      { id: 'cloud-1', name: 'One' },
+      { id: 'cloud-2', name: 'Two' }
+    ])).toThrow('multiple sites');
+    try {
+      client.selectResource({}, [{ id: 'cloud-1' }, { id: 'cloud-2' }]);
+    } catch (error) {
+      expect(error.statusCode).toBe(409);
     }
   });
 

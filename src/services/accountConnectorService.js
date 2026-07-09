@@ -27,6 +27,47 @@ const clampPositiveInt = (value, defaultValue = 0, min = 0, max = Number.MAX_SAF
 };
 
 class AccountConnectorService {
+  constructor(options = {}) {
+    this.http = options.http || axios;
+  }
+
+  async getJiraSites(accountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireJiraAccount(account);
+    return this.fetchJiraSites(account);
+  }
+
+  async selectJiraSite(accountId, cloudId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireJiraAccount(account);
+    const requestedCloudId = String(cloudId || '').trim();
+    if (!/^[A-Za-z0-9-]{8,100}$/.test(requestedCloudId)) {
+      const error = new Error('A valid Jira cloud ID is required.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const sites = await this.fetchJiraSites(account);
+    const site = sites.find(item => item.cloudId === requestedCloudId);
+    if (!site) {
+      const error = new Error('That Jira site is no longer authorized for this account.');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: {
+        ...(account.metadata?.fields || {}),
+        cloudId: site.cloudId
+      }
+    };
+    account.status = 'connected';
+    account.lastError = undefined;
+    await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   getCatalog(filters = {}) {
     const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
     const filteredConnectors = this.filterConnectors(category, search);
@@ -284,6 +325,56 @@ class AccountConnectorService {
     return { success: true };
   }
 
+  async getManagedAccount(accountId, options = {}) {
+    this.requireDatabase();
+    const account = await ConnectorAccount.findOne({
+      _id: accountId,
+      workspaceId: this.resolveWorkspaceId(options.workspaceId)
+    });
+    if (!account) {
+      const error = new Error('Connector account not found');
+      error.statusCode = 404;
+      throw error;
+    }
+    return account;
+  }
+
+  requireJiraAccount(account) {
+    if (!['jira_software', 'jira_service_management'].includes(account.connectorId)) {
+      const error = new Error('Jira site selection is only available for Jira connector accounts.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  async fetchJiraSites(account) {
+    const credentials = this.getAccountCredentials(account);
+    const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
+    if (!accessToken) {
+      const error = new Error('Jira access token is missing. Reconnect this account to continue.');
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const apiUrl = String(process.env.SNEUP_JIRA_API_URL || 'https://api.atlassian.com').replace(/\/$/, '');
+    const response = await this.http.get(`${apiUrl}/oauth/token/accessible-resources`, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`
+      },
+      timeout: 15000
+    });
+
+    return (Array.isArray(response.data) ? response.data : [])
+      .filter(site => site?.id)
+      .filter(site => (site.scopes || []).some(scope => String(scope).startsWith('read:jira') || scope === 'read:servicedesk-data'))
+      .map(site => ({
+        cloudId: site.id,
+        name: String(site.name || site.url || site.id),
+        url: site.url || undefined
+      }));
+  }
+
   async markAccountValidated(accountId, options = {}) {
     this.requireDatabase();
 
@@ -438,6 +529,7 @@ class AccountConnectorService {
         source: lastSync.source || undefined,
         repositories: Number(lastSync.repositories || 0),
         boards: Number(lastSync.boards || 0),
+        sites: Number(lastSync.sites || 0),
         finishedAt: lastSync.finishedAt
       } : undefined
     };

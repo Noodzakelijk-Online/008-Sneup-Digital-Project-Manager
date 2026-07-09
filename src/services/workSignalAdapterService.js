@@ -10,6 +10,7 @@ const FIRST_WAVE_ADAPTERS = [
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
+const jiraWorkSignalClient = require('./jiraWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -160,8 +161,17 @@ const normalizeJira = (account, issue) => {
     raw: issue
   };
 };
-adapters.set('jira_software', buildAdapter('jira_software', 'Jira Software issue adapter', normalizeJira));
-adapters.set('jira_service_management', buildAdapter('jira_service_management', 'Jira Service Management request adapter', normalizeJira));
+const jiraSoftwareAdapter = buildAdapter('jira_software', 'Jira Software issue adapter', normalizeJira);
+jiraSoftwareAdapter.capabilities.credentialBackedSync = true;
+jiraSoftwareAdapter.list = async (account) => (await jiraWorkSignalClient.fetchDelta(account, null)).records;
+jiraSoftwareAdapter.fetchDelta = (account, cursor) => jiraWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('jira_software', jiraSoftwareAdapter);
+
+const jiraServiceManagementAdapter = buildAdapter('jira_service_management', 'Jira Service Management request adapter', normalizeJira);
+jiraServiceManagementAdapter.capabilities.credentialBackedSync = true;
+jiraServiceManagementAdapter.list = async (account) => (await jiraWorkSignalClient.fetchDelta(account, null)).records;
+jiraServiceManagementAdapter.fetchDelta = (account, cursor) => jiraWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('jira_service_management', jiraServiceManagementAdapter);
 
 adapters.set('asana', buildAdapter('asana', 'Asana task adapter', (account, task) => ({
   externalId: pick(task.externalId, task.gid, task.id),

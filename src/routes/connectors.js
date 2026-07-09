@@ -93,6 +93,36 @@ router.delete('/accounts/:accountId', requirePermission('connectors:manage'), as
   }
 });
 
+router.get('/accounts/:accountId/jira-sites', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const sites = await accountConnectorService.getJiraSites(req.params.accountId, connectorRequestOptions(req));
+    res.json({
+      success: true,
+      sites
+    });
+  } catch (error) {
+    logger.error('Failed to list Jira sites:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/jira-site', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.selectJiraSite(
+      req.params.accountId,
+      req.body.cloudId,
+      connectorRequestOptions(req)
+    );
+    res.json({
+      success: true,
+      account
+    });
+  } catch (error) {
+    logger.error('Failed to select Jira site:', error);
+    sendError(res, error);
+  }
+});
+
 router.get('/:connectorId', (req, res) => {
   try {
     const connector = accountConnectorService.getConnectorDetails(req.params.connectorId);

@@ -2015,6 +2015,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-connector-sync]').forEach((button) => {
     button.addEventListener('click', () => syncConnectorAccount(button.dataset.connectorSync));
   });
+  document.querySelectorAll('[data-jira-site]').forEach((button) => {
+    button.addEventListener('click', () => openJiraSiteModal(button.dataset.jiraSite));
+  });
 }
 
 function renderCategories() {
@@ -2041,12 +2044,15 @@ function renderConnector(connector, account) {
   const authLabel = connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type.replaceAll('_', ' ');
   const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
   const canSync = Boolean(account && contract?.adapterStatus === 'implemented');
+  const isJira = connector.id === 'jira_software' || connector.id === 'jira_service_management';
+  const selectedJiraCloudId = account?.metadata?.fields?.cloudId;
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
+      : lastSync.source === 'jira_api' ? 'Jira API'
       : 'Sync';
   const syncSummary = canSync && lastSync.finishedAt
-    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}</div>`
+    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}</div>`
     : '';
   return `
     <div class="connector-card">
@@ -2064,6 +2070,7 @@ function renderConnector(connector, account) {
       ${syncSummary}
       <div class="connector-actions">
         <span class="meta">${connector.sync.slice(0, 3).map(escapeHtml).join('  |  ')}</span>
+        ${isJira && account ? `<button class="button" data-jira-site="${escapeHtml(account.id)}" type="button">${selectedJiraCloudId ? 'Jira site selected' : 'Select Jira site'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         <button class="button ${configured || connector.auth.type !== 'oauth2' ? 'primary' : ''}" data-connect="${connector.id}" type="button">
           ${connected ? 'Reconnect' : 'Connect'}
@@ -2071,6 +2078,59 @@ function renderConnector(connector, account) {
       </div>
     </div>
   `;
+}
+
+async function openJiraSiteModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  try {
+    const data = await fetchApi(`/api/connectors/accounts/${accountId}/jira-sites`);
+    const sites = data.sites || [];
+    if (sites.length === 0) {
+      openNotice('Jira site selection', 'No Jira sites are currently authorized for this account. Reconnect it with Jira read access.');
+      return;
+    }
+
+    const selectedCloudId = account.metadata?.fields?.cloudId || (sites.length === 1 ? sites[0].cloudId : '');
+    els.modalTitle.textContent = 'Select Jira site';
+    els.modalBody.innerHTML = `
+      <form id="jiraSiteForm">
+        <div class="field">
+          <label for="jiraCloudId">Authorized Jira site</label>
+          <select id="jiraCloudId" name="cloudId" required>
+            <option value="" ${selectedCloudId ? '' : 'selected'} disabled>Select a site</option>
+            ${sites.map(site => `<option value="${escapeHtml(site.cloudId)}" ${site.cloudId === selectedCloudId ? 'selected' : ''}>${escapeHtml(site.name)}${site.url ? ` (${escapeHtml(site.url)})` : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div class="notice">Sneup will only ingest read-only work signals from the selected site.</div>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelJiraSite">Cancel</button>
+          <button class="button primary" type="submit">Use this site</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelJiraSite').addEventListener('click', closeModal);
+    document.getElementById('jiraSiteForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target).entries());
+      try {
+        await fetchApi(`/api/connectors/accounts/${accountId}/jira-site`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        closeModal();
+        openNotice('Jira site selected', 'Sneup will use this site for the next read-only sync.');
+        await loadConnectors();
+      } catch (error) {
+        openNotice('Jira site selection', error.message);
+      }
+    });
+  } catch (error) {
+    openNotice('Jira site selection', error.message);
+  }
 }
 
 async function syncConnectorAccount(accountId) {

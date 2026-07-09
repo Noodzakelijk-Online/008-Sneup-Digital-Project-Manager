@@ -83,7 +83,7 @@ const CONNECTORS = [
       authorizationUrl: 'https://auth.atlassian.com/authorize',
       tokenUrl: 'https://auth.atlassian.com/oauth/token',
       audience: 'api.atlassian.com',
-      scopes: ['read:jira-work', 'read:jira-user', 'write:jira-work', 'offline_access'],
+      scopes: ['read:jira-work', 'read:jira-user', 'offline_access'],
       docsUrl: 'https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/'
     }),
     sync: ['projects', 'issues', 'sprints', 'versions', 'comments', 'users']
@@ -98,7 +98,7 @@ const CONNECTORS = [
       authorizationUrl: 'https://auth.atlassian.com/authorize',
       tokenUrl: 'https://auth.atlassian.com/oauth/token',
       audience: 'api.atlassian.com',
-      scopes: ['read:jira-work', 'write:jira-work', 'read:servicedesk-data', 'offline_access'],
+      scopes: ['read:jira-work', 'read:servicedesk-data', 'offline_access'],
       docsUrl: 'https://developer.atlassian.com/cloud/jira/service-desk/rest/api-group-servicedesk/'
     }),
     sync: ['projects', 'queues', 'requests', 'incidents', 'customers', 'users']
