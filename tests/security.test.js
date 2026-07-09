@@ -61,6 +61,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/models/WorkItem');
     jest.dontMock('../src/services/workspaceScopeService');
     jest.dontMock('../src/services/githubWorkSignalClient');
+    jest.dontMock('../src/services/trelloWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -638,6 +639,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/models/WorkItem');
     jest.dontMock('../src/models/Recommendation');
     jest.dontMock('../src/services/githubWorkSignalClient');
+    jest.dontMock('../src/services/trelloWorkSignalClient');
     jest.resetModules();
   });
 
@@ -757,6 +759,20 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('github').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Trello adapter delegates live delta reads to its credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'card-1' }] });
+    jest.doMock('../src/services/trelloWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'trello' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('trello').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -806,6 +822,63 @@ describe('work signal normalization', () => {
       expect(result.records[0]).toMatchObject({
         node_id: 'PR_9',
         repository: { full_name: 'Noodzakelijk-Online/sneup' }
+      });
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  test('Trello API sync uses linked credentials with bounded read-only board and card requests', async () => {
+    const { TrelloWorkSignalClient } = require('../src/services/trelloWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({
+          data: [{
+            id: 'board-1',
+            name: 'Client Launch',
+            url: 'https://trello.com/b/board-1/client-launch'
+          }]
+        })
+        .mockResolvedValueOnce({
+          data: [{
+            id: 'card-1',
+            name: 'Confirm launch approval',
+            dateLastActivity: '2026-07-09T12:00:00Z',
+            labels: [{ name: 'P1' }],
+            members: [{ username: 'robert' }]
+          }]
+        })
+    };
+    const credentials = {
+      getAccountCredentials: jest.fn(() => ({ apiKey: 'test-key', apiToken: 'test-token' }))
+    };
+    const client = new TrelloWorkSignalClient({ http, accountConnectorService: credentials });
+    const originalEnv = { ...process.env };
+    process.env.SNEUP_TRELLO_MAX_BOARDS = '3';
+    process.env.SNEUP_TRELLO_MAX_CARDS_PER_BOARD = '100';
+    process.env.SNEUP_TRELLO_MAX_TOTAL_CARDS = '100';
+    process.env.SNEUP_TRELLO_CURSOR_LOOKBACK_MS = '60000';
+
+    try {
+      const result = await client.fetchDelta({ connectorId: 'trello' }, '2026-07-09T11:30:00.000Z');
+
+      expect(http.get).toHaveBeenCalledTimes(2);
+      expect(http.get.mock.calls[0][0]).toBe('https://api.trello.com/1/members/me/boards');
+      expect(http.get.mock.calls[1][0]).toBe('https://api.trello.com/1/boards/board-1/cards');
+      expect(http.get.mock.calls[1][1].params).toMatchObject({
+        key: 'test-key',
+        token: 'test-token',
+        limit: 100,
+        filter: 'all'
+      });
+      expect(result).toMatchObject({
+        nextCursor: '2026-07-09T12:00:00.000Z',
+        hasMore: false,
+        metadata: { source: 'trello_api', boards: 1 }
+      });
+      expect(result.records[0]).toMatchObject({
+        id: 'card-1',
+        board: { id: 'board-1', name: 'Client Launch' }
       });
     } finally {
       process.env = originalEnv;
@@ -2809,6 +2882,16 @@ describe('autopilot command approval queue', () => {
 });
 
 describe('job observability', () => {
+  test('redacts provider query credentials from connector sync errors', () => {
+    const connectorSyncService = require('../src/services/connectorSyncService');
+    const message = connectorSyncService.safeErrorMessage(new Error('Request failed: https://api.trello.com/1?key=api-secret&token=token-secret'));
+
+    expect(message).toContain('key=[redacted]');
+    expect(message).toContain('token=[redacted]');
+    expect(message).not.toContain('api-secret');
+    expect(message).not.toContain('token-secret');
+  });
+
   test('paces connector syncs and retries transient provider failures without busy looping', async () => {
     const { ProviderSyncPolicyService } = require('../src/services/providerSyncPolicyService');
     let clock = 1000;

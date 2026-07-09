@@ -419,6 +419,6 @@ For issues, questions, or feature requests, please open an issue on GitHub.
 
 ## Connector Sync Safety
 
-Connector work-signal ingestion is read-only. GitHub-linked accounts fetch accessible repositories plus issues and pull requests through the GitHub API; Sneup never writes to GitHub from this sync path. OAuth credentials stay encrypted at rest and are decrypted only in-process for the outbound provider call.
+Connector work-signal ingestion is read-only. Trello-linked accounts fetch accessible boards and cards through the Trello API; GitHub-linked accounts fetch accessible repositories plus issues and pull requests through the GitHub API. Sneup never writes to either provider from this sync path. Linked credentials stay encrypted at rest and are decrypted only in-process for the outbound provider call.
 
-GitHub syncs are deliberately bounded so one account cannot monopolize memory or provider quota. Configure `SNEUP_GITHUB_MAX_REPOSITORIES`, `SNEUP_GITHUB_MAX_ITEMS_PER_REPOSITORY`, and `SNEUP_GITHUB_MAX_TOTAL_ITEMS` for the expected workspace size. If a run reaches a configured cap, Sneup fails the sync visibly rather than silently advancing the cursor and dropping work.
+Provider syncs are deliberately bounded so one account cannot monopolize memory or provider quota. Configure `SNEUP_TRELLO_MAX_BOARDS`, `SNEUP_TRELLO_MAX_CARDS_PER_BOARD`, and `SNEUP_TRELLO_MAX_TOTAL_CARDS` for Trello workspaces, and `SNEUP_GITHUB_MAX_REPOSITORIES`, `SNEUP_GITHUB_MAX_ITEMS_PER_REPOSITORY`, and `SNEUP_GITHUB_MAX_TOTAL_ITEMS` for GitHub workspaces. If a run reaches a configured cap, Sneup fails the sync visibly rather than silently advancing the cursor and dropping work.

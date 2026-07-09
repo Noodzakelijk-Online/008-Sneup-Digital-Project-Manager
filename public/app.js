@@ -2042,8 +2042,11 @@ function renderConnector(connector, account) {
   const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
   const canSync = Boolean(account && contract?.adapterStatus === 'implemented');
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
+  const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
+    : lastSync.source === 'trello_api' ? 'Trello API'
+      : 'Sync';
   const syncSummary = canSync && lastSync.finishedAt
-    ? `<div class="meta"><span>${lastSync.source === 'github_api' ? 'Live API' : 'Sync'} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}</div>`
+    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}</div>`
     : '';
   return `
     <div class="connector-card">

@@ -9,6 +9,7 @@ const FIRST_WAVE_ADAPTERS = [
   'microsoft_365'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
+const trelloWorkSignalClient = require('./trelloWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -115,7 +116,7 @@ const buildAdapter = (connectorId, label, normalizer) => ({
 
 const adapters = new Map();
 
-adapters.set('trello', buildAdapter('trello', 'Trello card adapter', (account, card) => {
+const trelloAdapter = buildAdapter('trello', 'Trello card adapter', (account, card) => {
   const labels = labelNames(card.labels);
   return {
     externalId: pick(card.externalId, card.id, card.trelloId, card.shortLink),
@@ -133,7 +134,11 @@ adapters.set('trello', buildAdapter('trello', 'Trello card adapter', (account, c
     evidenceRefs: baseEvidence(account, card, 'Trello card'),
     raw: card
   };
-}));
+});
+trelloAdapter.capabilities.credentialBackedSync = true;
+trelloAdapter.list = async (account) => (await trelloWorkSignalClient.fetchDelta(account, null)).records;
+trelloAdapter.fetchDelta = (account, cursor) => trelloWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('trello', trelloAdapter);
 
 const normalizeJira = (account, issue) => {
   const fields = issue.fields || {};

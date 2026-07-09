@@ -144,6 +144,7 @@ class ConnectorSyncService {
         attemptCount: syncResult.attemptCount,
         source: delta.metadata?.source,
         repositories: delta.metadata?.repositories || 0,
+        boards: delta.metadata?.boards || 0,
         finishedAt: new Date()
       }
     };
@@ -179,7 +180,7 @@ class ConnectorSyncService {
     const message = String(error?.response?.data?.message || error?.message || 'Connector sync failed');
     return message
       .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=:-]+/gi, '$1 [redacted]')
-      .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)=([^\s&]+)/gi, '$1=[redacted]')
+      .replace(/\b(api[_-]?key|key|token|access[_-]?token|refresh[_-]?token|password|secret)=([^\s&]+)/gi, '$1=[redacted]')
       .slice(0, 500);
   }
 

@@ -437,6 +437,7 @@ class AccountConnectorService {
         attemptCount: Number(lastSync.attemptCount || 0),
         source: lastSync.source || undefined,
         repositories: Number(lastSync.repositories || 0),
+        boards: Number(lastSync.boards || 0),
         finishedAt: lastSync.finishedAt
       } : undefined
     };
