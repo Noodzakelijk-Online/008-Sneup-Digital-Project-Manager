@@ -1,6 +1,7 @@
 const winston = require('winston');
 const path = require('path');
 const fs = require('fs');
+const LOGGER_INSTANCE = Symbol.for('sneup.loggerInstance');
 
 // Desktop builds provide a writable per-user location; server deployments keep local logs.
 const logsDir = process.env.SNEUP_LOG_DIR || path.join(__dirname, '../../logs');
@@ -29,45 +30,45 @@ const consoleFormat = winston.format.combine(
   })
 );
 
-// Create logger instance
-const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: logFormat,
-  defaultMeta: { service: 'sneup' },
-  transports: [
-    // Write all logs to combined.log
-    new winston.transports.File({
-      filename: path.join(logsDir, 'combined.log'),
-      maxsize: 10485760, // 10MB
-      maxFiles: 5
-    }),
-    // Write errors to error.log
-    new winston.transports.File({
-      filename: path.join(logsDir, 'error.log'),
-      level: 'error',
-      maxsize: 10485760, // 10MB
-      maxFiles: 5
-    })
-  ],
-  exceptionHandlers: [
-    new winston.transports.File({
-      filename: path.join(logsDir, 'exceptions.log')
-    })
-  ],
-  rejectionHandlers: [
-    new winston.transports.File({
-      filename: path.join(logsDir, 'rejections.log')
-    })
-  ]
-});
+const createLogger = () => {
+  const logger = winston.createLogger({
+    level: process.env.LOG_LEVEL || 'info',
+    format: logFormat,
+    defaultMeta: { service: 'sneup' },
+    transports: [
+      new winston.transports.File({
+        filename: path.join(logsDir, 'combined.log'),
+        maxsize: 10485760,
+        maxFiles: 5
+      }),
+      new winston.transports.File({
+        filename: path.join(logsDir, 'error.log'),
+        level: 'error',
+        maxsize: 10485760,
+        maxFiles: 5
+      })
+    ],
+    exceptionHandlers: [
+      new winston.transports.File({
+        filename: path.join(logsDir, 'exceptions.log')
+      })
+    ],
+    rejectionHandlers: [
+      new winston.transports.File({
+        filename: path.join(logsDir, 'rejections.log')
+      })
+    ]
+  });
 
-// Add console transport in development
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(
-    new winston.transports.Console({
-      format: consoleFormat
-    })
-  );
-}
+  if (process.env.NODE_ENV !== 'production') {
+    logger.add(new winston.transports.Console({ format: consoleFormat }));
+  }
+
+  return logger;
+};
+
+// Winston installs global exception handlers, so reuse one logger across module reloads.
+const logger = process[LOGGER_INSTANCE] || createLogger();
+if (!process[LOGGER_INSTANCE]) process[LOGGER_INSTANCE] = logger;
 
 module.exports = logger;

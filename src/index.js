@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const compression = require('compression');
 const path = require('path');
 const logger = require('./utils/logger');
+const { registerProcessHandlers } = require('./utils/processHandlers');
 const { connectDatabase, getDatabaseStatus } = require('./utils/database');
 const {
   apiRateLimit,
@@ -213,28 +214,8 @@ const initApp = async () => {
   }
 };
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully...');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  logger.info('SIGINT received, shutting down gracefully...');
-  process.exit(0);
-});
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught exception:', error);
-  process.exit(1);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled rejection at:', promise, 'reason:', reason);
-  process.exit(1);
-});
+// Process handlers are global: register once even when Sneup is embedded or hot-reloaded.
+registerProcessHandlers(logger);
 
 if (require.main === module) {
   initApp();

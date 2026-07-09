@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const EventEmitter = require('events');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const path = require('path');
@@ -2970,6 +2971,34 @@ describe('job observability', () => {
 });
 
 describe('optional AI startup', () => {
+  test('registers global process handlers only once across module reloads', () => {
+    const { registerProcessHandlers } = require('../src/utils/processHandlers');
+    const runtime = new EventEmitter();
+    const logger = { info: jest.fn(), error: jest.fn() };
+    const exit = jest.fn();
+
+    expect(registerProcessHandlers(logger, { runtime, exit })).toBe(true);
+    expect(registerProcessHandlers(logger, { runtime, exit })).toBe(false);
+    expect(runtime.listeners('SIGTERM')).toHaveLength(1);
+    expect(runtime.listeners('SIGINT')).toHaveLength(1);
+    expect(runtime.listeners('uncaughtException')).toHaveLength(1);
+    expect(runtime.listeners('unhandledRejection')).toHaveLength(1);
+  });
+
+  test('reuses the Winston logger across module reloads without adding process listeners', () => {
+    const first = require('../src/utils/logger');
+    const afterFirst = {
+      uncaughtException: process.listeners('uncaughtException').length,
+      unhandledRejection: process.listeners('unhandledRejection').length
+    };
+    jest.resetModules();
+    const second = require('../src/utils/logger');
+
+    expect(second).toBe(first);
+    expect(process.listeners('uncaughtException')).toHaveLength(afterFirst.uncaughtException);
+    expect(process.listeners('unhandledRejection')).toHaveLength(afterFirst.unhandledRejection);
+  });
+
   test('loads without OPENAI_API_KEY', () => {
     delete process.env.OPENAI_API_KEY;
     jest.resetModules();
