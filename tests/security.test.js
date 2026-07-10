@@ -772,6 +772,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/clickupWorkSignalClient');
     jest.dontMock('../src/services/azureDevOpsWorkSignalClient');
     jest.dontMock('../src/services/wrikeWorkSignalClient');
+    jest.dontMock('../src/services/smartsheetWorkSignalClient');
     jest.resetModules();
   });
 
@@ -1063,6 +1064,20 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('wrike').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Smartsheet adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'row-1' }] });
+    jest.doMock('../src/services/smartsheetWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'smartsheet' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('smartsheet').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1843,6 +1858,69 @@ describe('work signal normalization', () => {
     expect(normalized).toMatchObject({
       externalId: 'task-1', sourceType: 'task', title: 'Ship Wrike sync', description: '', status: 'open', priority: 'high', owners: ['user-1'], labels: ['Sneup delivery', 'Active']
     });
+  });
+
+  test('Smartsheet sync reads bounded selected row fields without attachments, discussions, or arbitrary cell data', async () => {
+    jest.dontMock('../src/services/smartsheetWorkSignalClient');
+    jest.resetModules();
+    const { SmartsheetWorkSignalClient } = require('../src/services/smartsheetWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { data: [{ id: 1001, name: 'Launch plan', owner: 'Robert', ownerId: 3, permalink: 'https://app.smartsheet.com/sheets/launch' }], totalPages: 1, totalCount: 1 } })
+        .mockResolvedValueOnce({ data: { data: [
+          { id: 10, title: 'Task name', primary: true },
+          { id: 11, title: 'Status' },
+          { id: 12, title: 'Priority' },
+          { id: 13, title: 'Assigned to' },
+          { id: 14, title: 'Due date' },
+          { id: 15, title: 'Private notes' }
+        ] } })
+        .mockResolvedValueOnce({ data: { rows: [{
+          id: 501, createdAt: '2026-07-09T09:00:00.000Z', modifiedAt: '2026-07-09T12:00:00.000Z',
+          cells: [
+            { columnId: 10, value: 'Ship Smartsheet sync' }, { columnId: 11, value: 'In Progress' }, { columnId: 12, value: 'High' },
+            { columnId: 13, displayValue: 'Robert; Nina' }, { columnId: 14, value: '2026-07-15' }, { columnId: 15, value: 'Do not ingest this detail' }
+          ]
+        }], totalPages: 1, totalCount: 1 } })
+    };
+    const client = new SmartsheetWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'smartsheet-token' })) }
+    });
+
+    const result = await client.fetchDelta({ connectorId: 'smartsheet' }, '2026-07-09T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith(
+      'https://api.smartsheet.com/2.0/sheets',
+      expect.objectContaining({ params: expect.objectContaining({ page: 1, pageSize: 25 }), headers: expect.objectContaining({ Authorization: 'Bearer smartsheet-token' }) })
+    );
+    expect(http.get).toHaveBeenCalledWith(
+      'https://api.smartsheet.com/2.0/sheets/1001/columns',
+      expect.objectContaining({ params: expect.objectContaining({ page: 1, pageSize: 100 }) })
+    );
+    expect(http.get).toHaveBeenCalledWith(
+      'https://api.smartsheet.com/2.0/sheets/1001',
+      expect.objectContaining({ params: expect.objectContaining({ rowsModifiedSince: expect.any(String), columnIds: '10,11,12,13,14' }) })
+    );
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/attachment|discussion|objectvalue|rowpermalink|notes/i);
+    expect(http).not.toHaveProperty('post');
+    expect(result).toMatchObject({ metadata: { source: 'smartsheet_api', projects: 1, items: 1 }, hasMore: false, nextCursor: '2026-07-09T12:00:00.000Z' });
+    expect(result.records[0]).toMatchObject({ title: 'Ship Smartsheet sync', owners: ['Robert', 'Nina'], sheet: { id: '1001', name: 'Launch plan' } });
+    expect(JSON.stringify(result.records[0])).not.toContain('Do not ingest this detail');
+  });
+
+  test('Smartsheet normalization preserves selected task context without row descriptions', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'smartsheet' }, {
+      externalId: 'sheet:1001:row:501', title: 'Ship Smartsheet sync', status: 'In Progress', priority: 'High', owners: ['Robert'], dueAt: '2026-07-15',
+      createdAt: '2026-07-09T09:00:00.000Z', modifiedAt: '2026-07-09T12:00:00.000Z', sheet: { id: '1001', name: 'Launch plan', permalink: 'https://app.smartsheet.com/sheets/launch' }
+    });
+
+    expect(normalized).toMatchObject({
+      externalId: 'sheet:1001:row:501', sourceType: 'task', title: 'Ship Smartsheet sync', description: '', status: 'in_progress', priority: 'high', owners: ['Robert'], labels: ['Launch plan', 'In Progress']
+    });
+    expect(normalized.raw.sheet).toMatchObject({ id: '1001', name: 'Launch plan' });
   });
 
   test('projects provider signals into normalized work graph records', () => {

@@ -12,7 +12,8 @@ const FIRST_WAVE_ADAPTERS = [
   'monday',
   'clickup',
   'azure_devops',
-  'wrike'
+  'wrike',
+  'smartsheet'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -27,6 +28,7 @@ const mondayWorkSignalClient = require('./mondayWorkSignalClient');
 const clickUpWorkSignalClient = require('./clickupWorkSignalClient');
 const azureDevOpsWorkSignalClient = require('./azureDevOpsWorkSignalClient');
 const wrikeWorkSignalClient = require('./wrikeWorkSignalClient');
+const smartsheetWorkSignalClient = require('./smartsheetWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -487,6 +489,27 @@ wrikeAdapter.capabilities.credentialBackedSync = true;
 wrikeAdapter.list = async (account) => (await wrikeWorkSignalClient.fetchDelta(account, null)).records;
 wrikeAdapter.fetchDelta = (account, cursor) => wrikeWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('wrike', wrikeAdapter);
+
+const smartsheetAdapter = buildAdapter('smartsheet', 'Smartsheet row adapter', (account, row) => ({
+  externalId: pick(row.externalId, row.id),
+  sourceType: 'task',
+  title: pick(row.title, row.name),
+  description: '',
+  status: statusFromText(row.status),
+  priority: priorityFromText(row.priority),
+  url: pick(row.url, row.sheet?.permalink),
+  owners: userNames(row.owners),
+  labels: compact([row.sheet?.name, row.status]),
+  dueAt: pick(row.dueAt),
+  providerCreatedAt: pick(row.createdAt),
+  providerUpdatedAt: pick(row.modifiedAt),
+  evidenceRefs: baseEvidence(account, row, 'Smartsheet row'),
+  raw: row
+}));
+smartsheetAdapter.capabilities.credentialBackedSync = true;
+smartsheetAdapter.list = async (account) => (await smartsheetWorkSignalClient.fetchDelta(account, null)).records;
+smartsheetAdapter.fetchDelta = (account, cursor) => smartsheetWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('smartsheet', smartsheetAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
