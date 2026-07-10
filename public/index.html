@@ -22,6 +22,7 @@
         <button data-view-button="connectors">Connectors <span class="nav-count" id="connectorCount">0</span></button>
         <button data-view-button="enhancements">Enhancements <span class="nav-count" id="enhancementCount">0</span></button>
         <button data-view-button="signals">Signals <span class="nav-count" id="workSignalCount">0</span></button>
+        <button data-view-button="forecasts">Forecasts <span class="nav-count" id="forecastCount">0</span></button>
         <button data-view-button="reports">Reports <span class="nav-count" id="reportCount">4</span></button>
         <button data-view-button="workspaces">Workspaces <span class="nav-count" id="workspaceCount">1</span></button>
       </nav>
@@ -315,6 +316,39 @@
           </div>
           <div class="panel-body">
             <div class="list" id="reportList"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="forecastsView">
+        <div class="metrics" id="forecastMetrics"></div>
+        <div class="ledger-layout">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Delivery Range</h2>
+              <span class="pill review" id="forecastMode">loading</span>
+            </div>
+            <div class="panel-body">
+              <div class="list" id="portfolioForecast"></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Capacity Assumptions</h2>
+              <span class="pill" id="forecastCapacityCount">0 people</span>
+            </div>
+            <div class="panel-body">
+              <div class="list" id="forecastCapacity"></div>
+            </div>
+          </section>
+        </div>
+        <section class="panel board-panel">
+          <div class="panel-head">
+            <h2>Board Forecasts</h2>
+            <span class="pill review" id="forecastBoardCount">0 boards</span>
+          </div>
+          <div class="panel-body">
+            <div class="connector-grid" id="forecastBoards"></div>
           </div>
         </section>
       </section>

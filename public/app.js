@@ -26,6 +26,7 @@ const state = {
   enhancementArea: 'all',
   enhancementStatus: 'all',
   reports: [],
+  forecast: null,
   ledger: {
     decisions: [],
     recommendations: [],
@@ -91,6 +92,14 @@ const els = {
   reportCount: document.getElementById('reportCount'),
   reportMode: document.getElementById('reportMode'),
   reportList: document.getElementById('reportList'),
+  forecastCount: document.getElementById('forecastCount'),
+  forecastMetrics: document.getElementById('forecastMetrics'),
+  forecastMode: document.getElementById('forecastMode'),
+  forecastCapacityCount: document.getElementById('forecastCapacityCount'),
+  forecastCapacity: document.getElementById('forecastCapacity'),
+  portfolioForecast: document.getElementById('portfolioForecast'),
+  forecastBoardCount: document.getElementById('forecastBoardCount'),
+  forecastBoards: document.getElementById('forecastBoards'),
   workSignalCount: document.getElementById('workSignalCount'),
   workSignalMetrics: document.getElementById('workSignalMetrics'),
   workSignalList: document.getElementById('workSignalList'),
@@ -181,6 +190,7 @@ function showView(viewName) {
     connectors: 'Account connectors',
     enhancements: 'Enhancement backlog',
     signals: 'Cross-tool work signals',
+    forecasts: 'Capacity and delivery forecasts',
     reports: 'Stakeholder reports',
     workspaces: 'Workspace administration'
   };
@@ -257,6 +267,7 @@ async function loadAll() {
     loadJobDashboard(),
     loadConnectors(),
     loadEnhancements(),
+    loadForecast(),
     loadReports(),
     loadWorkSignals(),
     loadOperationsLedger(),
@@ -273,6 +284,145 @@ async function loadReports() {
     state.reports = [];
     renderReports(error.message);
   }
+}
+
+async function loadForecast() {
+  try {
+    const data = await fetchApi('/api/forecasts');
+    state.forecast = data.forecast || null;
+    renderForecast();
+  } catch (error) {
+    state.forecast = null;
+    renderForecast(error.message);
+  }
+}
+
+function renderForecast(errorMessage = '') {
+  const forecast = state.forecast;
+  if (!forecast) {
+    els.forecastCount.textContent = '0';
+    els.forecastMode.textContent = 'unavailable';
+    els.forecastMode.className = 'pill critical';
+    els.forecastMetrics.innerHTML = '';
+    els.portfolioForecast.innerHTML = `<div class="empty">${escapeHtml(errorMessage || 'Forecast unavailable')}</div>`;
+    els.forecastCapacity.innerHTML = '';
+    els.forecastBoards.innerHTML = '';
+    return;
+  }
+
+  const portfolio = forecast.portfolio || {};
+  const members = forecast.memberCapacity || [];
+  const boards = forecast.boards || [];
+  els.forecastCount.textContent = String(boards.filter(board => board.health !== 'on_track').length);
+  els.forecastMode.textContent = forecast.mode === 'demo' ? 'demo' : 'analysis only';
+  els.forecastMode.className = `pill ${forecast.mode === 'demo' ? 'review' : 'healthy'}`;
+  els.forecastCapacityCount.textContent = `${members.length} people`;
+  els.forecastBoardCount.textContent = `${boards.length} boards`;
+  els.forecastMetrics.innerHTML = [
+    ['P50 delivery', formatForecastDate(portfolio.p50?.date)],
+    ['P80 delivery', formatForecastDate(portfolio.p80?.date)],
+    ['Forecast confidence', `${portfolio.confidence || 0}%`],
+    ['Open cards', portfolio.openCards || 0],
+    ['Weekly capacity', `${portfolio.weeklyAvailableHours || 0}h`],
+    ['Estimated work', `${portfolio.workHours || 0}h`]
+  ].map(([label, value]) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
+  els.portfolioForecast.innerHTML = renderForecastSummary(portfolio);
+  els.forecastCapacity.innerHTML = listOrEmpty(members, renderCapacityMember);
+  els.forecastBoards.innerHTML = listOrEmpty(boards, renderBoardForecast);
+  document.querySelectorAll('[data-capacity-member]').forEach((button) => {
+    button.addEventListener('click', () => openCapacityEditor(button.dataset.capacityMember));
+  });
+}
+
+function formatForecastDate(value) {
+  if (!value) return 'Needs capacity';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Needs capacity' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function renderForecastSummary(forecast = {}) {
+  return `
+    <div class="item forecast-summary">
+      <div class="item-title">
+        <strong>${escapeHtml(forecast.boardName || 'Portfolio')}</strong>
+        <span class="pill ${forecast.health === 'at_risk' ? 'high' : forecast.health === 'watch' ? 'review' : 'healthy'}">${escapeHtml(forecast.health || 'unknown')}</span>
+      </div>
+      <div class="meta"><span>P50 ${escapeHtml(formatForecastDate(forecast.p50?.date))}</span><span>P80 ${escapeHtml(formatForecastDate(forecast.p80?.date))}</span><span>${forecast.openCards || 0} open cards</span><span>${forecast.utilizationPercent ?? 'n/a'}% modeled load</span></div>
+      <div class="meta">${escapeHtml(forecast.confidenceLabel || 'low evidence')} confidence: forecast uses explicit capacity and uncertainty assumptions.</div>
+      ${(forecast.risks || []).length ? `<div class="forecast-risks">${forecast.risks.map(risk => `<span class="pill high">${escapeHtml(risk)}</span>`).join('')}</div>` : ''}
+      <details class="payload"><summary>Assumptions</summary><div class="forecast-assumptions">${(forecast.assumptions || []).map(item => `<p>${escapeHtml(item)}</p>`).join('')}</div></details>
+    </div>
+  `;
+}
+
+function renderBoardForecast(forecast = {}) {
+  return `
+    <article class="connector-card forecast-card">
+      <div class="connector-top"><div><h3>${escapeHtml(forecast.boardName || 'Board')}</h3><p>${forecast.openCards || 0} open cards and ${forecast.workHours || 0} modeled work hours.</p></div><span class="pill ${forecast.health === 'at_risk' ? 'high' : forecast.health === 'watch' ? 'review' : 'healthy'}">${escapeHtml(forecast.health || 'unknown')}</span></div>
+      <div class="forecast-dates"><span><strong>P50</strong>${escapeHtml(formatForecastDate(forecast.p50?.date))}</span><span><strong>P80</strong>${escapeHtml(formatForecastDate(forecast.p80?.date))}</span><span><strong>Confidence</strong>${forecast.confidence || 0}%</span></div>
+      <div class="meta">${(forecast.risks || []).slice(0, 2).map(escapeHtml).join(' | ') || 'No material delivery risk detected.'}</div>
+    </article>
+  `;
+}
+
+function renderCapacityMember(member = {}) {
+  const editable = Boolean(state.securityContext?.permissions?.includes('capacity:manage'));
+  return `
+    <div class="item">
+      <div class="item-title"><strong>${escapeHtml(member.name || 'Team member')}</strong><span class="pill ${member.configured ? 'healthy' : 'review'}">${member.configured ? 'configured' : 'default'}</span></div>
+      <div class="meta"><span>${member.weeklyAvailableHours || 0}h/week</span><span>${member.dailyAvailableHours || 0}h/day</span><span>${member.allocationPercent || 0}% allocation</span><span>${member.focusHoursPerWeek || 0}h focus</span>${member.timeOffHours ? `<span>${member.timeOffHours}h planned time off</span>` : ''}</div>
+      <div class="meta">Historical card effort: ${member.historicalCardHours || 0}h. ${(member.skills || []).map(escapeHtml).join(' | ') || 'No skills recorded.'}</div>
+      ${editable ? `<div class="item-actions"><button class="button" type="button" data-capacity-member="${escapeHtml(member.memberId)}">Edit capacity</button></div>` : ''}
+    </div>
+  `;
+}
+
+function openCapacityEditor(memberId) {
+  const member = (state.forecast?.memberCapacity || []).find(item => String(item.memberId) === String(memberId));
+  if (!member) return;
+  els.modalTitle.textContent = `Capacity: ${member.name || 'team member'}`;
+  els.modalBody.innerHTML = `
+    <form id="capacityProfileForm">
+      <div class="notice">Capacity updates are analysis inputs only. They do not change any provider account or work item.</div>
+      <div class="field"><label for="capacityWeeklyHours">Weekly hours</label><input id="capacityWeeklyHours" name="weeklyHours" type="number" min="1" max="80" value="${escapeHtml(member.weeklyHours || 32)}" required></div>
+      <div class="field"><label for="capacityAllocation">Allocation percentage</label><input id="capacityAllocation" name="allocationPercent" type="number" min="0" max="100" value="${escapeHtml(member.allocationPercent ?? 100)}" required></div>
+      <div class="field"><label for="capacityFocus">Focus hours per week</label><input id="capacityFocus" name="focusHoursPerWeek" type="number" min="0" max="80" value="${escapeHtml(member.focusHoursPerWeek || 0)}" required></div>
+      <div class="field"><label for="capacitySkills">Skills (comma-separated)</label><input id="capacitySkills" name="skills" type="text" value="${escapeHtml((member.skills || []).join(', '))}"></div>
+      <div class="field"><label for="capacityTimeOff">Planned time off (one YYYY-MM-DD to YYYY-MM-DD range per line)</label><textarea id="capacityTimeOff" name="timeOff">${escapeHtml((member.timeOff || []).map(item => `${String(item.startDate || '').slice(0, 10)} to ${String(item.endDate || '').slice(0, 10)}${item.label ? ` | ${item.label}` : ''}`).join('\n'))}</textarea></div>
+      <div class="toolbar modal-actions"><button class="button" type="button" id="cancelCapacityEdit">Cancel</button><button class="button primary" type="submit">Save capacity</button></div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelCapacityEdit').addEventListener('click', closeModal);
+  document.getElementById('capacityProfileForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      await fetchApi(`/api/forecasts/capacity/${memberId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          weeklyHours: form.elements.weeklyHours.value,
+          allocationPercent: form.elements.allocationPercent.value,
+          focusHoursPerWeek: form.elements.focusHoursPerWeek.value,
+          skills: form.elements.skills.value.split(',').map(skill => skill.trim()).filter(Boolean),
+          timeOff: form.elements.timeOff.value.split('\n').map((line) => {
+            const [range, label] = line.split('|');
+            const [startDate, endDate] = range.split(/\s+to\s+/i).map(value => value.trim());
+            return startDate && endDate ? { startDate, endDate, label: label?.trim() || '' } : null;
+          }).filter(Boolean)
+        })
+      });
+      closeModal();
+      await loadForecast();
+      openNotice('Capacity saved', 'Sneup refreshed the analysis-only delivery forecast.');
+    } catch (error) {
+      submit.disabled = false;
+      openNotice('Capacity update failed', error.message);
+    }
+  });
 }
 
 function renderReports(errorMessage = '') {

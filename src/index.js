@@ -39,6 +39,7 @@ const securityRoutes = require('./routes/security');
 const workspaceRoutes = require('./routes/workspaces');
 const workSignalRoutes = require('./routes/workSignals');
 const reportRoutes = require('./routes/reports');
+const forecastRoutes = require('./routes/forecasts');
 
 // Initialize Express app
 const app = express();
@@ -118,6 +119,7 @@ app.use('/api/security', securityRoutes);
 app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/work-signals', workSignalRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/forecasts', forecastRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -137,7 +139,8 @@ app.get('/', (req, res) => {
       'Operations ledger',
       'Job observability',
       'Cross-tool work signals',
-      'Accountability reports'
+      'Accountability reports',
+      'Capacity-aware P50/P80 delivery forecasts'
     ]
   });
 });

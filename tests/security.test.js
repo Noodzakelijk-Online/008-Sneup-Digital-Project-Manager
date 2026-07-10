@@ -421,6 +421,62 @@ describe('external evidence URL boundary', () => {
   });
 });
 
+describe('capacity-aware forecasting', () => {
+  test('returns P50 and P80 delivery ranges with capacity assumptions and uncertainty risks', () => {
+    const { buildForecast } = require('../src/services/forecastService');
+    const now = new Date('2026-07-06T09:00:00.000Z');
+    const forecast = buildForecast({
+      now,
+      boards: [{ _id: 'board-1', name: 'Launch' }],
+      members: [{ _id: 'member-1', username: 'milan', fullName: 'Milan', averageCompletionTime: 5 }],
+      profiles: [{
+        _id: 'profile-1', memberId: 'member-1', weeklyHours: 32, allocationPercent: 75, focusHoursPerWeek: 4,
+        timeOff: [{ startDate: '2026-07-13', endDate: '2026-07-14', label: 'Leave' }], skills: ['engineering']
+      }],
+      performances: [{ memberId: 'member-1', metrics: { averageCycleTime: 5 } }],
+      cards: [
+        { _id: 'card-1', boardId: 'board-1', members: ['member-1'], riskLevel: 'medium' },
+        { _id: 'card-2', boardId: 'board-1', members: [], riskLevel: 'high', due: '2026-07-04T09:00:00.000Z' }
+      ]
+    });
+
+    expect(forecast.portfolio).toMatchObject({
+      boardName: 'Portfolio',
+      openCards: 2,
+      health: 'at_risk',
+      confidenceLabel: expect.any(String)
+    });
+    expect(forecast.portfolio.p50.businessDays).toBeGreaterThan(0);
+    expect(forecast.portfolio.p80.businessDays).toBeGreaterThanOrEqual(forecast.portfolio.p50.businessDays);
+    expect(forecast.portfolio.risks.join(' ')).toContain('no accountable owner');
+    expect(forecast.portfolio.assumptions.join(' ')).toContain('P80 adds');
+    expect(forecast.memberCapacity[0]).toMatchObject({
+      configured: true,
+      allocationPercent: 75,
+      timeOffHours: expect.any(Number),
+      historicalCardHours: 5
+    });
+    expect(forecast.boards[0]).toMatchObject({ boardId: 'board-1', boardName: 'Launch' });
+  });
+
+  test('keeps a forecast directional when data is incomplete instead of inventing certainty', () => {
+    const { buildForecast } = require('../src/services/forecastService');
+    const forecast = buildForecast({
+      now: new Date('2026-07-06T09:00:00.000Z'),
+      boards: [{ _id: 'board-1', name: 'Launch' }],
+      members: [],
+      profiles: [],
+      performances: [],
+      cards: [{ _id: 'card-1', boardId: 'board-1', members: [], riskLevel: 'critical' }]
+    });
+
+    expect(forecast.portfolio.p50).toBeNull();
+    expect(forecast.portfolio.p80).toBeNull();
+    expect(forecast.portfolio.confidence).toBeLessThan(50);
+    expect(forecast.portfolio.health).toBe('watch');
+  });
+});
+
 describe('dashboard content security policy', () => {
   test('serves dashboard behavior from external assets without inline script or style allowances', () => {
     const rootDir = path.join(__dirname, '..');
@@ -434,6 +490,8 @@ describe('dashboard content security policy', () => {
     expect(html).toContain('<script src="/app.js" defer></script>');
     expect(html).toContain('id="signalsView"');
     expect(html).toContain('id="workSignalList"');
+    expect(html).toContain('id="forecastsView"');
+    expect(html).toContain('id="forecastBoards"');
     expect(appJs).toContain("fetchApi('/api/work-signals?limit=100')");
     expect(appJs).toContain('data-recommendation-evidence');
     expect(appJs).toContain('/api/recommendations/${recommendationId}/evidence');
@@ -443,6 +501,8 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('loadPayloadReviewContext');
     expect(appJs).toContain('New accountable owner');
     expect(appJs).toContain('Target Trello list');
+    expect(appJs).toContain("fetchApi('/api/forecasts')");
+    expect(appJs).toContain('Capacity and delivery forecasts');
     expect(appJs).toContain('data-graph-filter');
     expect(appJs).toContain('data-graph-dependency-review');
     expect(appJs).toContain('renderGraphReviewQuality(graph)');
@@ -450,6 +510,7 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('data-connector-sync');
     expect(appJs).toContain('renderGraphLedgerFilters(graphContext)');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
+    expect(server).toContain("app.use('/api/forecasts', forecastRoutes)");
     expect(fs.readFileSync(path.join(rootDir, 'src', 'routes', 'workSignals.js'), 'utf8')).toContain("router.post('/graph/dependencies/:dependencyId/review'");
     expect(recommendationRoutes).toContain("router.get('/:recommendationId/evidence'");
     expect(html).not.toMatch(/<style[\s>]/i);
