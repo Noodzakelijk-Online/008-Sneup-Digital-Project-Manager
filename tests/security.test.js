@@ -776,6 +776,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/airtableWorkSignalClient');
     jest.dontMock('../src/services/todoistWorkSignalClient');
     jest.dontMock('../src/services/shortcutWorkSignalClient');
+    jest.dontMock('../src/services/bitbucketWorkSignalClient');
     jest.resetModules();
   });
 
@@ -1115,6 +1116,18 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('shortcut').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Bitbucket adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'issue:1' }] });
+    jest.doMock('../src/services/bitbucketWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'bitbucket' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('bitbucket').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -2048,6 +2061,64 @@ describe('work signal normalization', () => {
       externalId: '42', sourceType: 'issue', title: 'Ship Shortcut sync', description: '', status: 'blocked', priority: 'critical', owners: ['member-1'], labels: ['Sneup delivery', 'feature']
     });
     expect(normalized.raw).toMatchObject({ dependencies: ['41'], dependents: ['43'] });
+  });
+
+  test('Bitbucket sync reads bounded repository issue and pull-request metadata without descriptions, comments, diffs, or provider writes', async () => {
+    jest.dontMock('../src/services/bitbucketWorkSignalClient');
+    jest.resetModules();
+    const { BitbucketWorkSignalClient } = require('../src/services/bitbucketWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { values: [{ uuid: '{repo-1}', full_name: 'noodzakelijk/sneup', name: 'Sneup', slug: 'sneup', updated_on: '2026-07-10T08:00:00.000Z', links: { html: { href: 'https://bitbucket.org/noodzakelijk/sneup' } } }] } })
+        .mockResolvedValueOnce({ data: { values: [{ id: 7, title: 'Ship Bitbucket sync', state: 'open', priority: 'major', kind: 'bug', assignee: { display_name: 'Robert' }, created_on: '2026-07-09T09:00:00.000Z', updated_on: '2026-07-10T10:00:00.000Z', content: { raw: 'Private issue detail' }, links: { html: { href: 'https://bitbucket.org/noodzakelijk/sneup/issues/7' } } }] } })
+        .mockResolvedValueOnce({ data: { values: [{ id: 8, title: 'Review provider sync', state: 'OPEN', author: { display_name: 'Nina' }, reviewers: [{ display_name: 'Robert' }], created_on: '2026-07-09T10:00:00.000Z', updated_on: '2026-07-10T11:00:00.000Z', description: 'Private PR detail', links: { html: { href: 'https://bitbucket.org/noodzakelijk/sneup/pull-requests/8' } } }] } })
+    };
+    const client = new BitbucketWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'bitbucket-token' })) } });
+    const account = { connectorId: 'bitbucket', metadata: { fields: { workspace: 'noodzakelijk' } } };
+    const result = await client.fetchDelta(account, '2026-07-10T09:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://api.bitbucket.org/2.0/repositories/noodzakelijk', expect.objectContaining({ params: expect.objectContaining({ page: 1, pagelen: 20 }), headers: expect.objectContaining({ Authorization: 'Bearer bitbucket-token' }) }));
+    expect(http.get).toHaveBeenCalledWith('https://api.bitbucket.org/2.0/repositories/noodzakelijk/sneup/issues', expect.objectContaining({ params: expect.objectContaining({ page: 1, pagelen: 100 }) }));
+    expect(http.get).toHaveBeenCalledWith('https://api.bitbucket.org/2.0/repositories/noodzakelijk/sneup/pullrequests', expect.objectContaining({ params: expect.objectContaining({ state: 'OPEN', page: 1, pagelen: 100 }) }));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/comment|diff|deployment|description|content/i);
+    expect(JSON.stringify(result.records)).not.toContain('Private issue detail');
+    expect(JSON.stringify(result.records)).not.toContain('Private PR detail');
+    expect(result).toMatchObject({ metadata: { source: 'bitbucket_api', repositories: 1, items: 2 }, hasMore: false, nextCursor: '2026-07-10T11:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'issue:7', owners: ['Robert'], repository: expect.objectContaining({ fullName: 'noodzakelijk/sneup' }) }),
+      expect.objectContaining({ id: 'pull_request:8', owners: ['Nina', 'Robert'] })
+    ]));
+  });
+
+  test('Bitbucket sync fails closed at its configured repository cap before reading issues or pull requests', async () => {
+    jest.dontMock('../src/services/bitbucketWorkSignalClient');
+    jest.resetModules();
+    const { BitbucketWorkSignalClient } = require('../src/services/bitbucketWorkSignalClient');
+    const previousLimit = process.env.SNEUP_BITBUCKET_MAX_REPOSITORIES;
+    process.env.SNEUP_BITBUCKET_MAX_REPOSITORIES = '1';
+    const http = { get: jest.fn().mockResolvedValue({ data: { values: [{ full_name: 'noodzakelijk/one', slug: 'one' }], next: 'https://api.bitbucket.org/2.0/repositories/noodzakelijk?page=2' } }) };
+    const client = new BitbucketWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'bitbucket-token' })) } });
+    try {
+      await expect(client.fetchDelta({ metadata: { fields: { workspace: 'noodzakelijk' } } })).rejects.toMatchObject({ statusCode: 413 });
+      expect(http.get).toHaveBeenCalledTimes(1);
+      expect(http.get.mock.calls[0][0]).toBe('https://api.bitbucket.org/2.0/repositories/noodzakelijk');
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_BITBUCKET_MAX_REPOSITORIES;
+      else process.env.SNEUP_BITBUCKET_MAX_REPOSITORIES = previousLimit;
+    }
+  });
+
+  test('Bitbucket normalization preserves issue and pull-request context without content fields', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'bitbucket' }, {
+      id: 'issue:7', sourceType: 'issue', title: 'Ship Bitbucket sync', status: 'open', priority: 'major', kind: 'bug', owners: ['Robert'],
+      createdAt: '2026-07-09T09:00:00.000Z', updatedAt: '2026-07-10T10:00:00.000Z', url: 'https://bitbucket.org/noodzakelijk/sneup/issues/7', repository: { fullName: 'noodzakelijk/sneup' }
+    });
+    expect(normalized).toMatchObject({
+      externalId: 'issue:7', sourceType: 'issue', title: 'Ship Bitbucket sync', description: '', status: 'open', priority: 'high', owners: ['Robert'], labels: ['noodzakelijk/sneup', 'bug', 'issue']
+    });
   });
 
   test('projects provider signals into normalized work graph records', () => {

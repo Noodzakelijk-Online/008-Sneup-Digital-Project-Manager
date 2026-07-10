@@ -14,7 +14,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut'
+  'airtable', 'todoist', 'shortcut', 'bitbucket'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -33,6 +33,7 @@ const smartsheetWorkSignalClient = require('./smartsheetWorkSignalClient');
 const airtableWorkSignalClient = require('./airtableWorkSignalClient');
 const todoistWorkSignalClient = require('./todoistWorkSignalClient');
 const shortcutWorkSignalClient = require('./shortcutWorkSignalClient');
+const bitbucketWorkSignalClient = require('./bitbucketWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -545,6 +546,23 @@ shortcutAdapter.capabilities.credentialBackedSync = true;
 shortcutAdapter.list = async account => (await shortcutWorkSignalClient.fetchDelta(account, null)).records;
 shortcutAdapter.fetchDelta = (account, cursor) => shortcutWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('shortcut', shortcutAdapter);
+const bitbucketPriority = (value) => {
+  const priority = String(value || '').toLowerCase();
+  if (priority === 'blocker' || priority === 'critical') return 'critical';
+  if (priority === 'major') return 'high';
+  if (priority === 'minor' || priority === 'trivial') return 'low';
+  return priorityFromText(priority);
+};
+const bitbucketAdapter = buildAdapter('bitbucket', 'Bitbucket work item adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'issue'), title: pick(item.title), description: '',
+  status: statusFromText(item.status), priority: bitbucketPriority(item.priority), url: pick(item.url, item.repository?.url), owners: userNames(item.owners),
+  labels: compact([item.repository?.fullName, item.kind, item.sourceType]), providerCreatedAt: pick(item.createdAt),
+  providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Bitbucket work item'), raw: item
+}));
+bitbucketAdapter.capabilities.credentialBackedSync = true;
+bitbucketAdapter.list = async account => (await bitbucketWorkSignalClient.fetchDelta(account, null)).records;
+bitbucketAdapter.fetchDelta = (account, cursor) => bitbucketWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('bitbucket', bitbucketAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
