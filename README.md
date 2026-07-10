@@ -183,7 +183,7 @@ See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, a
 - `POST /api/work-signals/accounts/:accountId/upsert` - Upsert one normalized work signal from a linked connector account
 - `POST /api/work-signals/accounts/:accountId/sync` - Run a read-only adapter sync for one connected account with bounded provider pacing and transient-failure retries
 
-Live credential-backed ingestion is available for Trello, Jira, Asana, Slack, GitHub, Google Workspace, Microsoft 365, Linear, Notion, monday.com, and ClickUp. The monday.com reader uses the `boards:read` scope only, reads board and item metadata through the GraphQL API, excludes item descriptions and updates, and fails visibly at configured board or item limits rather than silently skipping work. The ClickUp reader syncs authorized-workspace task metadata with bounded pages and update-time lookback, discarding task descriptions before graph storage.
+Live credential-backed ingestion is available for Trello, Jira, Asana, Slack, GitHub, Google Workspace, Microsoft 365, Linear, Notion, monday.com, ClickUp, and Azure DevOps. The monday.com reader uses the `boards:read` scope only, reads board and item metadata through the GraphQL API, excludes item descriptions and updates, and fails visibly at configured board or item limits rather than silently skipping work. The ClickUp reader syncs authorized-workspace task metadata with bounded pages and update-time lookback, discarding task descriptions before graph storage. The Azure DevOps reader uses a PAT restricted to Work Items Read, requires a public `https://dev.azure.com/organization` URL, runs bounded WIQL reads, and retrieves selected work-item fields plus relation metadata only.
 
 ### Operations Ledger and Approvals
 

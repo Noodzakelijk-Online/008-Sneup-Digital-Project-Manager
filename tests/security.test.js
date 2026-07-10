@@ -770,6 +770,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/slackWorkSignalClient');
     jest.dontMock('../src/services/googleWorkspaceWorkSignalClient');
     jest.dontMock('../src/services/clickupWorkSignalClient');
+    jest.dontMock('../src/services/azureDevOpsWorkSignalClient');
     jest.resetModules();
   });
 
@@ -861,9 +862,10 @@ describe('work signal normalization', () => {
       'linear',
       'notion',
       'monday',
-      'clickup'
+      'clickup',
+      'azure_devops'
     ]));
-    expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(12);
+    expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(13);
     expect(normalized).toMatchObject({
       externalId: 'PR_kwDO123',
       sourceType: 'pull_request',
@@ -1032,6 +1034,20 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('clickup').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Azure DevOps adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: '42' }] });
+    jest.doMock('../src/services/azureDevOpsWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'azure_devops' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('azure_devops').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1706,6 +1722,61 @@ describe('work signal normalization', () => {
     expect(normalized).toMatchObject({
       externalId: 'workspace:team-1:task:task-1', sourceType: 'task', title: 'Ship ClickUp sync', description: '', status: 'in_progress', priority: 'high', owners: ['Robert'], labels: ['Sneup workspace', 'Platform', 'Delivery', 'Connector work', 'connector']
     });
+  });
+
+  test('Azure DevOps sync executes bounded WIQL reads and selected-field work-item batches only', async () => {
+    jest.dontMock('../src/services/azureDevOpsWorkSignalClient');
+    jest.resetModules();
+    const { AzureDevOpsWorkSignalClient } = require('../src/services/azureDevOpsWorkSignalClient');
+    const http = {
+      get: jest.fn().mockResolvedValue({ data: { value: [{ id: 'project-1', name: 'Sneup' }] } }),
+      post: jest.fn()
+        .mockResolvedValueOnce({ data: { workItems: [{ id: 42 }] } })
+        .mockResolvedValueOnce({ data: { value: [{
+          id: 42,
+          fields: {
+            'System.Title': 'Ship Azure DevOps sync', 'System.WorkItemType': 'Task', 'System.State': 'Active',
+            'System.AssignedTo': { displayName: 'Robert' }, 'System.Tags': 'connector; platform',
+            'System.CreatedDate': '2026-07-09T09:00:00.000Z', 'System.ChangedDate': '2026-07-09T12:00:00.000Z',
+            'Microsoft.VSTS.Common.Priority': 2, 'System.TeamProject': 'Sneup', 'System.AreaPath': 'Sneup\\Platform', 'System.IterationPath': 'Sneup\\Sprint 1'
+          },
+          relations: [{ rel: 'System.LinkTypes.Dependency-Reverse', url: 'https://dev.azure.com/no/_apis/wit/workItems/41' }]
+        }] } })
+    };
+    const client = new AzureDevOpsWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'azure-pat' })) }
+    });
+
+    const result = await client.fetchDelta({ connectorId: 'azure_devops', metadata: { fields: { organizationUrl: 'https://dev.azure.com/noodzakelijk' } } }, '2026-07-09T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith(
+      'https://dev.azure.com/noodzakelijk/_apis/projects',
+      expect.objectContaining({ params: expect.objectContaining({ 'api-version': '7.1', '$top': 25 }) })
+    );
+    expect(http.post.mock.calls[0][0]).toBe('https://dev.azure.com/noodzakelijk/Sneup/_apis/wit/wiql');
+    expect(http.post.mock.calls[0][1].query).toContain('SELECT [System.Id] FROM WorkItems');
+    expect(http.post.mock.calls[1][0]).toBe('https://dev.azure.com/noodzakelijk/Sneup/_apis/wit/workitemsbatch');
+    expect(http.post.mock.calls[1][1]).toMatchObject({ ids: [42], '$expand': 'Relations', errorPolicy: 'Omit' });
+    expect(http.post.mock.calls[1][1].fields).not.toContain('System.Description');
+    const requestPaths = http.post.mock.calls.map(call => call[0]).join(' ');
+    expect(requestPaths).not.toMatch(/create|delete|comment/i);
+    expect(result).toMatchObject({ metadata: { source: 'azure_devops_api', projects: 1, items: 1 }, hasMore: false });
+    expect(result.records[0]).toMatchObject({ id: '42', dependencies: ['41'] });
+  });
+
+  test('Azure DevOps normalization preserves work-item metadata and provider-native dependencies without descriptions', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'azure_devops' }, {
+      id: '42', title: 'Ship Azure DevOps sync', workItemType: 'Task', status: 'Active', priority: 2,
+      assignee: { displayName: 'Robert' }, tags: ['connector'], project: { name: 'Sneup' }, areaPath: 'Sneup\\Platform', iterationPath: 'Sneup\\Sprint 1',
+      dependencies: ['41'], changedDate: '2026-07-09T12:00:00.000Z', url: 'https://dev.azure.com/noodzakelijk/Sneup/_workitems/edit/42'
+    });
+
+    expect(normalized).toMatchObject({
+      externalId: '42', sourceType: 'task', title: 'Ship Azure DevOps sync', description: '', status: 'in_progress', priority: 'high', owners: ['Robert'], labels: ['Sneup', 'Task', 'Sneup\\Platform', 'Sneup\\Sprint 1', 'connector']
+    });
+    expect(normalized.raw.dependencies).toEqual(['41']);
   });
 
   test('projects provider signals into normalized work graph records', () => {

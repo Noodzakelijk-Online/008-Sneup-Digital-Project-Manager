@@ -10,7 +10,8 @@ const FIRST_WAVE_ADAPTERS = [
   'linear',
   'notion',
   'monday',
-  'clickup'
+  'clickup',
+  'azure_devops'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -23,6 +24,7 @@ const linearWorkSignalClient = require('./linearWorkSignalClient');
 const notionWorkSignalClient = require('./notionWorkSignalClient');
 const mondayWorkSignalClient = require('./mondayWorkSignalClient');
 const clickUpWorkSignalClient = require('./clickupWorkSignalClient');
+const azureDevOpsWorkSignalClient = require('./azureDevOpsWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -425,6 +427,34 @@ clickUpAdapter.capabilities.credentialBackedSync = true;
 clickUpAdapter.list = async (account) => (await clickUpWorkSignalClient.fetchDelta(account, null)).records;
 clickUpAdapter.fetchDelta = (account, cursor) => clickUpWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('clickup', clickUpAdapter);
+
+const azureDevOpsPriority = (value) => ({ 1: 'critical', 2: 'high', 3: 'normal', 4: 'low' }[Number(value)] || 'unknown');
+const azureDevOpsStatus = (item) => {
+  const status = String(item.status || '').toLowerCase();
+  if (/(closed|completed|done|resolved)/.test(status) || item.closedDate) return 'done';
+  if (/(active|doing|progress|started)/.test(status)) return 'in_progress';
+  return statusFromText(status);
+};
+const azureDevOpsAdapter = buildAdapter('azure_devops', 'Azure DevOps work item adapter', (account, item) => ({
+  externalId: pick(item.externalId, item.id),
+  sourceType: /bug|issue/i.test(String(item.workItemType || '')) ? 'issue' : 'task',
+  title: pick(item.title, item.name),
+  description: '',
+  status: azureDevOpsStatus(item),
+  priority: priorityFromText(azureDevOpsPriority(item.priority), item.tags),
+  url: pick(item.url),
+  owners: userNames(item.assignee),
+  labels: compact([item.project?.name, item.workItemType, item.areaPath, item.iterationPath, ...labelNames(item.tags)]),
+  dueAt: pick(item.dueDate),
+  providerCreatedAt: pick(item.createdDate),
+  providerUpdatedAt: pick(item.changedDate, item.closedDate),
+  evidenceRefs: baseEvidence(account, item, 'Azure DevOps work item'),
+  raw: item
+}));
+azureDevOpsAdapter.capabilities.credentialBackedSync = true;
+azureDevOpsAdapter.list = async (account) => (await azureDevOpsWorkSignalClient.fetchDelta(account, null)).records;
+azureDevOpsAdapter.fetchDelta = (account, cursor) => azureDevOpsWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('azure_devops', azureDevOpsAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
