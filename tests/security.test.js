@@ -773,6 +773,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/azureDevOpsWorkSignalClient');
     jest.dontMock('../src/services/wrikeWorkSignalClient');
     jest.dontMock('../src/services/smartsheetWorkSignalClient');
+    jest.dontMock('../src/services/airtableWorkSignalClient');
     jest.resetModules();
   });
 
@@ -1078,6 +1079,18 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('smartsheet').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Airtable adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'rec-1' }] });
+    jest.doMock('../src/services/airtableWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'airtable' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('airtable').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1921,6 +1934,19 @@ describe('work signal normalization', () => {
       externalId: 'sheet:1001:row:501', sourceType: 'task', title: 'Ship Smartsheet sync', description: '', status: 'in_progress', priority: 'high', owners: ['Robert'], labels: ['Launch plan', 'In Progress']
     });
     expect(normalized.raw.sheet).toMatchObject({ id: '1001', name: 'Launch plan' });
+  });
+
+  test('Airtable sync only requests explicit fields with bounded read-only record pages', async () => {
+    jest.dontMock('../src/services/airtableWorkSignalClient');
+    jest.resetModules();
+    const { AirtableWorkSignalClient } = require('../src/services/airtableWorkSignalClient');
+    const http = { get: jest.fn().mockResolvedValue({ data: { records: [{ id: 'rec-1', createdTime: '2026-07-10T08:00:00.000Z', fields: { Task: 'Ship Airtable sync', Status: 'In Progress', Priority: 'High', Owner: 'Robert', Due: '2026-07-15', PrivateNotes: 'Never retain this' } }] } }) };
+    const client = new AirtableWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'airtable-token' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { baseId: 'app123', tableName: 'Tasks', fieldNames: 'Task, Status, Priority, Owner, Due' } } });
+    expect(http.get).toHaveBeenCalledWith('https://api.airtable.com/v0/app123/Tasks', expect.objectContaining({ params: expect.objectContaining({ 'fields[]': ['Task', 'Status', 'Priority', 'Owner', 'Due'], pageSize: 100 }), headers: expect.objectContaining({ Authorization: 'Bearer airtable-token' }) }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records[0])).not.toContain('Never retain this');
+    expect(result).toMatchObject({ metadata: { source: 'airtable_api', projects: 1, items: 1 }, hasMore: false });
   });
 
   test('projects provider signals into normalized work graph records', () => {
