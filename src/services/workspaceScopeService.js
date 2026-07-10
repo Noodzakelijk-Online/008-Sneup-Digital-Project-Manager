@@ -29,6 +29,7 @@ const WorkEvent = require('../models/WorkEvent');
 const WorkItem = require('../models/WorkItem');
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i;
+const DEFAULT_BACKFILL_CONCURRENCY = 4;
 
 const getDefaultWorkspaceKey = () => Workspace.defaultWorkspaceKey();
 const getDefaultWorkspaceName = () => Workspace.defaultWorkspaceName();
@@ -67,6 +68,64 @@ const defaultWorkspaceQuery = (query = {}) => ({
   workspaceId: getDefaultWorkspaceObjectId()
 });
 
+const workspaceScopedModels = [
+  ['boards', Board],
+  ['cards', Card],
+  ['lists', List],
+  ['members', Member],
+  ['comments', Comment],
+  ['analytics', Analytics],
+  ['interventions', Intervention],
+  ['learning', Learning],
+  ['performance', Performance],
+  ['conversations', Conversation],
+  ['connectorAccounts', ConnectorAccount],
+  ['recommendations', Recommendation],
+  ['approvals', Approval],
+  ['decisionQueueItems', DecisionQueueItem],
+  ['trelloActionAttempts', TrelloActionAttempt],
+  ['auditEvents', AuditEvent],
+  ['followUpPlans', FollowUpPlan],
+  ['workerResponses', WorkerResponse],
+  ['cardFindings', CardFinding],
+  ['boardHealthSnapshots', BoardHealthSnapshot],
+  ['workActors', WorkActor],
+  ['workComments', WorkComment],
+  ['workContainers', WorkContainer],
+  ['workDependencies', WorkDependency],
+  ['workEvents', WorkEvent],
+  ['workItems', WorkItem]
+];
+
+const missingWorkspaceQuery = () => ({
+  $or: [
+    { workspaceId: { $exists: false } },
+    { workspaceId: null }
+  ]
+});
+
+const getBackfillConcurrency = (value = process.env.SNEUP_WORKSPACE_BACKFILL_CONCURRENCY) => {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_BACKFILL_CONCURRENCY;
+  return Math.min(Math.max(parsed, 1), 16);
+};
+
+const mapWithConcurrency = async (items, concurrency, worker) => {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length || 1);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
+  }));
+
+  return results;
+};
+
 const ensureDefaultWorkspace = async () => {
   const workspaceId = getDefaultWorkspaceObjectId();
   const key = getDefaultWorkspaceKey();
@@ -91,56 +150,62 @@ const ensureDefaultWorkspace = async () => {
 
 const backfillModelWorkspace = async (Model, workspaceId) => {
   const result = await Model.updateMany(
-    {
-      $or: [
-        { workspaceId: { $exists: false } },
-        { workspaceId: null }
-      ]
-    },
+    missingWorkspaceQuery(),
     { $set: { workspaceId } }
   );
 
   return result.modifiedCount || result.nModified || 0;
 };
 
-const backfillDefaultWorkspace = async () => {
-  const workspaceId = getDefaultWorkspaceObjectId();
-  await ensureDefaultWorkspace();
+const inspectDefaultWorkspaceBackfill = async ({
+  models = workspaceScopedModels,
+  workspaceId = getDefaultWorkspaceObjectId(),
+  workspaceKey = getDefaultWorkspaceKey(),
+  concurrency = getBackfillConcurrency()
+} = {}) => {
+  const normalizedConcurrency = getBackfillConcurrency(concurrency);
+  const results = await mapWithConcurrency(models, normalizedConcurrency, async ([key, Model]) => [
+    key,
+    await Model.countDocuments(missingWorkspaceQuery())
+  ]);
 
-  const results = await Promise.all([
-    ['boards', Board],
-    ['cards', Card],
-    ['lists', List],
-    ['members', Member],
-    ['comments', Comment],
-    ['analytics', Analytics],
-    ['interventions', Intervention],
-    ['learning', Learning],
-    ['performance', Performance],
-    ['conversations', Conversation],
-    ['connectorAccounts', ConnectorAccount],
-    ['recommendations', Recommendation],
-    ['approvals', Approval],
-    ['decisionQueueItems', DecisionQueueItem],
-    ['trelloActionAttempts', TrelloActionAttempt],
-    ['auditEvents', AuditEvent],
-    ['followUpPlans', FollowUpPlan],
-    ['workerResponses', WorkerResponse],
-    ['cardFindings', CardFinding],
-    ['boardHealthSnapshots', BoardHealthSnapshot],
-    ['workActors', WorkActor],
-    ['workComments', WorkComment],
-    ['workContainers', WorkContainer],
-    ['workDependencies', WorkDependency],
-    ['workEvents', WorkEvent],
-    ['workItems', WorkItem]
-  ].map(async ([key, Model]) => [key, await backfillModelWorkspace(Model, workspaceId)]));
+  const counts = Object.fromEntries(results);
+  const totalMissing = Object.values(counts).reduce((total, count) => total + count, 0);
+
+  return {
+    mode: 'inspect',
+    workspaceId: String(workspaceId),
+    workspaceKey,
+    concurrency: normalizedConcurrency,
+    collections: counts,
+    totalMissing
+  };
+};
+
+const backfillDefaultWorkspace = async ({
+  models = workspaceScopedModels,
+  workspaceId = getDefaultWorkspaceObjectId(),
+  workspaceKey = getDefaultWorkspaceKey(),
+  concurrency = getBackfillConcurrency(),
+  ensureWorkspace = ensureDefaultWorkspace
+} = {}) => {
+  const normalizedConcurrency = getBackfillConcurrency(concurrency);
+  await ensureWorkspace();
+
+  const results = await mapWithConcurrency(models, normalizedConcurrency, async ([key, Model]) => [
+    key,
+    await backfillModelWorkspace(Model, workspaceId)
+  ]);
 
   const counts = Object.fromEntries(results);
   const totalModified = Object.values(counts).reduce((total, count) => total + count, 0);
 
   return {
+    mode: 'apply',
     workspaceId: String(workspaceId),
+    workspaceKey,
+    concurrency: normalizedConcurrency,
+    collections: counts,
     ...counts,
     totalModified
   };
@@ -150,12 +215,17 @@ module.exports = {
   backfillDefaultWorkspace,
   defaultWorkspaceQuery,
   ensureDefaultWorkspace,
+  getBackfillConcurrency,
   getDefaultWorkspaceKey,
   getDefaultWorkspaceName,
   getDefaultWorkspaceObjectId,
   getRequestWorkspaceObjectId,
+  inspectDefaultWorkspaceBackfill,
+  mapWithConcurrency,
+  missingWorkspaceQuery,
   normalizeWorkspaceObjectId,
   objectIdFromWorkspaceKey,
   scopeQuery,
-  slugifyWorkspaceKey
+  slugifyWorkspaceKey,
+  workspaceScopedModels
 };

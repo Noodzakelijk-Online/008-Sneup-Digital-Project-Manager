@@ -9,6 +9,7 @@
     "build:installer": "electron-builder --win nsis --x64",
     "dist:win": "npm run build:installer",
     "dev": "nodemon src/index.js",
+    "migrate:workspace": "node scripts/migrate-workspace-scope.js",
     "test": "jest",
     "lint": "eslint src/**/*.js"
   },

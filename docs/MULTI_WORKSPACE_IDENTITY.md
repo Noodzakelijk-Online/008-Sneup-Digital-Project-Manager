@@ -72,7 +72,16 @@ Issuing and revoking sessions emits high-risk audit events in the operations led
 
 ## Migration Notes
 
-For existing deployments, run the app once after upgrading so `backfillDefaultWorkspace()` can create the default workspace and attach legacy Trello/project records to it.
+For existing deployments, inspect before applying a workspace migration. Both commands use `SNEUP_DEFAULT_WORKSPACE_ID` and never print credentials:
+
+```powershell
+npm run migrate:workspace
+npm run migrate:workspace -- --apply
+```
+
+The first command is read-only JSON evidence: it reports each collection's records missing `workspaceId`, the target workspace, and the bounded concurrency used. The `--apply` command creates the default workspace if needed, then attaches only legacy records where `workspaceId` is absent or `null`. It does not overwrite a record already assigned to another workspace.
+
+Use `--concurrency <1-16>` for constrained MongoDB deployments, or set `SNEUP_WORKSPACE_BACKFILL_CONCURRENCY` (default `4`). Sneup keeps the compatibility backfill at successful database startup, now with the same bounded concurrency; the explicit command is the recommended production preflight and change record.
 
 Recommended production checks before exposing Sneup remotely:
 

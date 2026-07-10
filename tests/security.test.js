@@ -637,6 +637,82 @@ describe('workspace identity models', () => {
     expect(workspaceScopeService.slugifyWorkspaceKey('Main Ops Workspace')).toBe('main-ops-workspace');
   });
 
+  test('inspects workspace migration without writes and applies it with bounded concurrency', async () => {
+    const workspaceScopeService = require('../src/services/workspaceScopeService');
+    const workspaceId = new mongoose.Types.ObjectId();
+    const models = [
+      ['boards', { countDocuments: jest.fn().mockResolvedValue(2), updateMany: jest.fn().mockResolvedValue({ modifiedCount: 2 }) }],
+      ['cards', { countDocuments: jest.fn().mockResolvedValue(3), updateMany: jest.fn().mockResolvedValue({ modifiedCount: 3 }) }],
+      ['comments', { countDocuments: jest.fn().mockResolvedValue(0), updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }) }]
+    ];
+
+    const inspection = await workspaceScopeService.inspectDefaultWorkspaceBackfill({
+      models,
+      workspaceId,
+      workspaceKey: 'production',
+      concurrency: 2
+    });
+
+    expect(inspection).toMatchObject({
+      mode: 'inspect',
+      workspaceId: String(workspaceId),
+      workspaceKey: 'production',
+      concurrency: 2,
+      collections: { boards: 2, cards: 3, comments: 0 },
+      totalMissing: 5
+    });
+    models.forEach(([, Model]) => {
+      expect(Model.countDocuments).toHaveBeenCalledWith({
+        $or: [
+          { workspaceId: { $exists: false } },
+          { workspaceId: null }
+        ]
+      });
+      expect(Model.updateMany).not.toHaveBeenCalled();
+    });
+
+    const ensureWorkspace = jest.fn().mockResolvedValue({ _id: workspaceId });
+    const applied = await workspaceScopeService.backfillDefaultWorkspace({
+      models,
+      workspaceId,
+      workspaceKey: 'production',
+      concurrency: 2,
+      ensureWorkspace
+    });
+
+    expect(ensureWorkspace).toHaveBeenCalledTimes(1);
+    expect(applied).toMatchObject({
+      mode: 'apply',
+      workspaceId: String(workspaceId),
+      workspaceKey: 'production',
+      concurrency: 2,
+      collections: { boards: 2, cards: 3, comments: 0 },
+      totalModified: 5
+    });
+    models.forEach(([, Model]) => {
+      expect(Model.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ $or: expect.any(Array) }),
+        { $set: { workspaceId } }
+      );
+    });
+
+    let activeWorkers = 0;
+    let maxActiveWorkers = 0;
+    const workerResults = await workspaceScopeService.mapWithConcurrency([1, 2, 3, 4], 2, async (item) => {
+      activeWorkers += 1;
+      maxActiveWorkers = Math.max(maxActiveWorkers, activeWorkers);
+      await Promise.resolve();
+      activeWorkers -= 1;
+      return item * 2;
+    });
+
+    expect(workerResults).toEqual([2, 4, 6, 8]);
+    expect(maxActiveWorkers).toBeLessThanOrEqual(2);
+    expect(workspaceScopeService.getBackfillConcurrency('0')).toBe(1);
+    expect(workspaceScopeService.getBackfillConcurrency('99')).toBe(16);
+    expect(workspaceScopeService.getBackfillConcurrency('not-a-number')).toBe(4);
+  });
+
   test('operations ledger service adds workspace filters to shared queries', () => {
     const operationsLedgerService = require('../src/services/operationsLedgerService');
     const workspaceScopeService = require('../src/services/workspaceScopeService');
