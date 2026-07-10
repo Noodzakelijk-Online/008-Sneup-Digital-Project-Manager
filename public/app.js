@@ -1583,6 +1583,7 @@ function renderWorkspaces(errorMessage = '') {
   els.workspaceList.innerHTML = notice + listOrEmpty(workspaces, renderWorkspace);
   els.workspaceUserCount.textContent = `${users.length} user${users.length === 1 ? '' : 's'}`;
   els.workspaceUsers.innerHTML = listOrEmpty(users, renderWorkspaceUser);
+  bindWorkspaceSessionActions();
 }
 
 function renderWorkspace(workspace) {
@@ -1614,8 +1615,117 @@ function renderWorkspaceUser(user) {
         <span>${escapeHtml(user.provider)}</span>
         <span>${escapeHtml(user.email || 'No email')}</span>
       </div>
+      <div class="item-actions">
+        <button class="button" data-workspace-user-sessions="${escapeHtml(user.id)}" type="button">Review sessions</button>
+      </div>
     </div>
   `;
+}
+
+function bindWorkspaceSessionActions() {
+  document.querySelectorAll('[data-workspace-user-sessions]').forEach((button) => {
+    button.addEventListener('click', () => openWorkspaceUserSessions(button.dataset.workspaceUserSessions));
+  });
+}
+
+async function openWorkspaceUserSessions(userId) {
+  const workspaceId = state.activeWorkspaceId || state.currentWorkspace?.id;
+  const user = state.workspaceUsers.find(item => item.id === userId);
+  if (!workspaceId || !user) {
+    openNotice('Session access unavailable', 'Choose a workspace user before reviewing sessions.');
+    return;
+  }
+
+  els.modalTitle.textContent = 'Session access';
+  els.modalBody.innerHTML = '<div class="notice">Loading active and historical sessions...</div>';
+  els.modal.classList.add('open');
+
+  try {
+    const data = await fetchApi(`/api/workspaces/${encodeURIComponent(workspaceId)}/users/${encodeURIComponent(user.id)}/sessions?limit=100`);
+    renderWorkspaceUserSessions(data.user || user, data.sessions || []);
+  } catch (error) {
+    openNotice('Session access unavailable', error.message);
+  }
+}
+
+function renderWorkspaceUserSessions(user, sessions) {
+  const activeSessions = sessions.filter(session => session.status === 'active');
+  els.modalTitle.textContent = `${user.displayName} sessions`;
+  els.modalBody.innerHTML = `
+    <div class="notice-stack">
+      <div class="notice">Review issued access for this user. Revoking a session ends its API access immediately and records a high-risk audit event.</div>
+      <div class="item">
+        <div class="item-title">
+          <strong>${escapeHtml(user.displayName)}</strong>
+          <span class="pill ${activeSessions.length ? 'review' : 'healthy'}">${activeSessions.length} active</span>
+        </div>
+        <div class="meta">
+          <span>${escapeHtml(user.role || 'user')}</span>
+          <span>${escapeHtml(user.email || 'No email')}</span>
+        </div>
+      </div>
+      <div class="list">
+        ${listOrEmpty(sessions, (session) => `
+          <div class="item">
+            <div class="item-title">
+              <strong>${escapeHtml(session.name || 'User session')}</strong>
+              <span class="pill ${session.status === 'active' ? 'review' : 'healthy'}">${escapeHtml(session.status)}</span>
+            </div>
+            <div class="meta">
+              <span>Used ${escapeHtml(formatDate(session.lastUsedAt || session.createdAt))}</span>
+              <span>Expires ${escapeHtml(formatDate(session.expiresAt))}</span>
+              <span>${escapeHtml(session.tokenPrefix || 'Token protected')}</span>
+            </div>
+            ${session.status === 'active' ? `
+              <div class="item-actions">
+                <button class="button danger" data-revoke-workspace-session="${escapeHtml(session.id)}" type="button">Revoke session</button>
+              </div>
+            ` : ''}
+          </div>
+        `)}
+      </div>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="closeSessionAccess">Done</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('closeSessionAccess').addEventListener('click', closeModal);
+  document.querySelectorAll('[data-revoke-workspace-session]').forEach((button) => {
+    const session = sessions.find(item => item.id === button.dataset.revokeWorkspaceSession);
+    button.addEventListener('click', () => openSessionRevocationConfirmation(user, session));
+  });
+}
+
+function openSessionRevocationConfirmation(user, session) {
+  if (!session || session.status !== 'active') return;
+  els.modalTitle.textContent = 'Revoke session?';
+  els.modalBody.innerHTML = `
+    <div class="notice-stack">
+      <div class="notice">This immediately ends API access for <strong>${escapeHtml(session.name || 'this session')}</strong> belonging to ${escapeHtml(user.displayName)}. This cannot be undone; issue a new session if access is needed again.</div>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelSessionRevoke">Cancel</button>
+        <button class="button danger" type="button" id="confirmSessionRevoke">Revoke session</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('cancelSessionRevoke').addEventListener('click', () => openWorkspaceUserSessions(user.id));
+  document.getElementById('confirmSessionRevoke').addEventListener('click', async () => {
+    const workspaceId = state.activeWorkspaceId || state.currentWorkspace?.id;
+    if (!workspaceId) return;
+    const button = document.getElementById('confirmSessionRevoke');
+    button.disabled = true;
+    button.textContent = 'Revoking...';
+    try {
+      await fetchApi(`/api/workspaces/${encodeURIComponent(workspaceId)}/users/${encodeURIComponent(user.id)}/sessions/${encodeURIComponent(session.id)}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      await openWorkspaceUserSessions(user.id);
+    } catch (error) {
+      openNotice('Session revocation failed', error.message);
+    }
+  });
 }
 
 function renderEnhancements(errorMessage = '') {

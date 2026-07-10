@@ -488,6 +488,8 @@ describe('workspace identity models', () => {
     expect(session.matches('wrong-token')).toBe(false);
     expect(session.isUsable()).toBe(true);
     expect(SessionToken.schema.path('tokenHash').options.select).toBe(false);
+    expect(SessionToken.schema.path('revokedAt')).toBeTruthy();
+    expect(SessionToken.schema.path('revokedBy')).toBeTruthy();
     expect(Workspace.schema.path('slug')).toBeTruthy();
     expect(User.schema.path('role').enumValues).toEqual(expect.arrayContaining(['owner', 'admin', 'manager', 'operator', 'viewer', 'service']));
     expect(Board.schema.path('workspaceId')).toBeTruthy();
@@ -523,6 +525,97 @@ describe('workspace identity models', () => {
     ]) {
       expect(Model.schema.path('workspaceId')).toBeTruthy();
     }
+  });
+
+  test('revokes a workspace-scoped session and records the high-risk audit event', async () => {
+    jest.resetModules();
+
+    const workspaceId = new mongoose.Types.ObjectId();
+    const userId = new mongoose.Types.ObjectId();
+    const sessionId = new mongoose.Types.ObjectId();
+    const workspace = {
+      _id: workspaceId,
+      name: 'Operations',
+      slug: 'operations',
+      status: 'active',
+      plan: 'team',
+      settings: {}
+    };
+    const user = {
+      _id: userId,
+      workspaceId,
+      displayName: 'Robert',
+      role: 'owner',
+      status: 'active',
+      provider: 'local'
+    };
+    const session = {
+      _id: sessionId,
+      workspaceId,
+      userId,
+      name: 'Robert laptop',
+      tokenPrefix: 'sneup_session_demo',
+      status: 'active',
+      expiresAt: new Date('2026-08-01T00:00:00Z'),
+      createdAt: new Date('2026-07-01T00:00:00Z'),
+      updatedAt: new Date('2026-07-01T00:00:00Z'),
+      revoke: jest.fn(async (actor) => {
+        session.status = 'revoked';
+        session.revokedAt = new Date('2026-07-10T00:00:00Z');
+        session.revokedBy = actor;
+        return session;
+      })
+    };
+    const recordAudit = jest.fn().mockResolvedValue({ _id: new mongoose.Types.ObjectId() });
+
+    jest.doMock('../src/models/Workspace', () => ({
+      findOne: jest.fn().mockResolvedValue(workspace)
+    }));
+    jest.doMock('../src/models/User', () => ({
+      findOne: jest.fn().mockResolvedValue(user)
+    }));
+    jest.doMock('../src/models/SessionToken', () => ({
+      findOne: jest.fn().mockResolvedValue(session)
+    }));
+    jest.doMock('../src/services/operationsLedgerService', () => ({ recordAudit }));
+
+    const router = require('../src/routes/workspaces');
+    const revokeRoute = router.stack.find((layer) => layer.route?.path === '/:workspaceId/users/:userId/sessions/:sessionId/revoke');
+    const handler = revokeRoute.route.stack.at(-1).handle;
+    const res = {
+      status: jest.fn(function status() { return this; }),
+      json: jest.fn()
+    };
+
+    await handler({
+      params: {
+        workspaceId: String(workspaceId),
+        userId: String(userId),
+        sessionId: String(sessionId)
+      },
+      auth: { actorId: 'owner-1' }
+    }, res);
+
+    expect(session.revoke).toHaveBeenCalledWith('owner-1');
+    expect(recordAudit).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId,
+      entityType: 'session_token',
+      entityId: sessionId,
+      action: 'workspace_user_session_revoked',
+      riskLevel: 'high',
+      beforeState: expect.objectContaining({ status: 'active' }),
+      afterState: expect.objectContaining({ status: 'revoked', revokedBy: 'owner-1' })
+    }));
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      session: expect.objectContaining({ status: 'revoked' })
+    }));
+
+    jest.dontMock('../src/models/Workspace');
+    jest.dontMock('../src/models/User');
+    jest.dontMock('../src/models/SessionToken');
+    jest.dontMock('../src/services/operationsLedgerService');
+    jest.resetModules();
   });
 
   test('derives stable workspace object ids and scoped queries from request auth', () => {
