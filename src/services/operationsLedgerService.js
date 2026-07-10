@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { isDeepStrictEqual } = require('node:util');
 const Recommendation = require('../models/Recommendation');
 const Approval = require('../models/Approval');
 const TrelloActionAttempt = require('../models/TrelloActionAttempt');
@@ -16,6 +17,7 @@ const Member = require('../models/Member');
 const WorkItem = require('../models/WorkItem');
 const trelloClient = require('./trelloClient');
 const interventionPolicy = require('./interventionPolicy');
+const recommendationPayloadPolicy = require('./recommendationPayloadPolicy');
 const workGraphService = require('./workGraphService');
 const logger = require('../utils/logger');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
@@ -531,6 +533,12 @@ class OperationsLedgerService {
       throw error;
     }
 
+    if (body.approvedPayloadSnapshot !== undefined) {
+      const error = new Error('Approval always uses the current protected action payload. Review the payload before approving.');
+      error.statusCode = 400;
+      throw error;
+    }
+
     const approval = await Approval.create({
       workspaceId: recommendation.workspaceId,
       recommendationId: recommendation._id,
@@ -541,7 +549,7 @@ class OperationsLedgerService {
       decision: 'approved',
       decidedBy: body.decidedBy || 'robert',
       decisionReason: body.decisionReason || '',
-      approvedPayloadSnapshot: body.approvedPayloadSnapshot || recommendation.actionPayload
+      approvedPayloadSnapshot: recommendation.actionPayload
     });
 
     recommendation.status = 'approved';
@@ -651,7 +659,7 @@ class OperationsLedgerService {
       decision: 'change_requested',
       decidedBy: body.decidedBy || 'robert',
       decisionReason: body.decisionReason || 'Change requested',
-      approvedPayloadSnapshot: body.proposedPayload || recommendation.actionPayload
+      approvedPayloadSnapshot: recommendation.actionPayload
     });
 
     recommendation.status = 'change_requested';
@@ -690,18 +698,24 @@ class OperationsLedgerService {
       throw error;
     }
 
-    if (!body.actionPayload || typeof body.actionPayload !== 'object' || Array.isArray(body.actionPayload)) {
-      const error = new Error('actionPayload object is required');
+    if (['executing', 'executed'].includes(recommendation.status)) {
+      const error = new Error('An executing or executed recommendation payload cannot be changed');
+      error.statusCode = 409;
+      throw error;
+    }
+    if (body.replace === true || body.actionType !== undefined || body.recommendedAction !== undefined) {
+      const error = new Error('Action type, recommendation text, and protected payload fields cannot be changed during review');
       error.statusCode = 400;
       throw error;
     }
 
     const beforeState = recommendation.toObject();
-    recommendation.actionPayload = body.replace === true
-      ? body.actionPayload
-      : { ...(recommendation.actionPayload || {}), ...body.actionPayload };
-    if (body.actionType) recommendation.actionType = body.actionType;
-    if (body.recommendedAction) recommendation.recommendedAction = body.recommendedAction;
+    recommendation.actionPayload = recommendationPayloadPolicy.applyPatch(
+      recommendation.actionType,
+      recommendation.actionPayload,
+      body.actionPayload
+    );
+    await this.validateEditablePayloadTarget(recommendation, recommendation.actionPayload);
     recommendation.status = 'pending';
     recommendation.failureReason = undefined;
     await recommendation.save();
@@ -719,6 +733,41 @@ class OperationsLedgerService {
     });
 
     return recommendation;
+  }
+
+  async validateEditablePayloadTarget(recommendation, payload) {
+    if (!recommendationPayloadPolicy.isReadyForExecution(recommendation.actionType, payload)) return;
+
+    if (recommendation.actionType === 'reassign') {
+      if (!mongoose.Types.ObjectId.isValid(payload.toMemberId)) {
+        const error = new Error('toMemberId must identify a member in this workspace');
+        error.statusCode = 400;
+        throw error;
+      }
+      const targetMember = await Member.findOne({
+        _id: payload.toMemberId,
+        workspaceId: recommendation.workspaceId
+      });
+      if (!targetMember || targetMember.trelloId !== payload.toMemberTrelloId) {
+        const error = new Error('The selected target member does not match this workspace');
+        error.statusCode = 400;
+        throw error;
+      }
+    }
+
+    if (recommendation.actionType === 'move_card') {
+      const List = require('../models/List');
+      const targetList = await List.findOne({
+        trelloId: payload.targetListId,
+        boardId: recommendation.boardId,
+        workspaceId: recommendation.workspaceId
+      });
+      if (!targetList) {
+        const error = new Error('The selected target list does not belong to this recommendation board');
+        error.statusCode = 400;
+        throw error;
+      }
+    }
   }
   async executeApprovedRecommendation(recommendationId, options = {}) {
     this.requireDatabase();
@@ -744,6 +793,12 @@ class OperationsLedgerService {
 
     if (recommendation.requiresApproval && !approval) {
       const error = new Error('Approved payload snapshot not found');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (recommendation.requiresApproval && !isDeepStrictEqual(approval.approvedPayloadSnapshot || {}, recommendation.actionPayload || {})) {
+      const error = new Error('The action payload changed after approval. Review and approve the current payload before execution.');
       error.statusCode = 409;
       throw error;
     }
@@ -905,9 +960,9 @@ class OperationsLedgerService {
 
   isExecutableRecommendation(recommendation) {
     const payload = recommendation.actionPayload || {};
-    if (payload.executable === false || payload.draftOnly === true) return false;
-    return ['comment', 'follow_up', 'performance_notification', 'move_card', 'reassign', 'escalate', 'add_label', 'set_due_date', 'add_checklist']
-      .includes(recommendation.actionType);
+    return payload.executable === true
+      && payload.draftOnly !== true
+      && recommendationPayloadPolicy.isReadyForExecution(recommendation.actionType, payload);
   }
 
   async listDecisionQueue(filters = {}) {

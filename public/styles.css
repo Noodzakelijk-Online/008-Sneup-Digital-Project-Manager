@@ -728,12 +728,28 @@ h1 {
   color: var(--muted);
 }
 
-.field input {
+.field input,
+.field textarea,
+.field select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 7px;
   min-height: 40px;
   padding: 9px 10px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+}
+
+.field textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.payload-target {
+  display: grid;
+  gap: 6px;
+  padding: 0 18px;
 }
 
 .notice {

@@ -14,7 +14,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 | ID | Priority | Area | Finding | Next step |
 | --- | --- | --- | --- | --- |
 | ENH-001 | P0 | Connectors | Linked accounts now have bounded read-only API clients for 20 first-wave providers, including GitLab issue and merge-request metadata with `read_api`; Job Health retains the provider's issue and merge-request counts. | Add the next credential-backed provider client, preserving bounded read-only sync and provider-specific health evidence. |
-| ENH-002 | P0 | Autonomy | Autopilot needs a durable human approval queue. | Add ActionApproval model, approval routes, and command queue controls. |
+| ENH-002 | P0 | Autonomy | Approval review now uses action-specific fields instead of free-form JSON; Trello targets, provider routing, execution flags, and action type stay protected, every edit requires fresh approval, and move/reassign targets are verified in the current board/workspace. | Add policy-driven default snooze durations. |
 | ENH-003 | P0 | Security | Shared production use needs users, workspaces, RBAC, and audit logs. | Add workspace-scoped identity and audit models, then gate every sensitive route. |
 | ENH-004 | P1 | Trust | Recommendations include inspectable, validated source evidence. | Extend source drilldowns into chat and notifications. |
 | ENH-005 | P1 | Forecasting | Forecasting needs capacity calendars and confidence ranges. | Model availability, holidays, skills, throughput, dependencies, and uncertainty. |

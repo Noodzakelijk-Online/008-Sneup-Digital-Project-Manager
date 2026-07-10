@@ -27,11 +27,11 @@ const enhancements = [
     priority: 'P0',
     area: 'autonomy',
     title: 'Add a human approval queue for autonomous actions',
-    evidence: 'Autopilot commands can now be queued into the durable recommendation and decision queue with approve, reject, change, snooze, delegate, and payload-edit paths.',
+    evidence: 'Autopilot commands can now be queued into the durable recommendation and decision queue with approve, reject, change, snooze, delegate, and action-specific payload-review paths. Reviewers cannot alter the action type, Trello target, provider routing, or execution flags; every saved revision returns to pending for a fresh approval, and move/reassign targets are verified against the current board/workspace.',
     impact: 'Allows Sneup to become more autonomous while preserving human control over risky project changes.',
     effort: 'L',
     status: 'done',
-    nextStep: 'Replace prompt-based payload editing with a structured review form and add policy-driven default snooze durations.',
+    nextStep: 'Add policy-driven default snooze durations.',
     acceptanceCriteria: [
       'Every automatable command can be approved, rejected, snoozed, or delegated.',
       'Approvals are auditable with actor, timestamp, target, and source evidence.',

@@ -437,6 +437,12 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain("fetchApi('/api/work-signals?limit=100')");
     expect(appJs).toContain('data-recommendation-evidence');
     expect(appJs).toContain('/api/recommendations/${recommendationId}/evidence');
+    expect(appJs).toContain('PAYLOAD_REVIEW_FIELDS');
+    expect(appJs).toContain('Review payload');
+    expect(appJs).not.toContain('Edit payload JSON');
+    expect(appJs).toContain('loadPayloadReviewContext');
+    expect(appJs).toContain('New accountable owner');
+    expect(appJs).toContain('Target Trello list');
     expect(appJs).toContain('data-graph-filter');
     expect(appJs).toContain('data-graph-dependency-review');
     expect(appJs).toContain('renderGraphReviewQuality(graph)');
@@ -4461,6 +4467,73 @@ describe('autopilot command approval queue', () => {
       actionPayload: { executable: true, cardTrelloId: 'card-1', commentText: 'Status?' }
     })).toBe(true);
   });
+
+  test('allows only action-specific payload review fields and keeps Trello targets protected', () => {
+    const recommendationPayloadPolicy = require('../src/services/recommendationPayloadPolicy');
+    const currentPayload = {
+      cardTrelloId: 'trello-card-1',
+      cardId: 'card-1',
+      source: 'autopilot',
+      commentText: 'Please share the next action.',
+      executable: true,
+      draftOnly: false
+    };
+
+    const revised = recommendationPayloadPolicy.applyPatch('comment', currentPayload, {
+      commentText: 'Please share the owner, blocker, and next action.'
+    });
+
+    expect(revised).toMatchObject({
+      cardTrelloId: 'trello-card-1',
+      cardId: 'card-1',
+      source: 'autopilot',
+      commentText: 'Please share the owner, blocker, and next action.',
+      executable: true,
+      draftOnly: false
+    });
+    expect(() => recommendationPayloadPolicy.applyPatch('comment', currentPayload, {
+      cardTrelloId: 'another-card'
+    })).toThrow('protected');
+  });
+
+  test('keeps provider-agnostic review drafts non-executable until their exact required fields are present', () => {
+    const recommendationPayloadPolicy = require('../src/services/recommendationPayloadPolicy');
+    const reassignDraft = {
+      cardTrelloId: 'trello-card-1',
+      fromMemberTrelloId: 'member-old',
+      executable: false,
+      draftOnly: true
+    };
+
+    const ready = recommendationPayloadPolicy.applyPatch('reassign', reassignDraft, {
+      toMemberId: 'member-new-record',
+      toMemberTrelloId: 'member-new'
+    });
+
+    expect(ready).toMatchObject({
+      executable: true,
+      draftOnly: false,
+      fromMemberTrelloId: 'member-old',
+      toMemberTrelloId: 'member-new'
+    });
+    expect(() => recommendationPayloadPolicy.applyPatch('reassign', reassignDraft, {
+      executable: true
+    })).toThrow('protected');
+  });
+
+  test('prevents graph-derived payloads from becoming provider writes during review', () => {
+    const recommendationPayloadPolicy = require('../src/services/recommendationPayloadPolicy');
+
+    expect(() => recommendationPayloadPolicy.applyPatch('escalate', {
+      source: 'work_graph',
+      externalProviderWriteBlocked: true,
+      executable: false,
+      draftOnly: true
+    }, {
+      commentText: 'Please confirm the blocker.'
+    })).toThrow('draft-only');
+  });
+
   test('models support snooze, delegate, and payload-edit approval states', () => {
     const DecisionQueueItem = require('../src/models/DecisionQueueItem');
     const Recommendation = require('../src/models/Recommendation');

@@ -875,12 +875,9 @@ function renderReviewActions(recommendationId, status = 'pending', recommendatio
   `;
 }
 function renderPayloadEditAction(recommendationId, recommendation = {}) {
-  const payload = recommendation.actionPayload || {};
-  if (payload.executable !== false && payload.draftOnly !== true && recommendation.actionType !== 'manual_review') {
-    return '';
-  }
-
-  return `<div class="item-actions"><button class="button warn" data-payload-edit="${recommendationId}" type="button">Edit payload JSON</button></div>`;
+  const fields = getPayloadReviewFields(recommendation);
+  if (fields.length === 0) return '';
+  return `<div class="item-actions"><button class="button warn" data-payload-edit="${recommendationId}" type="button">Review payload</button></div>`;
 }
 function renderFinding(finding) {
   const card = finding.cardId || {};
@@ -1124,23 +1121,153 @@ async function runJobAction(jobName, action) {
 async function editRecommendationPayload(recommendationId) {
   const recommendation = (state.ledger.recommendations || []).find(item => getId(item._id) === recommendationId);
   if (!recommendation) return;
+  const fields = getPayloadReviewFields(recommendation);
+  if (fields.length === 0) return;
 
-  const currentPayload = JSON.stringify(recommendation.actionPayload || {}, null, 2);
-  const nextPayload = window.prompt('Edit exact Trello action payload JSON before approval/execution:', currentPayload);
-  if (!nextPayload) return;
-
+  const payload = recommendation.actionPayload || {};
+  let context = {};
   try {
-    const parsedPayload = JSON.parse(nextPayload);
-    await fetchApi(`/api/recommendations/${recommendationId}/payload`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ updatedBy: 'robert', replace: true, actionPayload: parsedPayload })
-    });
-    openNotice('Payload updated', 'Exact action payload updated. Review and approve when ready.');
-    await loadOperationsLedger();
+    context = await loadPayloadReviewContext(recommendation, fields);
   } catch (error) {
-    openNotice('Payload update failed', error.message);
+    openNotice('Payload review unavailable', error.message);
+    return;
   }
+  const reviewReady = isPayloadReviewReady(fields, context);
+  els.modalTitle.textContent = `Review ${String(recommendation.actionType || 'action').replaceAll('_', ' ')} payload`;
+  els.modalBody.innerHTML = `
+    <form id="payloadReviewForm">
+      <div class="notice">The Trello target and action type are locked. Saving changes returns this recommendation to pending so the exact revised payload must be approved again.</div>
+      <div class="payload-target">${renderProtectedPayloadSummary(payload)}</div>
+      ${reviewReady ? '' : '<div class="notice">Sneup needs the current board members or lists before this payload can be prepared.</div>'}
+      ${fields.map((field) => renderPayloadReviewField(field, payload, context)).join('')}
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelPayloadReview">Cancel</button>
+        <button class="button primary" type="submit" ${reviewReady ? '' : 'disabled'}>Save for approval</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelPayloadReview').addEventListener('click', closeModal);
+  document.getElementById('payloadReviewForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = form.querySelector('button[type="submit"]');
+    const actionPayload = {};
+    for (const field of fields) {
+      const input = form.elements[field.key];
+      const value = input?.value || '';
+      if (field.kind === 'checklist') {
+        actionPayload[field.key] = value.split('\n').map(item => item.trim()).filter(Boolean);
+      } else if (field.kind === 'member') {
+        const selected = input?.options?.[input.selectedIndex];
+        actionPayload.toMemberId = value;
+        actionPayload.toMemberTrelloId = selected?.dataset.trelloId || '';
+      } else {
+        actionPayload[field.key] = value;
+      }
+    }
+    submitButton.disabled = true;
+    try {
+      await fetchApi(`/api/recommendations/${recommendationId}/payload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updatedBy: 'robert', actionPayload })
+      });
+      closeModal();
+      openNotice('Payload saved', 'The revised action is pending a fresh Yes/No approval.');
+      await loadOperationsLedger();
+    } catch (error) {
+      submitButton.disabled = false;
+      openNotice('Payload update failed', error.message);
+    }
+  });
+}
+
+const PAYLOAD_REVIEW_FIELDS = Object.freeze({
+  comment: [{ key: 'commentText', label: 'Comment text', kind: 'textarea', required: true }],
+  follow_up: [{ key: 'commentText', label: 'Follow-up text', kind: 'textarea', required: true }],
+  performance_notification: [{ key: 'commentText', label: 'Notification text', kind: 'textarea', required: true }],
+  move_card: [{ key: 'targetListId', label: 'Target Trello list', kind: 'list', required: true }],
+  reassign: [
+    { key: 'targetMember', label: 'New accountable owner', kind: 'member', required: true },
+    { key: 'commentText', label: 'Optional reassignment note', kind: 'textarea', required: false }
+  ],
+  escalate: [{ key: 'commentText', label: 'Escalation text', kind: 'textarea', required: true }],
+  add_label: [
+    { key: 'labelName', label: 'Label name', kind: 'text', required: true },
+    { key: 'labelColor', label: 'Label color', kind: 'labelColor', required: true }
+  ],
+  set_due_date: [{ key: 'due', label: 'Due date (ISO 8601)', kind: 'text', required: true }],
+  add_checklist: [
+    { key: 'checklistName', label: 'Checklist name', kind: 'text', required: true },
+    { key: 'checkItems', label: 'Checklist items (one per line)', kind: 'checklist', required: true }
+  ]
+});
+
+function getPayloadReviewFields(recommendation = {}) {
+  const payload = recommendation.actionPayload || {};
+  if (payload.externalProviderWriteBlocked === true || payload.source === 'work_graph') return [];
+  return PAYLOAD_REVIEW_FIELDS[recommendation.actionType] || [];
+}
+
+async function loadPayloadReviewContext(recommendation, fields) {
+  if (!fields.some((field) => field.kind === 'member' || field.kind === 'list')) return {};
+  const boardId = getId(recommendation.boardId);
+  if (!boardId) throw new Error('This recommendation does not have a board target to verify.');
+  const data = await fetchApi(`/api/boards/${boardId}`);
+  return {
+    members: data.board?.members || [],
+    lists: data.lists || []
+  };
+}
+
+function isPayloadReviewReady(fields, context = {}) {
+  return fields.every((field) => {
+    if (field.kind === 'member') return (context.members || []).length > 0;
+    if (field.kind === 'list') return (context.lists || []).length > 0;
+    return true;
+  });
+}
+
+function renderPayloadReviewField(field, payload = {}, context = {}) {
+  const required = field.required ? 'required' : '';
+  const value = field.key === 'targetMember' ? payload.toMemberId : payload[field.key];
+  if (field.kind === 'textarea' || field.kind === 'checklist') {
+    const text = field.kind === 'checklist' && Array.isArray(value) ? value.join('\n') : value || '';
+    return `<div class="field"><label for="payloadField${escapeHtml(field.key)}">${escapeHtml(field.label)}</label><textarea id="payloadField${escapeHtml(field.key)}" name="${escapeHtml(field.key)}" ${required}>${escapeHtml(text)}</textarea></div>`;
+  }
+  if (field.kind === 'member') {
+    const members = context.members || [];
+    return `<div class="field"><label for="payloadField${escapeHtml(field.key)}">${escapeHtml(field.label)}</label><select id="payloadField${escapeHtml(field.key)}" name="${escapeHtml(field.key)}" ${required}>${members.map((member) => {
+      const memberId = getId(member._id || member.id);
+      const label = member.fullName || member.username || memberId;
+      return `<option value="${escapeHtml(memberId)}" data-trello-id="${escapeHtml(member.trelloId || '')}" ${String(memberId) === String(value || '') ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    }).join('')}</select></div>`;
+  }
+  if (field.kind === 'list') {
+    const lists = context.lists || [];
+    return `<div class="field"><label for="payloadField${escapeHtml(field.key)}">${escapeHtml(field.label)}</label><select id="payloadField${escapeHtml(field.key)}" name="${escapeHtml(field.key)}" ${required}>${lists.map((list) => {
+      const listId = list.trelloId || getId(list._id || list.id);
+      return `<option value="${escapeHtml(listId)}" ${String(listId) === String(value || '') ? 'selected' : ''}>${escapeHtml(list.name || listId)}</option>`;
+    }).join('')}</select></div>`;
+  }
+  if (field.kind === 'labelColor') {
+    const selected = String(value || 'red').toLowerCase();
+    const options = ['yellow', 'purple', 'blue', 'red', 'green', 'orange', 'black', 'sky', 'pink', 'lime'];
+    return `<div class="field"><label for="payloadField${escapeHtml(field.key)}">${escapeHtml(field.label)}</label><select id="payloadField${escapeHtml(field.key)}" name="${escapeHtml(field.key)}" ${required}>${options.map(color => `<option value="${color}" ${color === selected ? 'selected' : ''}>${color}</option>`).join('')}</select></div>`;
+  }
+  return `<div class="field"><label for="payloadField${escapeHtml(field.key)}">${escapeHtml(field.label)}</label><input id="payloadField${escapeHtml(field.key)}" name="${escapeHtml(field.key)}" type="text" value="${escapeHtml(value || '')}" ${required}></div>`;
+}
+
+function renderProtectedPayloadSummary(payload = {}) {
+  const fields = [
+    ['Card', payload.cardTrelloId],
+    ['Board', payload.boardId],
+    ['Current owner', payload.fromMemberTrelloId],
+    ['Source', payload.source]
+  ].filter(([, value]) => value);
+  if (fields.length === 0) return '';
+  return `<div class="meta">${fields.map(([label, value]) => `<span>${escapeHtml(label)}: ${escapeHtml(value)}</span>`).join('')}</div>`;
 }
 
 async function openRecommendationEvidence(recommendationId) {
