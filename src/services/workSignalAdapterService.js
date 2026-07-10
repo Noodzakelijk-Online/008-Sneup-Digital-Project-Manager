@@ -14,7 +14,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist'
+  'airtable', 'todoist', 'shortcut'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -32,6 +32,7 @@ const wrikeWorkSignalClient = require('./wrikeWorkSignalClient');
 const smartsheetWorkSignalClient = require('./smartsheetWorkSignalClient');
 const airtableWorkSignalClient = require('./airtableWorkSignalClient');
 const todoistWorkSignalClient = require('./todoistWorkSignalClient');
+const shortcutWorkSignalClient = require('./shortcutWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -529,6 +530,21 @@ todoistAdapter.capabilities.credentialBackedSync = true;
 todoistAdapter.list = async account => (await todoistWorkSignalClient.fetchDelta(account, null)).records;
 todoistAdapter.fetchDelta = (account, cursor) => todoistWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('todoist', todoistAdapter);
+const shortcutStatus = (story) => {
+  if (story.completed) return 'done';
+  if (story.blocked) return 'blocked';
+  return story.started ? 'in_progress' : 'open';
+};
+const shortcutAdapter = buildAdapter('shortcut', 'Shortcut story adapter', (account, story) => ({
+  externalId: pick(story.id), sourceType: 'issue', title: pick(story.title), description: '', status: shortcutStatus(story),
+  priority: priorityFromText(story.blocked ? 'blocker' : story.storyType), url: pick(story.url, story.project?.url), owners: userNames(story.ownerIds),
+  labels: compact([story.project?.name, story.storyType]), dueAt: pick(story.dueAt), providerCreatedAt: pick(story.createdAt),
+  providerUpdatedAt: pick(story.updatedAt, story.createdAt), evidenceRefs: baseEvidence(account, story, 'Shortcut story'), raw: story
+}));
+shortcutAdapter.capabilities.credentialBackedSync = true;
+shortcutAdapter.list = async account => (await shortcutWorkSignalClient.fetchDelta(account, null)).records;
+shortcutAdapter.fetchDelta = (account, cursor) => shortcutWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('shortcut', shortcutAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

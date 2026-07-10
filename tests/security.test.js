@@ -775,6 +775,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/smartsheetWorkSignalClient');
     jest.dontMock('../src/services/airtableWorkSignalClient');
     jest.dontMock('../src/services/todoistWorkSignalClient');
+    jest.dontMock('../src/services/shortcutWorkSignalClient');
     jest.resetModules();
   });
 
@@ -1102,6 +1103,18 @@ describe('work signal normalization', () => {
     const result = await workSignalAdapterService.fetchDelta({ connectorId: 'todoist' }, '2026-07-01T00:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith({ connectorId: 'todoist' }, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
+  });
+
+  test('Shortcut adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'story-1' }] });
+    jest.doMock('../src/services/shortcutWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'shortcut' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('shortcut').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1971,6 +1984,70 @@ describe('work signal normalization', () => {
     expect(http.get).toHaveBeenCalledWith('https://api.todoist.com/rest/v2/tasks', expect.any(Object));
     expect(http).not.toHaveProperty('post');
     expect(JSON.stringify(result.records[0])).not.toContain('Private detail');
+  });
+
+  test('Shortcut sync reads bounded project story metadata with no descriptions, comments, files, labels, custom fields, or provider writes', async () => {
+    jest.dontMock('../src/services/shortcutWorkSignalClient');
+    jest.resetModules();
+    const { ShortcutWorkSignalClient } = require('../src/services/shortcutWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: [{ id: 10, name: 'Sneup delivery', app_url: 'https://app.shortcut.com/noodzakelijk/projects/10' }] })
+        .mockResolvedValueOnce({ data: [{
+          id: 42, name: 'Ship Shortcut sync', completed: false, blocked: true, started: true, story_type: 'feature', owner_ids: ['member-1'],
+          deadline: '2026-07-15T00:00:00.000Z', created_at: '2026-07-09T09:00:00.000Z', updated_at: '2026-07-09T12:00:00.000Z',
+          app_url: 'https://app.shortcut.com/noodzakelijk/story/42/ship-shortcut-sync', description: 'Private detail', comments: [{ text: 'Do not ingest' }],
+          files: [{ name: 'private.pdf' }], labels: [{ name: 'private-label' }], custom_fields: [{ value: 'private-field' }],
+          story_links: [{ subject_id: 41, object_id: 42, verb: 'blocks' }, { subject_id: 42, object_id: 43, verb: 'blocks' }, { subject_id: 42, object_id: 44, verb: 'relates to' }]
+        }] })
+    };
+    const client = new ShortcutWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'shortcut-token' })) } });
+    const result = await client.fetchDelta({ connectorId: 'shortcut' }, '2026-07-09T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://api.app.shortcut.com/api/v3/projects', expect.objectContaining({ headers: expect.objectContaining({ 'Shortcut-Token': 'shortcut-token' }) }));
+    expect(http.get).toHaveBeenCalledWith('https://api.app.shortcut.com/api/v3/projects/10/stories', expect.any(Object));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => call[0]).join(' ');
+    expect(requested).not.toMatch(/comment|description|file|label|custom/i);
+    expect(JSON.stringify(result.records[0])).not.toContain('Private detail');
+    expect(JSON.stringify(result.records[0])).not.toContain('Do not ingest');
+    expect(JSON.stringify(result.records[0])).not.toContain('private.pdf');
+    expect(JSON.stringify(result.records[0])).not.toContain('private-label');
+    expect(JSON.stringify(result.records[0])).not.toContain('private-field');
+    expect(result).toMatchObject({ metadata: { source: 'shortcut_api', projects: 1, items: 1 }, hasMore: false, nextCursor: '2026-07-09T12:00:00.000Z' });
+    expect(result.records[0]).toMatchObject({ dependencies: ['41'], dependents: ['43'], related: ['44'], project: { id: '10', name: 'Sneup delivery' } });
+  });
+
+  test('Shortcut sync fails closed at the configured project cap before requesting stories', async () => {
+    jest.dontMock('../src/services/shortcutWorkSignalClient');
+    jest.resetModules();
+    const { ShortcutWorkSignalClient } = require('../src/services/shortcutWorkSignalClient');
+    const previousLimit = process.env.SNEUP_SHORTCUT_MAX_PROJECTS;
+    process.env.SNEUP_SHORTCUT_MAX_PROJECTS = '1';
+    const http = { get: jest.fn().mockResolvedValue({ data: [{ id: 10, name: 'One' }, { id: 11, name: 'Two' }] }) };
+    const client = new ShortcutWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'shortcut-token' })) } });
+    try {
+      await expect(client.fetchDelta({ connectorId: 'shortcut' })).rejects.toMatchObject({ statusCode: 413 });
+      expect(http.get).toHaveBeenCalledTimes(1);
+      expect(http.get.mock.calls[0][0]).toBe('https://api.app.shortcut.com/api/v3/projects');
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_SHORTCUT_MAX_PROJECTS;
+      else process.env.SNEUP_SHORTCUT_MAX_PROJECTS = previousLimit;
+    }
+  });
+
+  test('Shortcut normalization preserves bounded story scheduling and dependency context without private content', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'shortcut' }, {
+      id: '42', title: 'Ship Shortcut sync', completed: false, blocked: true, started: true, storyType: 'feature', ownerIds: ['member-1'],
+      dueAt: '2026-07-15T00:00:00.000Z', createdAt: '2026-07-09T09:00:00.000Z', updatedAt: '2026-07-09T12:00:00.000Z',
+      url: 'https://app.shortcut.com/noodzakelijk/story/42/ship-shortcut-sync', project: { id: '10', name: 'Sneup delivery' }, dependencies: ['41'], dependents: ['43']
+    });
+
+    expect(normalized).toMatchObject({
+      externalId: '42', sourceType: 'issue', title: 'Ship Shortcut sync', description: '', status: 'blocked', priority: 'critical', owners: ['member-1'], labels: ['Sneup delivery', 'feature']
+    });
+    expect(normalized.raw).toMatchObject({ dependencies: ['41'], dependents: ['43'] });
   });
 
   test('projects provider signals into normalized work graph records', () => {
