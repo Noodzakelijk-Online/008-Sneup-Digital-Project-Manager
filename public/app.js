@@ -914,7 +914,34 @@ function renderAuditEvent(event) {
 
 function renderSourceEvidence(sourceEvidence = []) {
   if (!sourceEvidence || sourceEvidence.length === 0) return '';
-  return `<div class="meta">${sourceEvidence.slice(0, 3).map(item => escapeHtml(item.label || item.type || 'evidence')).join(' | ')}</div>`;
+  const visibleRefs = sourceEvidence.slice(0, 3);
+  const remainingCount = Math.max(0, sourceEvidence.length - visibleRefs.length);
+  return `
+    <div class="source-evidence" aria-label="Source evidence">
+      ${visibleRefs.map(renderSourceEvidenceRef).join('')}
+      ${remainingCount ? `<span class="evidence-ref">+${remainingCount} more</span>` : ''}
+    </div>
+  `;
+}
+
+function renderSourceEvidenceRef(item = {}) {
+  const label = escapeHtml(item.label || item.type || 'Evidence');
+  const sourceUrl = safeExternalUrl(item.url);
+  const title = escapeHtml(`${item.type || 'source'} evidence`);
+  return sourceUrl
+    ? `<a class="evidence-ref evidence-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer" title="${title}">${label}</a>`
+    : `<span class="evidence-ref" title="${title}">${label}</span>`;
+}
+
+function safeExternalUrl(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(String(value));
+    if (url.protocol !== 'https:' || url.username || url.password) return '';
+    return url.toString();
+  } catch (error) {
+    return '';
+  }
 }
 
 async function runRecommendationAction(recommendationId, action) {
@@ -1304,6 +1331,7 @@ function renderEvidenceSection(title, items, renderer) {
 }
 
 function renderEvidenceRef(item) {
+  const sourceUrl = safeExternalUrl(item.url);
   return `
     <div class="item">
       <div class="item-title">
@@ -1312,7 +1340,7 @@ function renderEvidenceRef(item) {
       </div>
       <div class="meta">
         <span>${formatDate(item.observedAt)}</span>
-        ${item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
+        ${sourceUrl ? `<a class="evidence-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
       </div>
       ${item.data ? `<details class="payload"><summary>Evidence data</summary><pre>${escapeHtml(JSON.stringify(item.data, null, 2))}</pre></details>` : ''}
     </div>

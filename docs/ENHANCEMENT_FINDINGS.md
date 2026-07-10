@@ -16,7 +16,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 | ENH-001 | P0 | Connectors | Linked accounts now have first-wave read-only provider sync adapters. | Replace metadata-fed deltas with provider API clients, retries, and per-provider rate limits. |
 | ENH-002 | P0 | Autonomy | Autopilot needs a durable human approval queue. | Add ActionApproval model, approval routes, and command queue controls. |
 | ENH-003 | P0 | Security | Shared production use needs users, workspaces, RBAC, and audit logs. | Add workspace-scoped identity and audit models, then gate every sensitive route. |
-| ENH-004 | P1 | Trust | Recommendations need source evidence. | Add EvidenceRef objects to command queue, risks, focus items, and chat answers. |
+| ENH-004 | P1 | Trust | Recommendations include inspectable, validated source evidence. | Extend source drilldowns into chat and notifications. |
 | ENH-005 | P1 | Forecasting | Forecasting needs capacity calendars and confidence ranges. | Model availability, holidays, skills, throughput, dependencies, and uncertainty. |
 | ENH-006 | P1 | Desktop | Installer first-run setup is delivered; release polish remains. | Configure icon, publisher signing, and update feed. |
 | ENH-007 | P1 | Operations | Background jobs now have observability and controls. | Done: JobRun/JobControl records, stale/failed/paused dashboard health, and allowlisted pause/resume/manual trigger endpoints. |

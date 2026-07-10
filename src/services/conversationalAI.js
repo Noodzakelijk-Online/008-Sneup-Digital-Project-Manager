@@ -1,5 +1,6 @@
 const { OpenAI } = require('openai');
 const logger = require('../utils/logger');
+const { safeExternalSourceUrl } = require('../utils/externalSourceUrl');
 const Conversation = require('../models/Conversation');
 const Member = require('../models/Member');
 const Card = require('../models/Card');
@@ -363,7 +364,7 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
         type: 'card',
         entityId: card.id,
         label: card.name || 'Assigned card',
-        url: card.url || card.shortUrl || card.boardUrl,
+        url: safeExternalSourceUrl(card.url || card.shortUrl || card.boardUrl),
         observedAt: card.lastActivity || card.updatedAt || new Date(),
         data: {
           reason: cardId && context.currentCard ? 'Current conversation card' : 'Assigned card used for chat response',
@@ -401,7 +402,7 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
         type: ref.type || 'system',
         entityId: ref.entityId,
         label: ref.label || ref.type || 'Evidence',
-        url: ref.url,
+        url: safeExternalSourceUrl(ref.url),
         observedAt: ref.observedAt || new Date(),
         data: ref.data || {}
       }));

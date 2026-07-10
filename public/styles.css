@@ -657,6 +657,37 @@ h1 {
   color: #26332f;
 }
 
+.source-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.evidence-ref {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 5px 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-link {
+  color: var(--green-dark);
+}
+
+.evidence-link:hover,
+.evidence-link:focus-visible {
+  border-color: var(--green);
+  background: var(--mint);
+  outline: 0;
+}
+
 .drawer {
   position: fixed;
   inset: 0;

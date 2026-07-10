@@ -3,6 +3,7 @@ const EventEmitter = require('events');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const path = require('path');
+const { safeExternalSourceUrl } = require('../src/utils/externalSourceUrl');
 
 const {
   getPermissionsForRoles,
@@ -375,6 +376,16 @@ describe('request security boundaries', () => {
     expect(accountConnectorService.getRedirectUri('github', 'https://evil.example')).toBe(
       'http://127.0.0.1:3000/api/connectors/github/callback'
     );
+  });
+});
+
+describe('external evidence URL boundary', () => {
+  test('keeps only credential-free HTTPS source URLs', () => {
+    expect(safeExternalSourceUrl('https://trello.com/c/abc123')).toBe('https://trello.com/c/abc123');
+    expect(safeExternalSourceUrl('https://user:secret@trello.com/c/abc123')).toBeNull();
+    expect(safeExternalSourceUrl('http://trello.com/c/abc123')).toBeNull();
+    expect(safeExternalSourceUrl('javascript:alert(1)')).toBeNull();
+    expect(safeExternalSourceUrl('not a URL')).toBeNull();
   });
 });
 

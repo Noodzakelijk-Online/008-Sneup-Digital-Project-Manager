@@ -6,6 +6,7 @@ const AuditEvent = require('../models/AuditEvent');
 const DecisionQueueItem = require('../models/DecisionQueueItem');
 const FollowUpPlan = require('../models/FollowUpPlan');
 const WorkerResponse = require('../models/WorkerResponse');
+const { safeExternalSourceUrl } = require('../utils/externalSourceUrl');
 const Intervention = require('../models/Intervention');
 const CardFinding = require('../models/CardFinding');
 const BoardHealthSnapshot = require('../models/BoardHealthSnapshot');
@@ -1650,7 +1651,7 @@ class OperationsLedgerService {
       type: item.type || 'system',
       entityId: item.entityId,
       label: item.label || item.type || 'Evidence',
-      url: item.url || null,
+      url: safeExternalSourceUrl(item.url),
       observedAt: item.observedAt || null,
       data: item.data || {}
     }));

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const logger = require('../utils/logger');
+const { safeExternalSourceUrl } = require('../utils/externalSourceUrl');
 const Board = require('../models/Board');
 const List = require('../models/List');
 const Card = require('../models/Card');
@@ -884,7 +885,7 @@ class AutopilotService {
         type: ref.type || 'system',
         entityId: ref.entityId,
         label: ref.label || ref.type || 'Evidence',
-        url: ref.url,
+        url: safeExternalSourceUrl(ref.url),
         observedAt: ref.observedAt || new Date(),
         data: ref.data || {}
       }));
@@ -930,6 +931,12 @@ class AutopilotService {
     const dueToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 17, 0, 0);
     const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     const inThreeDays = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const demoEvidence = (type, label, reason) => ({
+      type,
+      label,
+      observedAt: now,
+      data: { reason, demo: true }
+    });
 
     const boardSummaries = [
       {
@@ -999,7 +1006,8 @@ class AutopilotService {
         due: dueToday,
         riskLevel: 'critical',
         priorityScore: 96,
-        reasons: ['due today', 'critical risk', 'blocked']
+        reasons: ['due today', 'critical risk', 'blocked'],
+        sourceEvidence: [demoEvidence('card', 'Demo card snapshot', 'Priority score and focus queue position')]
       },
       {
         id: 'demo-card-2',
@@ -1010,7 +1018,8 @@ class AutopilotService {
         due: tomorrow,
         riskLevel: 'high',
         priorityScore: 88,
-        reasons: ['unassigned', 'due in 1 day', 'high risk']
+        reasons: ['unassigned', 'due in 1 day', 'high risk'],
+        sourceEvidence: [demoEvidence('card', 'Demo card snapshot', 'Ownership and due-date signals')]
       },
       {
         id: 'demo-card-3',
@@ -1021,7 +1030,8 @@ class AutopilotService {
         due: inThreeDays,
         riskLevel: 'high',
         priorityScore: 79,
-        reasons: ['high risk', '3 days inactive']
+        reasons: ['high risk', '3 days inactive'],
+        sourceEvidence: [demoEvidence('card', 'Demo card snapshot', 'Risk and activity signals')]
       }
     ];
 
@@ -1034,6 +1044,7 @@ class AutopilotService {
         owner: 'Sneup',
         reason: 'Campaign dependencies are blocked, owner capacity is overloaded',
         automatable: false,
+        sourceEvidence: [demoEvidence('board', 'Demo board snapshot', 'Board flow and risk summary')],
         payload: { boardId: 'demo-board-3' }
       }),
       this.createCommand({
@@ -1044,6 +1055,7 @@ class AutopilotService {
         owner: 'nina',
         reason: 'Due date passed and work is still open',
         automatable: true,
+        sourceEvidence: [demoEvidence('card', 'Demo card snapshot', 'Overdue open card')],
         payload: { cardId: 'demo-card-1' }
       }),
       this.createCommand({
@@ -1054,6 +1066,7 @@ class AutopilotService {
         owner: 'Sneup',
         reason: 'Unowned work has no accountable path to completion',
         automatable: true,
+        sourceEvidence: [demoEvidence('card', 'Demo card snapshot', 'Card has no assigned owner')],
         payload: { cardId: 'demo-card-2' }
       }),
       this.createCommand({
@@ -1064,6 +1077,7 @@ class AutopilotService {
         owner: 'Sneup',
         reason: '12 active cards with 4 urgent',
         automatable: true,
+        sourceEvidence: [demoEvidence('member', 'Demo workload snapshot', 'Overloaded member workload')],
         payload: { memberId: 'demo-member-1' }
       }),
       this.createCommand({
@@ -1074,6 +1088,7 @@ class AutopilotService {
         owner: 'milan',
         reason: 'No activity for 6 days',
         automatable: true,
+        sourceEvidence: [demoEvidence('card', 'Demo card snapshot', 'Stale card activity')],
         payload: { cardId: 'demo-card-3' }
       })
     ];
@@ -1137,7 +1152,8 @@ class AutopilotService {
         title: 'Production queue is saturated',
         boardName: 'Growth Experiments',
         score: 96,
-        detail: '11 cards averaging 72 hours'
+        detail: '11 cards averaging 72 hours',
+        sourceEvidence: [demoEvidence('board', 'Demo board snapshot', 'Flow bottleneck risk')]
       },
       {
         id: 'demo-risk-2',
@@ -1146,7 +1162,8 @@ class AutopilotService {
         title: 'Analytics webhook rollout',
         boardName: 'Growth Experiments',
         score: 82,
-        detail: 'No owner assigned'
+        detail: 'No owner assigned',
+        sourceEvidence: [demoEvidence('card', 'Demo card snapshot', 'Ownership gap risk')]
       },
       {
         id: 'demo-risk-3',
@@ -1155,7 +1172,8 @@ class AutopilotService {
         title: 'Launch QA queue',
         boardName: 'Client Launches',
         score: 78,
-        detail: 'Review cycle exceeds target by 2.3x'
+        detail: 'Review cycle exceeds target by 2.3x',
+        sourceEvidence: [demoEvidence('board', 'Demo board snapshot', 'Delivery risk')]
       }
     ];
 

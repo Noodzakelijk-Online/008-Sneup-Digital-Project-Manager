@@ -59,11 +59,11 @@ const enhancements = [
     priority: 'P1',
     area: 'trust',
     title: 'Attach evidence and source citations to every recommendation',
-    evidence: 'Recommendations preserve sourceEvidence, `/api/recommendations/:recommendationId/evidence` returns source refs plus decisions, approvals, Trello attempts, audit events, follow-ups, worker responses, and related findings, mission-control command/focus/risk/chat payloads now carry sourceEvidence, and the dashboard exposes evidence counts plus compact evidence rows.',
+    evidence: 'Recommendations preserve sourceEvidence, `/api/recommendations/:recommendationId/evidence` returns source refs plus decisions, approvals, Trello attempts, audit events, follow-ups, worker responses, and related findings, mission-control command/focus/risk/chat payloads now carry sourceEvidence, and the dashboard renders validated HTTPS source links wherever an upstream card or provider object exposes one.',
     impact: 'Makes Sneup defensible: humans can inspect why a recommendation exists before trusting it.',
     effort: 'M',
     status: 'in-progress',
-    nextStep: 'Add clickable source drilldowns for command queue, focus, risk, and chat evidence refs, including direct card/comment/provider object links where the upstream connector exposes them.',
+    nextStep: 'Add source drilldowns to future chat and notification surfaces, retaining the same validated provider-link policy.',
     acceptanceCriteria: [
       'Each recommendation links to source cards, comments, commits, messages, documents, or analytics snapshots.',
       'The dashboard shows source count and newest evidence timestamp.',
