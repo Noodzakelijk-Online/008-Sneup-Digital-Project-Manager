@@ -774,6 +774,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/wrikeWorkSignalClient');
     jest.dontMock('../src/services/smartsheetWorkSignalClient');
     jest.dontMock('../src/services/airtableWorkSignalClient');
+    jest.dontMock('../src/services/todoistWorkSignalClient');
     jest.resetModules();
   });
 
@@ -1091,6 +1092,16 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('airtable').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Todoist adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'task-1' }] });
+    jest.doMock('../src/services/todoistWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const result = await workSignalAdapterService.fetchDelta({ connectorId: 'todoist' }, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith({ connectorId: 'todoist' }, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1947,6 +1958,19 @@ describe('work signal normalization', () => {
     expect(http).not.toHaveProperty('post');
     expect(JSON.stringify(result.records[0])).not.toContain('Never retain this');
     expect(result).toMatchObject({ metadata: { source: 'airtable_api', projects: 1, items: 1 }, hasMore: false });
+  });
+
+  test('Todoist sync uses only bounded project and task GET requests without descriptions', async () => {
+    jest.dontMock('../src/services/todoistWorkSignalClient');
+    jest.resetModules();
+    const { TodoistWorkSignalClient } = require('../src/services/todoistWorkSignalClient');
+    const http = { get: jest.fn().mockResolvedValueOnce({ data: [{ id: 'p-1', name: 'Sneup' }] }).mockResolvedValueOnce({ data: [{ id: 't-1', content: 'Ship Todoist sync', description: 'Private detail', project_id: 'p-1', priority: 3, due: { date: '2026-07-15' }, created_at: '2026-07-10T08:00:00.000Z' }] }) };
+    const client = new TodoistWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'todoist-token' })) } });
+    const result = await client.fetchDelta({});
+    expect(http.get).toHaveBeenCalledWith('https://api.todoist.com/rest/v2/projects', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer todoist-token' }) }));
+    expect(http.get).toHaveBeenCalledWith('https://api.todoist.com/rest/v2/tasks', expect.any(Object));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records[0])).not.toContain('Private detail');
   });
 
   test('projects provider signals into normalized work graph records', () => {
