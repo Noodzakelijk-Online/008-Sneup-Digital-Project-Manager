@@ -24,7 +24,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 | ENH-009 | P2 | AI quality | AI recommendations need regression evaluation. | Build representative scenarios and score correctness, evidence use, safety, and actionability. |
 | ENH-010 | P2 | Notifications | Risks and commands need delivery into team channels. | Add notification policies and Slack, Teams, email, and webhook senders. |
 | ENH-011 | P2 | Data model | Work signals now project into normalized WorkItem, WorkActor, WorkContainer, WorkComment, WorkDependency, and WorkEvent graph records, with graph-derived Robert/VA/team decision candidates. | Add provider-native dependency extraction and queue-to-operations-brief promotion. |
-| ENH-012 | P3 | Reporting | Stakeholder-ready exports are missing. | Add Markdown/PDF reports for standups, weekly status, risk registers, and client updates. |
+| ENH-012 | P3 | Reporting | Stakeholder-ready reports export in Markdown and PDF. | Add scheduled delivery policies after notification channels are configured. |
 | ENH-013 | P2 | Connectors | PM connectors are onboarded but many providers still need adapter sync implementations. | Finish the production-safe connector onboarding baseline, validate metadata consistency, and ship first-wave adapters for the added catalog providers. |
 | ENH-014 | P2 | Resource | In-memory rate limiting can still grow under extreme unique traffic. | Bound rate bucket cardinality and expose operational tuning guidance and metrics. |
 

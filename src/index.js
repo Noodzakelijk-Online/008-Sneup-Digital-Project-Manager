@@ -38,6 +38,7 @@ const jobRoutes = require('./routes/jobs');
 const securityRoutes = require('./routes/security');
 const workspaceRoutes = require('./routes/workspaces');
 const workSignalRoutes = require('./routes/workSignals');
+const reportRoutes = require('./routes/reports');
 
 // Initialize Express app
 const app = express();
@@ -116,6 +117,7 @@ app.use('/api/jobs', jobRoutes);
 app.use('/api/security', securityRoutes);
 app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/work-signals', workSignalRoutes);
+app.use('/api/reports', reportRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

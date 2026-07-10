@@ -22,6 +22,7 @@ const state = {
   enhancementPriority: 'all',
   enhancementArea: 'all',
   enhancementStatus: 'all',
+  reports: [],
   ledger: {
     decisions: [],
     recommendations: [],
@@ -84,6 +85,9 @@ const els = {
   enhancementStatusSummary: document.getElementById('enhancementStatusSummary'),
   enhancementsList: document.getElementById('enhancementsList'),
   enhancementAreaFilter: document.getElementById('enhancementAreaFilter'),
+  reportCount: document.getElementById('reportCount'),
+  reportMode: document.getElementById('reportMode'),
+  reportList: document.getElementById('reportList'),
   workSignalCount: document.getElementById('workSignalCount'),
   workSignalMetrics: document.getElementById('workSignalMetrics'),
   workSignalList: document.getElementById('workSignalList'),
@@ -170,6 +174,7 @@ function showView(viewName) {
     connectors: 'Account connectors',
     enhancements: 'Enhancement backlog',
     signals: 'Cross-tool work signals',
+    reports: 'Stakeholder reports',
     workspaces: 'Workspace administration'
   };
   document.getElementById('pageTitle').textContent = titles[viewName] || titles.overview;
@@ -245,10 +250,59 @@ async function loadAll() {
     loadJobDashboard(),
     loadConnectors(),
     loadEnhancements(),
+    loadReports(),
     loadWorkSignals(),
     loadOperationsLedger(),
     loadWorkspaceAdmin()
   ]);
+}
+
+async function loadReports() {
+  try {
+    const data = await fetchApi('/api/reports');
+    state.reports = data.reports || [];
+    renderReports();
+  } catch (error) {
+    state.reports = [];
+    renderReports(error.message);
+  }
+}
+
+function renderReports(errorMessage = '') {
+  els.reportCount.textContent = state.reports.length || 0;
+  els.reportMode.textContent = errorMessage ? 'unavailable' : 'read-only';
+  els.reportMode.className = `pill ${errorMessage ? 'critical' : 'healthy'}`;
+  els.reportList.innerHTML = errorMessage
+    ? `<div class="empty">${escapeHtml(errorMessage)}</div>`
+    : listOrEmpty(state.reports, (report) => `
+      <div class="item report-item">
+        <div class="item-title">
+          <strong>${escapeHtml(report.label)}</strong>
+          <span class="pill review">read-only</span>
+        </div>
+        <div class="meta">Uses current command, risk, decision, owner, date, and source-evidence context.</div>
+        <div class="item-actions">
+          <button class="button" data-report-download="${escapeHtml(report.id)}" data-report-format="markdown" type="button">Markdown</button>
+          <button class="button primary" data-report-download="${escapeHtml(report.id)}" data-report-format="pdf" type="button">PDF</button>
+        </div>
+      </div>
+    `);
+
+  document.querySelectorAll('[data-report-download]').forEach((button) => {
+    button.addEventListener('click', () => downloadReport(button.dataset.reportDownload, button.dataset.reportFormat));
+  });
+}
+
+function downloadReport(reportType, format) {
+  const report = state.reports.find(item => item.id === reportType);
+  if (!report || !['markdown', 'pdf'].includes(format)) return;
+  const url = `/api/reports/${encodeURIComponent(reportType)}?format=${encodeURIComponent(format)}`;
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${report.filename || reportType}.${format === 'markdown' ? 'md' : 'pdf'}`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 function renderEnhancementFilters() {
