@@ -1,4 +1,5 @@
 const FIRST_RUN_SETUP_KEY = 'sneup.firstRun.v1';
+const SESSION_TOKEN_KEY = 'sneup.sessionToken.v1';
 
 const state = {
   snapshot: null,
@@ -16,7 +17,9 @@ const state = {
   currentWorkspace: null,
   workspaces: [],
   workspaceUsers: [],
+  workspaceInvitations: [],
   activeWorkspaceId: localStorage.getItem('sneup.workspaceId') || '',
+  sessionToken: sessionStorage.getItem(SESSION_TOKEN_KEY) || '',
   enhancements: [],
   enhancementSummary: {},
   enhancementPriority: 'all',
@@ -100,6 +103,9 @@ const els = {
   workspaceList: document.getElementById('workspaceList'),
   workspaceUserCount: document.getElementById('workspaceUserCount'),
   workspaceUsers: document.getElementById('workspaceUsers'),
+  workspaceInviteCount: document.getElementById('workspaceInviteCount'),
+  workspaceInvitations: document.getElementById('workspaceInvitations'),
+  workspaceInviteButton: document.getElementById('workspaceInviteButton'),
   setupButton: document.getElementById('setupButton'),
   modal: document.getElementById('connectorModal'),
   modalTitle: document.getElementById('modalTitle'),
@@ -114,6 +120,7 @@ document.getElementById('refreshButton').addEventListener('click', loadAll);
 document.getElementById('approvalButton').addEventListener('click', () => showView('approvals'));
 document.getElementById('connectorButton').addEventListener('click', () => showView('connectors'));
 els.setupButton.addEventListener('click', () => openFirstRunSetup());
+els.workspaceInviteButton.addEventListener('click', openWorkspaceInvite);
 els.workspaceSelect.addEventListener('change', async (event) => {
   state.activeWorkspaceId = event.target.value;
   if (state.activeWorkspaceId) {
@@ -340,6 +347,10 @@ function apiOptions(options = {}) {
     headers['X-Sneup-Workspace-Id'] = state.activeWorkspaceId;
   }
 
+  if (state.sessionToken && !headers.Authorization) {
+    headers.Authorization = `Bearer ${state.sessionToken}`;
+  }
+
   return {
     ...options,
     headers
@@ -455,6 +466,7 @@ async function loadWorkspaceAdmin() {
     if (!current.auth?.workspaceOverrideAllowed) {
       state.workspaces = [current.workspace];
       state.workspaceUsers = [];
+      state.workspaceInvitations = [];
       renderWorkspaces();
       return;
     }
@@ -470,13 +482,18 @@ async function loadWorkspaceAdmin() {
       localStorage.setItem('sneup.workspaceId', state.activeWorkspaceId);
     }
 
-    const userData = selectedWorkspace?.id
-      ? await fetchApi(`/api/workspaces/${selectedWorkspace.id}/users?limit=100`)
-      : { users: [] };
+    const [userData, invitationData] = selectedWorkspace?.id
+      ? await Promise.all([
+        fetchApi(`/api/workspaces/${selectedWorkspace.id}/users?limit=100`),
+        fetchApi(`/api/workspaces/${selectedWorkspace.id}/invitations?limit=100`)
+      ])
+      : [{ users: [] }, { invitations: [] }];
     state.workspaceUsers = userData.users || [];
+    state.workspaceInvitations = invitationData.invitations || [];
     renderWorkspaces();
   } catch (error) {
     state.workspaceUsers = [];
+    state.workspaceInvitations = [];
     state.workspaces = state.currentWorkspace ? [state.currentWorkspace] : [];
     renderWorkspaces(error.message);
   }
@@ -1563,11 +1580,14 @@ function renderWorkspaces(errorMessage = '') {
   els.workspaceSelect.disabled = !state.securityContext?.workspaceOverrideAllowed || workspaces.length <= 1;
 
   const users = state.workspaceUsers || [];
+  const invitations = state.workspaceInvitations || [];
+  const pendingInvitations = invitations.filter(invite => invite.status === 'pending');
   els.workspaceMetrics.innerHTML = [
     ['Workspace', currentWorkspace?.name || 'Current'],
     ['Status', currentWorkspace?.status || 'active'],
     ['Plan', currentWorkspace?.plan || 'local'],
     ['Users', users.length],
+    ['Pending invites', pendingInvitations.length],
     ['Override', state.securityContext?.workspaceOverrideAllowed ? 'Allowed' : 'Locked'],
     ['Actor', state.securityContext?.displayName || state.securityContext?.actorId || 'Sneup']
   ].map(([label, value]) => `
@@ -1583,7 +1603,10 @@ function renderWorkspaces(errorMessage = '') {
   els.workspaceList.innerHTML = notice + listOrEmpty(workspaces, renderWorkspace);
   els.workspaceUserCount.textContent = `${users.length} user${users.length === 1 ? '' : 's'}`;
   els.workspaceUsers.innerHTML = listOrEmpty(users, renderWorkspaceUser);
-  bindWorkspaceSessionActions();
+  els.workspaceInviteCount.textContent = `${pendingInvitations.length} pending`;
+  els.workspaceInvitations.innerHTML = listOrEmpty(invitations, renderWorkspaceInvitation);
+  els.workspaceInviteButton.disabled = !currentWorkspace?.id || !state.securityContext?.permissions?.includes('identity:manage');
+  bindWorkspaceIdentityActions();
 }
 
 function renderWorkspace(workspace) {
@@ -1622,9 +1645,161 @@ function renderWorkspaceUser(user) {
   `;
 }
 
-function bindWorkspaceSessionActions() {
+function renderWorkspaceInvitation(invitation) {
+  const canRevoke = invitation.status === 'pending';
+  const delivery = invitation.delivery?.status === 'sent' ? 'email sent' : invitation.delivery?.status === 'failed' ? 'email failed' : 'manual link';
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(invitation.displayName)}</strong>
+        <span class="pill ${invitation.status === 'accepted' ? 'healthy' : invitation.status === 'pending' ? 'review' : 'critical'}">${escapeHtml(invitation.status)}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(invitation.email)}</span>
+        <span>${escapeHtml(invitation.role)}</span>
+        <span>${escapeHtml(delivery)}</span>
+        <span>Expires ${escapeHtml(formatDate(invitation.expiresAt))}</span>
+      </div>
+      ${canRevoke ? `
+        <div class="item-actions">
+          <button class="button danger" data-revoke-workspace-invite="${escapeHtml(invitation.id)}" type="button">Revoke invitation</button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function bindWorkspaceIdentityActions() {
   document.querySelectorAll('[data-workspace-user-sessions]').forEach((button) => {
     button.addEventListener('click', () => openWorkspaceUserSessions(button.dataset.workspaceUserSessions));
+  });
+  document.querySelectorAll('[data-revoke-workspace-invite]').forEach((button) => {
+    const invitation = state.workspaceInvitations.find(item => item.id === button.dataset.revokeWorkspaceInvite);
+    button.addEventListener('click', () => openInviteRevocationConfirmation(invitation));
+  });
+}
+
+function openWorkspaceInvite() {
+  const workspaceId = state.activeWorkspaceId || state.currentWorkspace?.id;
+  if (!workspaceId) {
+    openNotice('Invitation unavailable', 'Choose a workspace before inviting a user.');
+    return;
+  }
+
+  els.modalTitle.textContent = 'Invite user';
+  els.modalBody.innerHTML = `
+    <form id="workspaceInviteForm" class="notice-stack">
+      <label>Email<input name="email" type="email" autocomplete="email" required></label>
+      <label>Name<input name="displayName" type="text" autocomplete="name" required></label>
+      <label>Role
+        <select name="role">
+          <option value="viewer">Viewer</option>
+          <option value="operator">Operator</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </select>
+      </label>
+      <label>Expires in days<input name="expiresInDays" type="number" min="1" max="30" value="7" required></label>
+      <label>Delivery
+        <select name="deliveryMode">
+          <option value="manual">Secure link</option>
+          <option value="email">Send email</option>
+        </select>
+      </label>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelWorkspaceInvite">Cancel</button>
+        <button class="button primary" type="submit">Create invitation</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelWorkspaceInvite').addEventListener('click', closeModal);
+  document.getElementById('workspaceInviteForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.textContent = 'Creating...';
+    const values = new FormData(event.currentTarget);
+    try {
+      const data = await fetchApi(`/api/workspaces/${encodeURIComponent(workspaceId)}/invitations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: values.get('email'),
+          displayName: values.get('displayName'),
+          role: values.get('role'),
+          expiresInDays: Number(values.get('expiresInDays')),
+          deliveryMode: values.get('deliveryMode')
+        })
+      });
+      await loadWorkspaceAdmin();
+      renderCreatedInvitation(data);
+    } catch (error) {
+      openNotice('Invitation failed', error.message);
+    }
+  });
+}
+
+function renderCreatedInvitation(data) {
+  const delivery = data.delivery?.status === 'sent'
+    ? 'Email sent.'
+    : data.delivery?.status === 'failed'
+      ? `Email was not sent: ${data.delivery.message || 'provider delivery failed'}.`
+      : 'Secure link created.';
+  els.modalTitle.textContent = 'Invitation ready';
+  els.modalBody.innerHTML = `
+    <div class="notice-stack">
+      <div class="notice">${escapeHtml(delivery)}</div>
+      <label for="workspaceInviteUrl">Secure invitation link</label>
+      <textarea id="workspaceInviteUrl" rows="4" readonly>${escapeHtml(data.inviteUrl)}</textarea>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="copyWorkspaceInvite">Copy link</button>
+        <button class="button primary" type="button" id="closeWorkspaceInvite">Done</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('copyWorkspaceInvite').addEventListener('click', async (event) => {
+    try {
+      await navigator.clipboard.writeText(data.inviteUrl);
+      event.currentTarget.textContent = 'Copied';
+    } catch (error) {
+      const input = document.getElementById('workspaceInviteUrl');
+      input.focus();
+      input.select();
+    }
+  });
+  document.getElementById('closeWorkspaceInvite').addEventListener('click', closeModal);
+}
+
+function openInviteRevocationConfirmation(invitation) {
+  if (!invitation || invitation.status !== 'pending') return;
+  els.modalTitle.textContent = 'Revoke invitation?';
+  els.modalBody.innerHTML = `
+    <div class="notice-stack">
+      <div class="notice">This will invalidate the invitation for ${escapeHtml(invitation.email)} immediately.</div>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelInviteRevoke">Cancel</button>
+        <button class="button danger" type="button" id="confirmInviteRevoke">Revoke invitation</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('cancelInviteRevoke').addEventListener('click', closeModal);
+  document.getElementById('confirmInviteRevoke').addEventListener('click', async (event) => {
+    const workspaceId = state.activeWorkspaceId || state.currentWorkspace?.id;
+    if (!workspaceId) return;
+    event.currentTarget.disabled = true;
+    event.currentTarget.textContent = 'Revoking...';
+    try {
+      await fetchApi(`/api/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitation.id)}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      closeModal();
+      await loadWorkspaceAdmin();
+    } catch (error) {
+      openNotice('Invitation revocation failed', error.message);
+    }
   });
 }
 
@@ -2565,6 +2740,51 @@ function closeModal() {
   els.modal.classList.remove('open');
 }
 
+function inviteTokenFromUrl() {
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get('invite');
+  if (!token) return '';
+  url.searchParams.delete('invite');
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  return token;
+}
+
+function openInviteAcceptance(rawToken) {
+  els.modalTitle.textContent = 'Join workspace';
+  els.modalBody.innerHTML = `
+    <form id="acceptWorkspaceInviteForm" class="notice-stack">
+      <label>Name<input name="displayName" type="text" autocomplete="name" required></label>
+      <div class="toolbar modal-actions">
+        <button class="button primary" type="submit">Join workspace</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('acceptWorkspaceInviteForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.textContent = 'Joining...';
+    try {
+      const values = new FormData(event.currentTarget);
+      const data = await fetchApi('/api/workspaces/invitations/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: rawToken, displayName: values.get('displayName') })
+      });
+      state.sessionToken = data.sessionToken;
+      sessionStorage.setItem(SESSION_TOKEN_KEY, data.sessionToken);
+      state.activeWorkspaceId = data.workspace.id;
+      localStorage.setItem('sneup.workspaceId', state.activeWorkspaceId);
+      closeModal();
+      await loadAll();
+      showView('overview');
+    } catch (error) {
+      openNotice('Unable to join workspace', error.message);
+    }
+  });
+}
+
 function listOrEmpty(items, renderer) {
   return items && items.length > 0
     ? items.map(renderer).join('')
@@ -2639,5 +2859,10 @@ function escapeHtml(value) {
   }[char]));
 }
 
-loadAll();
-if (!state.setupMode) openFirstRunSetup();
+const invitationToken = inviteTokenFromUrl();
+if (invitationToken) {
+  openInviteAcceptance(invitationToken);
+} else {
+  loadAll();
+  if (!state.setupMode) openFirstRunSetup();
+}

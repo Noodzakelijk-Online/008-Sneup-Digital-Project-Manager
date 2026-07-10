@@ -70,6 +70,40 @@ Authorization: Bearer <admin-or-service-token>
 
 Issuing and revoking sessions emits high-risk audit events in the operations ledger.
 
+## Workspace Invitations
+
+Identity administrators can create a time-bound invitation for a new workspace user. Sneup stores only a short token prefix and HMAC hash; the complete invitation URL is returned once to the administrator.
+
+```http
+POST /api/workspaces/:workspaceId/invitations
+Authorization: Bearer <admin-or-service-token>
+Content-Type: application/json
+
+{
+  "email": "new.user@example.com",
+  "displayName": "New User",
+  "role": "viewer",
+  "expiresInDays": 7,
+  "deliveryMode": "manual"
+}
+```
+
+`deliveryMode` defaults to `manual`, which creates a secure link for a human to hand off. Setting it to `email` is an explicit administrator action and sends through Resend only when both `RESEND_API_KEY` and `SNEUP_INVITE_FROM` are configured. Sneup does not send invitation email automatically.
+
+The recipient uses the one-purpose public endpoint below. It accepts only a valid pending invite, activates the linked invited user, and returns a 24-hour onboarding session token once:
+
+```http
+POST /api/workspaces/invitations/accept
+Content-Type: application/json
+
+{
+  "token": "sneup_invite_...",
+  "displayName": "New User"
+}
+```
+
+Pending invitations can be listed and revoked by identity administrators. Invitation creation, revocation, and acceptance create high-risk audit events.
+
 ## Migration Notes
 
 For existing deployments, inspect before applying a workspace migration. Both commands use `SNEUP_DEFAULT_WORKSPACE_ID` and never print credentials:
@@ -99,6 +133,9 @@ Important MongoDB indexes:
 - `ApiToken.workspaceId + tokenPrefix`
 - `SessionToken.workspaceId + userId + status`
 - `SessionToken.tokenPrefix + status`
+- `WorkspaceInvite.workspaceId + userId + status`
+- `WorkspaceInvite.workspaceId + email + status`
+- `WorkspaceInvite.tokenPrefix + status`
 - workspace-scoped indexes on Trello/project collections
 
 The app defines these indexes in Mongoose schemas. Production migrations should still monitor index build time and old duplicate data before enforcing uniqueness in shared databases.

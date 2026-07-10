@@ -157,6 +157,10 @@ All components are battle-tested, production-ready open source libraries:
 - `GET /api/workspaces/:workspaceId/users/:userId/sessions` - List hashed user session records
 - `POST /api/workspaces/:workspaceId/users/:userId/session` - Issue a one-time-visible user session token
 - `POST /api/workspaces/:workspaceId/users/:userId/sessions/:sessionId/revoke` - Revoke a user session token
+- `GET /api/workspaces/:workspaceId/invitations` - List time-bound workspace invitations
+- `POST /api/workspaces/:workspaceId/invitations` - Create an invitation and return its one-time-visible secure link; email delivery is explicit and optional
+- `POST /api/workspaces/:workspaceId/invitations/:inviteId/revoke` - Revoke a pending invitation
+- `POST /api/workspaces/invitations/accept` - Accept a secure invitation token and issue a short-lived onboarding session
 
 See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, and production migration notes.
 

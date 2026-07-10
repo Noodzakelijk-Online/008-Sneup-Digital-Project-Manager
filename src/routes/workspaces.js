@@ -4,6 +4,7 @@ const Workspace = require('../models/Workspace');
 const User = require('../models/User');
 const SessionToken = require('../models/SessionToken');
 const operationsLedgerService = require('../services/operationsLedgerService');
+const workspaceInviteService = require('../services/workspaceInviteService');
 const {
   getRequestWorkspaceObjectId,
   slugifyWorkspaceKey
@@ -19,6 +20,7 @@ const router = express.Router();
 
 router.param('userId', validateObjectIdParam('userId'));
 router.param('sessionId', validateObjectIdParam('sessionId'));
+router.param('inviteId', validateObjectIdParam('inviteId'));
 
 const USER_ROLES = ['viewer', 'operator', 'manager', 'admin', 'owner', 'service'];
 const USER_STATUSES = ['active', 'invited', 'disabled'];
@@ -128,6 +130,22 @@ router.get('/current', async (req, res) => {
   } catch (error) {
     logger.error('Failed to read current workspace:', error);
     res.status(500).json({ success: false, error: 'Failed to read current workspace' });
+  }
+});
+
+router.post('/invitations/accept', async (req, res) => {
+  try {
+    const result = await workspaceInviteService.acceptInvite({
+      rawToken: req.body.token,
+      displayName: req.body.displayName
+    });
+    res.status(201).json({ success: true, ...result });
+  } catch (error) {
+    logger.warn('Workspace invitation acceptance failed', { statusCode: error.statusCode || 500 });
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Invitation acceptance failed'
+    });
   }
 });
 
@@ -302,6 +320,78 @@ router.post('/:workspaceId/users', requirePermission('identity:manage'), async (
     res.status(error.code === 11000 ? 409 : error.statusCode || 500).json({
       success: false,
       error: error.code === 11000 ? 'User email already exists in this workspace' : error.statusCode ? error.message : 'Failed to create workspace user'
+    });
+  }
+});
+
+router.get('/:workspaceId/invitations', requirePermission('identity:manage'), async (req, res) => {
+  try {
+    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const invitations = await workspaceInviteService.listInvites({
+      workspaceId: workspace._id,
+      limit: req.query.limit
+    });
+    res.json({
+      success: true,
+      workspace: publicWorkspace(workspace),
+      count: invitations.length,
+      invitations: invitations.map(workspaceInviteService.publicInvite)
+    });
+  } catch (error) {
+    logger.error('Failed to list workspace invitations:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to list workspace invitations'
+    });
+  }
+});
+
+router.post('/:workspaceId/invitations', requirePermission('identity:manage'), async (req, res) => {
+  try {
+    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const result = await workspaceInviteService.createInvite({
+      workspace,
+      actor: req.auth?.actorId || 'sneup',
+      email: req.body.email,
+      displayName: req.body.displayName,
+      role: req.body.role,
+      expiresInDays: req.body.expiresInDays,
+      deliveryMode: req.body.deliveryMode
+    });
+    res.status(201).json({
+      success: true,
+      invite: result.invite,
+      inviteUrl: result.inviteUrl,
+      delivery: result.delivery,
+      user: publicUser(result.user)
+    });
+  } catch (error) {
+    logger.error('Failed to create workspace invitation:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to create workspace invitation'
+    });
+  }
+});
+
+router.post('/:workspaceId/invitations/:inviteId/revoke', requirePermission('identity:manage'), async (req, res) => {
+  try {
+    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const invite = await workspaceInviteService.revokeInvite({
+      workspaceId: workspace._id,
+      inviteId: req.params.inviteId,
+      actor: req.auth?.actorId || 'sneup'
+    });
+    res.json({
+      success: true,
+      invite: workspaceInviteService.publicInvite(invite),
+      workspace: publicWorkspace(workspace)
+    });
+  } catch (error) {
+    logger.error('Failed to revoke workspace invitation:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to revoke workspace invitation'
     });
   }
 });

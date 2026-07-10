@@ -188,6 +188,9 @@ const isOAuthCallback = (req) =>
 const isWebhook = (req) =>
   req.path === '/api/webhooks/trello' && ['HEAD', 'POST'].includes(req.method);
 
+const isPublicInviteAcceptance = (req) =>
+  req.method === 'POST' && req.path === '/api/workspaces/invitations/accept';
+
 const resolveDatabaseApiToken = async (providedKey, now = new Date()) => {
   if (!providedKey || !isDatabaseConnected()) return null;
 
@@ -289,14 +292,14 @@ const requireApiAccess = async (req, res, next) => {
     return next();
   }
 
-  if (isOAuthCallback(req) || isWebhook(req)) {
+  if (isOAuthCallback(req) || isWebhook(req) || isPublicInviteAcceptance(req)) {
     attachAuthContext(req, buildAuthContext(req, {
-      authMethod: isWebhook(req) ? 'trello_webhook' : 'oauth_callback',
-      actorType: 'external_system',
-      actorId: isWebhook(req) ? 'trello' : 'connector-oauth',
-      displayName: isWebhook(req) ? 'Trello webhook' : 'Connector OAuth callback',
-      roles: ['service'],
-      permissions: ['webhooks:receive', 'connectors:complete-oauth']
+      authMethod: isWebhook(req) ? 'trello_webhook' : isPublicInviteAcceptance(req) ? 'invite_acceptance' : 'oauth_callback',
+      actorType: isPublicInviteAcceptance(req) ? 'invite_recipient' : 'external_system',
+      actorId: isWebhook(req) ? 'trello' : isPublicInviteAcceptance(req) ? 'pending-invite' : 'connector-oauth',
+      displayName: isWebhook(req) ? 'Trello webhook' : isPublicInviteAcceptance(req) ? 'Invitation recipient' : 'Connector OAuth callback',
+      roles: isPublicInviteAcceptance(req) ? [] : ['service'],
+      permissions: isPublicInviteAcceptance(req) ? [] : ['webhooks:receive', 'connectors:complete-oauth']
     }));
     return next();
   }
@@ -514,6 +517,7 @@ module.exports = {
   extractApiKey,
   getPermissionsForRoles,
   hasPermission,
+  isPublicInviteAcceptance,
   requireApiAccess,
   requirePermission,
   resolveDatabaseApiToken,

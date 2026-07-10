@@ -158,6 +158,38 @@ describe('request security boundaries', () => {
     });
   });
 
+  test('allows only the exact invitation acceptance route without an existing API credential', async () => {
+    delete process.env.SNEUP_API_KEY;
+    process.env.SNEUP_REQUIRE_API_KEY = 'true';
+
+    const req = createRequest({
+      path: '/api/workspaces/invitations/accept',
+      method: 'POST'
+    });
+    const res = createResponse();
+    const next = jest.fn();
+
+    await requireApiAccess(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.auth).toMatchObject({
+      authenticated: true,
+      authMethod: 'invite_acceptance',
+      actorType: 'invite_recipient',
+      actorId: 'pending-invite',
+      roles: [],
+      permissions: []
+    });
+
+    const invalidMethod = createRequest({
+      path: '/api/workspaces/invitations/accept',
+      method: 'GET'
+    });
+    const invalidMethodResponse = createResponse();
+    await requireApiAccess(invalidMethod, invalidMethodResponse, jest.fn());
+    expect(invalidMethodResponse.statusCode).toBe(503);
+  });
+
   test('resolves an active database API token into user and workspace context', async () => {
     jest.resetModules();
 
@@ -452,6 +484,7 @@ describe('workspace identity models', () => {
     const WorkDependency = require('../src/models/WorkDependency');
     const User = require('../src/models/User');
     const Workspace = require('../src/models/Workspace');
+    const WorkspaceInvite = require('../src/models/WorkspaceInvite');
 
     const rawToken = 'sneup_test_secret_token';
     const hash = ApiToken.hashToken(rawToken);
@@ -468,6 +501,16 @@ describe('workspace identity models', () => {
       userId: new mongoose.Types.ObjectId(),
       tokenPrefix: SessionToken.prefixFor(rawSessionToken),
       tokenHash: sessionHash,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+    });
+    const rawInviteToken = WorkspaceInvite.generateRawToken();
+    const invite = new WorkspaceInvite({
+      workspaceId: new mongoose.Types.ObjectId(),
+      userId: new mongoose.Types.ObjectId(),
+      email: 'invitee@example.com',
+      displayName: 'Invitee',
+      role: 'viewer',
+      ...WorkspaceInvite.buildSecretRecord(rawInviteToken),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000)
     });
 
@@ -490,6 +533,12 @@ describe('workspace identity models', () => {
     expect(SessionToken.schema.path('tokenHash').options.select).toBe(false);
     expect(SessionToken.schema.path('revokedAt')).toBeTruthy();
     expect(SessionToken.schema.path('revokedBy')).toBeTruthy();
+    expect(rawInviteToken).toMatch(/^sneup_invite_/);
+    expect(invite.matches(rawInviteToken)).toBe(true);
+    expect(invite.matches('wrong-invite')).toBe(false);
+    expect(invite.isUsable()).toBe(true);
+    expect(WorkspaceInvite.schema.path('tokenHash').options.select).toBe(false);
+    expect(WorkspaceInvite.schema.path('delivery.status').enumValues).toEqual(expect.arrayContaining(['not_sent', 'sent', 'failed']));
     expect(Workspace.schema.path('slug')).toBeTruthy();
     expect(User.schema.path('role').enumValues).toEqual(expect.arrayContaining(['owner', 'admin', 'manager', 'operator', 'viewer', 'service']));
     expect(Board.schema.path('workspaceId')).toBeTruthy();
