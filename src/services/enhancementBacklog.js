@@ -91,11 +91,11 @@ const enhancements = [
     priority: 'P1',
     area: 'desktop',
     title: 'Add first-run setup and signed desktop release polish',
-    evidence: 'The Windows installer works, but there is no branded icon, publisher certificate, auto-update channel, or guided setup.',
+    evidence: 'The Windows installer works and first run now guides users into demo or connector setup. A branded icon, publisher certificate, and update channel still require release infrastructure.',
     impact: 'Reduces installation friction and improves trust for Windows 11 users.',
     effort: 'M',
     status: 'ready',
-    nextStep: 'Add first-run wizard for MongoDB/demo mode/API keys, installer icon assets, publisher signing, and update feed configuration.',
+    nextStep: 'Configure installer icon assets, publisher signing, and update feed credentials in the release environment.',
     acceptanceCriteria: [
       'First run explains demo mode versus live mode.',
       'Installer shows a branded icon and signed publisher when a certificate is configured.',

@@ -721,6 +721,31 @@ h1 {
   gap: 12px;
 }
 
+.setup-flow {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.setup-intro,
+.setup-selection p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.setup-mode {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.setup-selection {
+  display: grid;
+  gap: 6px;
+  border-left: 3px solid var(--green);
+  padding-left: 12px;
+}
+
 .modal-actions {
   justify-content: flex-end;
 }

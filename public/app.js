@@ -1,3 +1,5 @@
+const FIRST_RUN_SETUP_KEY = 'sneup.firstRun.v1';
+
 const state = {
   snapshot: null,
   operationsBrief: null,
@@ -33,7 +35,8 @@ const state = {
   category: 'all',
   search: '',
   queueFilter: 'all',
-  signalFilter: 'all'
+  signalFilter: 'all',
+  setupMode: localStorage.getItem(FIRST_RUN_SETUP_KEY) || ''
 };
 
 const els = {
@@ -93,6 +96,7 @@ const els = {
   workspaceList: document.getElementById('workspaceList'),
   workspaceUserCount: document.getElementById('workspaceUserCount'),
   workspaceUsers: document.getElementById('workspaceUsers'),
+  setupButton: document.getElementById('setupButton'),
   modal: document.getElementById('connectorModal'),
   modalTitle: document.getElementById('modalTitle'),
   modalBody: document.getElementById('modalBody')
@@ -105,6 +109,7 @@ document.querySelectorAll('[data-view-button]').forEach((button) => {
 document.getElementById('refreshButton').addEventListener('click', loadAll);
 document.getElementById('approvalButton').addEventListener('click', () => showView('approvals'));
 document.getElementById('connectorButton').addEventListener('click', () => showView('connectors'));
+els.setupButton.addEventListener('click', () => openFirstRunSetup());
 els.workspaceSelect.addEventListener('change', async (event) => {
   state.activeWorkspaceId = event.target.value;
   if (state.activeWorkspaceId) {
@@ -168,6 +173,67 @@ function showView(viewName) {
     workspaces: 'Workspace administration'
   };
   document.getElementById('pageTitle').textContent = titles[viewName] || titles.overview;
+}
+
+function openFirstRunSetup() {
+  let selectedMode = state.setupMode || 'demo';
+  const modeDetails = {
+    demo: {
+      title: 'Demo workspace',
+      copy: 'Explore Sneup with local sample activity. No provider account is connected.'
+    },
+    live: {
+      title: 'Connect workspace',
+      copy: 'Open the connector inventory next, then attach the accounts you choose. Provider writes stay approval-gated.'
+    }
+  };
+
+  const renderSelection = () => {
+    const detail = modeDetails[selectedMode];
+    document.querySelectorAll('[data-setup-mode]').forEach((button) => {
+      const isSelected = button.dataset.setupMode === selectedMode;
+      button.classList.toggle('active', isSelected);
+      button.setAttribute('aria-pressed', String(isSelected));
+    });
+    const title = document.getElementById('setupModeTitle');
+    const copy = document.getElementById('setupModeCopy');
+    if (title) title.textContent = detail.title;
+    if (copy) copy.textContent = detail.copy;
+  };
+
+  els.modalTitle.textContent = 'Set up Sneup';
+  els.modalBody.innerHTML = `
+    <div class="setup-flow">
+      <p class="setup-intro">Choose how this device starts. You can return here whenever your workspace is ready.</p>
+      <div class="segmented setup-mode" role="group" aria-label="Sneup startup mode">
+        <button data-setup-mode="demo" type="button">Demo workspace</button>
+        <button data-setup-mode="live" type="button">Connect workspace</button>
+      </div>
+      <div class="setup-selection" aria-live="polite">
+        <strong id="setupModeTitle"></strong>
+        <p id="setupModeCopy"></p>
+      </div>
+      <div class="notice">This choice is stored only on this device. Sneup does not collect credentials during setup.</div>
+      <div class="toolbar modal-actions">
+        <button class="button primary" type="button" id="completeSetup">Continue</button>
+      </div>
+    </div>
+  `;
+  els.modal.classList.add('open');
+  renderSelection();
+
+  document.querySelectorAll('[data-setup-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedMode = button.dataset.setupMode;
+      renderSelection();
+    });
+  });
+  document.getElementById('completeSetup').addEventListener('click', () => {
+    state.setupMode = selectedMode;
+    localStorage.setItem(FIRST_RUN_SETUP_KEY, selectedMode);
+    closeModal();
+    if (selectedMode === 'live') showView('connectors');
+  });
 }
 
 async function loadAll() {
@@ -2382,3 +2448,4 @@ function escapeHtml(value) {
 }
 
 loadAll();
+if (!state.setupMode) openFirstRunSetup();
