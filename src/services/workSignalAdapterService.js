@@ -13,7 +13,8 @@ const FIRST_WAVE_ADAPTERS = [
   'clickup',
   'azure_devops',
   'wrike',
-  'smartsheet'
+  'smartsheet',
+  'airtable'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -29,6 +30,7 @@ const clickUpWorkSignalClient = require('./clickupWorkSignalClient');
 const azureDevOpsWorkSignalClient = require('./azureDevOpsWorkSignalClient');
 const wrikeWorkSignalClient = require('./wrikeWorkSignalClient');
 const smartsheetWorkSignalClient = require('./smartsheetWorkSignalClient');
+const airtableWorkSignalClient = require('./airtableWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -510,6 +512,17 @@ smartsheetAdapter.capabilities.credentialBackedSync = true;
 smartsheetAdapter.list = async (account) => (await smartsheetWorkSignalClient.fetchDelta(account, null)).records;
 smartsheetAdapter.fetchDelta = (account, cursor) => smartsheetWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('smartsheet', smartsheetAdapter);
+
+const airtableAdapter = buildAdapter('airtable', 'Airtable record adapter', (account, record) => ({
+  externalId: pick(record.externalId, record.id), sourceType: 'task', title: pick(record.title, record.name), description: '',
+  status: statusFromText(record.status), priority: priorityFromText(record.priority), url: pick(record.url), owners: userNames(record.owners),
+  labels: compact([record.base?.name, record.table?.name, record.status]), dueAt: pick(record.dueAt), providerCreatedAt: pick(record.createdTime),
+  providerUpdatedAt: pick(record.updatedTime, record.createdTime), evidenceRefs: baseEvidence(account, record, 'Airtable record'), raw: record
+}));
+airtableAdapter.capabilities.credentialBackedSync = true;
+airtableAdapter.list = async (account) => (await airtableWorkSignalClient.fetchDelta(account, null)).records;
+airtableAdapter.fetchDelta = (account, cursor) => airtableWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('airtable', airtableAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
