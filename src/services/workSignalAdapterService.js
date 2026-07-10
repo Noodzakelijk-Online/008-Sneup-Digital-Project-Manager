@@ -11,7 +11,8 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops'
+  'azure_devops',
+  'wrike'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -25,6 +26,7 @@ const notionWorkSignalClient = require('./notionWorkSignalClient');
 const mondayWorkSignalClient = require('./mondayWorkSignalClient');
 const clickUpWorkSignalClient = require('./clickupWorkSignalClient');
 const azureDevOpsWorkSignalClient = require('./azureDevOpsWorkSignalClient');
+const wrikeWorkSignalClient = require('./wrikeWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -455,6 +457,36 @@ azureDevOpsAdapter.capabilities.credentialBackedSync = true;
 azureDevOpsAdapter.list = async (account) => (await azureDevOpsWorkSignalClient.fetchDelta(account, null)).records;
 azureDevOpsAdapter.fetchDelta = (account, cursor) => azureDevOpsWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('azure_devops', azureDevOpsAdapter);
+
+const wrikePriority = (value) => ({ High: 'high', Normal: 'normal', Low: 'low' }[String(value || '')] || 'unknown');
+const wrikeStatus = (task) => {
+  const status = String(task.status || '').toLowerCase();
+  if (status === 'completed') return 'done';
+  if (status === 'cancelled') return 'archived';
+  if (status === 'deferred') return 'waiting';
+  if (status === 'active') return 'open';
+  return statusFromText(status);
+};
+const wrikeAdapter = buildAdapter('wrike', 'Wrike task adapter', (account, task) => ({
+  externalId: pick(task.externalId, task.id),
+  sourceType: 'task',
+  title: pick(task.title, task.name),
+  description: '',
+  status: wrikeStatus(task),
+  priority: priorityFromText(wrikePriority(task.importance)),
+  url: pick(task.url, task.permalink),
+  owners: userNames(task.responsibleIds),
+  labels: compact([...(task.projectNames || []), task.status]),
+  dueAt: pick(task.dates?.due, task.dates?.finish),
+  providerCreatedAt: pick(task.createdDate),
+  providerUpdatedAt: pick(task.updatedDate),
+  evidenceRefs: baseEvidence(account, task, 'Wrike task'),
+  raw: task
+}));
+wrikeAdapter.capabilities.credentialBackedSync = true;
+wrikeAdapter.list = async (account) => (await wrikeWorkSignalClient.fetchDelta(account, null)).records;
+wrikeAdapter.fetchDelta = (account, cursor) => wrikeWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('wrike', wrikeAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

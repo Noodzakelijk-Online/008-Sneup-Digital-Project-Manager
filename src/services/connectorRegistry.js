@@ -458,7 +458,7 @@ const CONNECTORS = [
   },
 
   // High-value token/API-key connectors used by project managers across 2015-2026.
-  { id: 'wrike', name: 'Wrike', category: 'work_management', description: 'Folders, projects, tasks, custom fields, workload, time logs, and comments.', auth: pat({ docsUrl: 'https://developers.wrike.com/' }), sync: ['projects', 'tasks', 'comments', 'time'] },
+  { id: 'wrike', name: 'Wrike', category: 'work_management', description: 'Read-only projects and task metadata with owners, schedules, project context, and dependency identifiers.', auth: pat({ docsUrl: 'https://developers.wrike.com/', fields: [{ name: 'token', label: 'Permanent access token', secret: true, required: true }, { name: 'apiUrl', label: 'Wrike API URL (EU only)', secret: false, required: false }] }), sync: ['projects', 'tasks'] },
   { id: 'smartsheet', name: 'Smartsheet', category: 'work_management', description: 'Sheets, workspaces, rows, attachments, conversations, automations, and dashboards.', auth: pat({ docsUrl: 'https://smartsheet.redoc.ly/' }), sync: ['sheets', 'rows', 'attachments', 'conversations'] },
   { id: 'airtable', name: 'Airtable', category: 'automation_data', description: 'Bases, tables, records, interfaces, forms, approvals, and lightweight PM databases.', auth: pat({ docsUrl: 'https://airtable.com/developers/web/api/authentication' }), sync: ['bases', 'tables', 'records', 'webhooks'] },
   { id: 'basecamp', name: 'Basecamp', category: 'work_management', description: 'Projects, to-dos, messages, schedules, docs, files, hill charts, and clients.', auth: manual({ docsUrl: 'https://github.com/basecamp/api' }), sync: ['projects', 'todos', 'messages', 'schedules', 'files'] },

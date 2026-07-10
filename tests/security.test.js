@@ -771,6 +771,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/googleWorkspaceWorkSignalClient');
     jest.dontMock('../src/services/clickupWorkSignalClient');
     jest.dontMock('../src/services/azureDevOpsWorkSignalClient');
+    jest.dontMock('../src/services/wrikeWorkSignalClient');
     jest.resetModules();
   });
 
@@ -1048,6 +1049,20 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('azure_devops').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Wrike adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'task-1' }] });
+    jest.doMock('../src/services/wrikeWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'wrike' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('wrike').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1777,6 +1792,57 @@ describe('work signal normalization', () => {
       externalId: '42', sourceType: 'task', title: 'Ship Azure DevOps sync', description: '', status: 'in_progress', priority: 'high', owners: ['Robert'], labels: ['Sneup', 'Task', 'Sneup\\Platform', 'Sneup\\Sprint 1', 'connector']
     });
     expect(normalized.raw.dependencies).toEqual(['41']);
+  });
+
+  test('Wrike sync reads bounded project and task metadata without descriptions, comments, or provider writes', async () => {
+    jest.dontMock('../src/services/wrikeWorkSignalClient');
+    jest.resetModules();
+    const { WrikeWorkSignalClient } = require('../src/services/wrikeWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { data: [{
+          id: 'project-1', title: 'Sneup delivery', createdDate: '2026-07-09T09:00:00.000Z', updatedDate: '2026-07-09T12:00:00.000Z'
+        }] } })
+        .mockResolvedValueOnce({ data: { data: [{
+          id: 'task-1', title: 'Ship Wrike sync', status: 'Active', importance: 'High', createdDate: '2026-07-09T09:00:00.000Z', updatedDate: '2026-07-09T12:00:00.000Z',
+          dates: { due: '2026-07-15T00:00:00.000Z' }, responsibleIds: ['user-1'], parentIds: ['project-1'], dependencyIds: ['dependency-1'],
+          description: 'Private project detail', customFields: [{ value: 'Private field' }], permalink: 'https://www.wrike.com/open.htm?id=task-1'
+        }] } })
+    };
+    const client = new WrikeWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'wrike-token' })) }
+    });
+
+    const result = await client.fetchDelta({ connectorId: 'wrike' }, '2026-07-09T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith(
+      'https://www.wrike.com/api/v4/folders',
+      expect.objectContaining({ params: expect.objectContaining({ project: true }), headers: expect.objectContaining({ Authorization: 'Bearer wrike-token' }) })
+    );
+    expect(http.get).toHaveBeenCalledWith(
+      'https://www.wrike.com/api/v4/tasks',
+      expect.objectContaining({ params: expect.objectContaining({ sortField: 'UpdatedDate', sortOrder: 'Desc', updatedDate: expect.any(String) }) })
+    );
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/comment|description|customfields|attachment/i);
+    expect(http).not.toHaveProperty('post');
+    expect(result.records[0]).not.toHaveProperty('description');
+    expect(result.records[0]).not.toHaveProperty('customFields');
+    expect(result).toMatchObject({ metadata: { source: 'wrike_api', projects: 1, items: 1 }, hasMore: false, nextCursor: '2026-07-09T12:00:00.000Z' });
+    expect(result.records[0]).toMatchObject({ projectNames: ['Sneup delivery'], responsibleIds: ['user-1'] });
+  });
+
+  test('Wrike normalization preserves project context and schedules without task descriptions', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'wrike' }, {
+      id: 'task-1', title: 'Ship Wrike sync', status: 'Active', importance: 'High', responsibleIds: ['user-1'], projectNames: ['Sneup delivery'],
+      dates: { due: '2026-07-15T00:00:00.000Z' }, createdDate: '2026-07-09T09:00:00.000Z', updatedDate: '2026-07-09T12:00:00.000Z'
+    });
+
+    expect(normalized).toMatchObject({
+      externalId: 'task-1', sourceType: 'task', title: 'Ship Wrike sync', description: '', status: 'open', priority: 'high', owners: ['user-1'], labels: ['Sneup delivery', 'Active']
+    });
   });
 
   test('projects provider signals into normalized work graph records', () => {
