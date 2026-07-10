@@ -11,7 +11,8 @@ class TodoistWorkSignalClient {
   constructor(options = {}) { this.http = options.http || axios; this.accountConnectorService = options.accountConnectorService || accountConnectorService; }
 
   async fetchDelta(account, cursor) {
-    const token = this.accountConnectorService.getAccountCredentials(account).token || this.accountConnectorService.getAccountCredentials(account).accessToken;
+    const credentials = this.accountConnectorService.getAccountCredentials(account);
+    const token = credentials.token || credentials.accessToken || credentials.apiKey;
     if (!token) { const error = new Error('Todoist personal access token is missing. Reconnect this account to continue syncing.'); error.statusCode = 503; throw error; }
     const maxProjects = clampInteger(process.env.SNEUP_TODOIST_MAX_PROJECTS, 100, 1, 500);
     const maxTasks = clampInteger(process.env.SNEUP_TODOIST_MAX_TASKS, 1000, 1, 5000);
