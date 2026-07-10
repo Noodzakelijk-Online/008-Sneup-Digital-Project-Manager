@@ -9,7 +9,8 @@ const FIRST_WAVE_ADAPTERS = [
   'microsoft_365',
   'linear',
   'notion',
-  'monday'
+  'monday',
+  'clickup'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -21,6 +22,7 @@ const microsoft365WorkSignalClient = require('./microsoft365WorkSignalClient');
 const linearWorkSignalClient = require('./linearWorkSignalClient');
 const notionWorkSignalClient = require('./notionWorkSignalClient');
 const mondayWorkSignalClient = require('./mondayWorkSignalClient');
+const clickUpWorkSignalClient = require('./clickupWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -401,6 +403,28 @@ mondayAdapter.capabilities.credentialBackedSync = true;
 mondayAdapter.list = async (account) => (await mondayWorkSignalClient.fetchDelta(account, null)).records;
 mondayAdapter.fetchDelta = (account, cursor) => mondayWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('monday', mondayAdapter);
+
+const clickUpPriority = (value) => ({ 1: 'critical', 2: 'high', 3: 'normal', 4: 'low' }[Number(value?.priority || value)] || 'unknown');
+const clickUpAdapter = buildAdapter('clickup', 'ClickUp task adapter', (account, task) => ({
+  externalId: pick(task.externalId, `workspace:${task.team?.id || 'unknown'}:task:${task.id || 'unknown'}`),
+  sourceType: 'task',
+  title: pick(task.name, task.title),
+  description: '',
+  status: statusFromText(task.status?.status, task.status?.type, task.date_done ? 'done' : ''),
+  priority: priorityFromText(clickUpPriority(task.priority), task.tags),
+  url: pick(task.url),
+  owners: userNames(task.assignees),
+  labels: compact([task.team?.name, task.space?.name, task.folder?.name, task.list?.name, ...labelNames(task.tags)]),
+  dueAt: pick(task.due_date, task.dueAt),
+  providerCreatedAt: pick(task.date_created, task.createdAt),
+  providerUpdatedAt: pick(task.date_updated, task.date_done, task.date_closed, task.updatedAt),
+  evidenceRefs: baseEvidence(account, task, 'ClickUp task'),
+  raw: task
+}));
+clickUpAdapter.capabilities.credentialBackedSync = true;
+clickUpAdapter.list = async (account) => (await clickUpWorkSignalClient.fetchDelta(account, null)).records;
+clickUpAdapter.fetchDelta = (account, cursor) => clickUpWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('clickup', clickUpAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

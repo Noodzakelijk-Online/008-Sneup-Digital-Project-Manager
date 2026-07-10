@@ -219,7 +219,7 @@ const CONNECTORS = [
     id: 'clickup',
     name: 'ClickUp',
     category: 'work_management',
-    description: 'Workspaces, spaces, folders, lists, tasks, docs, goals, comments, and time entries.',
+    description: 'Read-only ClickUp task metadata across authorized workspaces, with status, priority, owners, dates, labels, and dependency context.',
     auth: oauth2({
       envPrefix: 'CLICKUP',
       authorizationUrl: 'https://app.clickup.com/api',
@@ -227,7 +227,7 @@ const CONNECTORS = [
       scopes: [],
       docsUrl: 'https://developer.clickup.com/docs/authentication'
     }),
-    sync: ['teams', 'spaces', 'lists', 'tasks', 'docs', 'goals', 'time']
+    sync: ['workspaces', 'tasks']
   },
   {
     id: 'linear',

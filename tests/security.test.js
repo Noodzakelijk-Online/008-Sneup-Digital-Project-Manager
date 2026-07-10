@@ -573,6 +573,12 @@ describe('connector registry', () => {
     expect(monday.auth.scopes).not.toEqual(expect.arrayContaining(['account:read', 'boards:write', 'users:read', 'updates:read', 'updates:write']));
   });
 
+  test('does not add unsupported ClickUp OAuth scopes to the authorization request', () => {
+    const clickup = getConnectors().find(connector => connector.id === 'clickup');
+
+    expect(clickup.auth.scopes).toEqual([]);
+  });
+
   test('supports connector search, category aliases, and pagination', () => {
     const result = accountConnectorService.getCatalog({
       category: 'software delivery',
@@ -763,6 +769,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/asanaWorkSignalClient');
     jest.dontMock('../src/services/slackWorkSignalClient');
     jest.dontMock('../src/services/googleWorkspaceWorkSignalClient');
+    jest.dontMock('../src/services/clickupWorkSignalClient');
     jest.resetModules();
   });
 
@@ -852,9 +859,11 @@ describe('work signal normalization', () => {
       'google_workspace',
       'microsoft_365',
       'linear',
-      'notion'
+      'notion',
+      'monday',
+      'clickup'
     ]));
-    expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(10);
+    expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(12);
     expect(normalized).toMatchObject({
       externalId: 'PR_kwDO123',
       sourceType: 'pull_request',
@@ -1009,6 +1018,20 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('monday').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('ClickUp adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'task-1' }] });
+    jest.doMock('../src/services/clickupWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'clickup' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('clickup').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -1631,6 +1654,57 @@ describe('work signal normalization', () => {
 
     expect(normalized).toMatchObject({
       externalId: 'board:board-1:item-1', sourceType: 'task', title: 'Ship connector', description: '', status: 'in_progress', priority: 'high', owners: ['Robert'], labels: ['Launch', 'In progress']
+    });
+  });
+
+  test('ClickUp sync reads bounded workspace task pages and strips descriptions before storage', async () => {
+    jest.dontMock('../src/services/clickupWorkSignalClient');
+    jest.resetModules();
+    const { ClickUpWorkSignalClient } = require('../src/services/clickupWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { teams: [{ id: 'team-1', name: 'Sneup workspace' }] } })
+        .mockResolvedValueOnce({ data: {
+          tasks: [{
+            id: 'task-1', name: 'Ship ClickUp sync', description: 'Private project detail', markdown_description: 'Private markdown detail', url: 'https://app.clickup.com/t/task-1',
+            status: { status: 'in progress' }, priority: { priority: '2' }, assignees: [{ username: 'Robert' }], tags: [{ name: 'connector' }],
+            due_date: '1783209600000', date_created: '1783036800000', date_updated: '1783123200000', dependencies: [{ task_id: 'task-1', depends_on: 'task-0' }],
+            space: { name: 'Platform' }, folder: { name: 'Delivery' }, list: { name: 'Connector work' }
+          }],
+          last_page: true
+        } })
+    };
+    const client = new ClickUpWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'clickup-access-token' })) }
+    });
+
+    const result = await client.fetchDelta({ connectorId: 'clickup' }, '2026-07-01T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith(
+      'https://api.clickup.com/api/v2/team',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer clickup-access-token' }) })
+    );
+    expect(http.get).toHaveBeenCalledWith(
+      'https://api.clickup.com/api/v2/team/team-1/task',
+      expect.objectContaining({ params: expect.objectContaining({ order_by: 'updated', reverse: true, include_closed: true, subtasks: true }) })
+    );
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/comment|create|delete|markdown_description|attachment/i);
+    expect(result.records[0]).not.toHaveProperty('description');
+    expect(result.records[0]).not.toHaveProperty('markdown_description');
+    expect(result).toMatchObject({ metadata: { source: 'clickup_api', workspaces: 1, items: 1 }, hasMore: false });
+  });
+
+  test('ClickUp normalization preserves status, priority, owners, and workspace hierarchy without task descriptions', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'clickup' }, {
+      id: 'task-1', name: 'Ship ClickUp sync', url: 'https://app.clickup.com/t/task-1', status: { status: 'in progress' }, priority: { priority: '2' },
+      assignees: [{ username: 'Robert' }], tags: [{ name: 'connector' }], team: { id: 'team-1', name: 'Sneup workspace' }, space: { name: 'Platform' }, folder: { name: 'Delivery' }, list: { name: 'Connector work' }, date_updated: '1783123200000'
+    });
+
+    expect(normalized).toMatchObject({
+      externalId: 'workspace:team-1:task:task-1', sourceType: 'task', title: 'Ship ClickUp sync', description: '', status: 'in_progress', priority: 'high', owners: ['Robert'], labels: ['Sneup workspace', 'Platform', 'Delivery', 'Connector work', 'connector']
     });
   });
 
