@@ -802,6 +802,13 @@ describe('connector registry', () => {
     expect(monday.auth.scopes).not.toEqual(expect.arrayContaining(['account:read', 'boards:write', 'users:read', 'updates:read', 'updates:write']));
   });
 
+  test('requests only GitLab read scopes for read-only connector ingestion', () => {
+    const gitlab = getConnectors().find(connector => connector.id === 'gitlab');
+
+    expect(gitlab.auth.scopes).toEqual(['read_api', 'read_user']);
+    expect(gitlab.auth.scopes).not.toEqual(expect.arrayContaining(['api', 'write_repository']));
+  });
+
   test('does not add unsupported ClickUp OAuth scopes to the authorization request', () => {
     const clickup = getConnectors().find(connector => connector.id === 'clickup');
 
@@ -1092,6 +1099,7 @@ describe('work signal normalization', () => {
       'asana',
       'slack',
       'github',
+      'gitlab',
       'google_workspace',
       'microsoft_365',
       'linear',
@@ -1128,6 +1136,22 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('github').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('GitLab adapter delegates live delta reads to its credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'issue:1' }] });
+    jest.doMock('../src/services/gitlabWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'gitlab' };
+
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('gitlab').capabilities.credentialBackedSync).toBe(true);
+    jest.dontMock('../src/services/gitlabWorkSignalClient');
+    jest.resetModules();
   });
 
   test('Trello adapter delegates live delta reads to its credential-backed client', async () => {
@@ -1412,6 +1436,112 @@ describe('work signal normalization', () => {
     } finally {
       process.env = originalEnv;
     }
+  });
+
+  test('GitLab API sync reads bounded issue and merge-request metadata with read-only OAuth access', async () => {
+    const { GitLabWorkSignalClient } = require('../src/services/gitlabWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({
+          data: [{
+            id: 17,
+            title: 'Coordinate release owner',
+            description: 'Private issue content must not enter Sneup.',
+            state: 'opened',
+            labels: ['P1', 'release'],
+            author: { id: 1, username: 'robert', name: 'Robert' },
+            assignees: [{ id: 2, username: 'nina', name: 'Nina' }],
+            project_id: 42,
+            due_date: '2026-07-15',
+            created_at: '2026-07-09T09:00:00.000Z',
+            updated_at: '2026-07-10T10:00:00.000Z',
+            web_url: 'https://gitlab.com/noodzakelijk/sneup/-/issues/17'
+          }],
+          headers: { 'x-next-page': '' }
+        })
+        .mockResolvedValueOnce({
+          data: [{
+            id: 18,
+            title: 'Review connector release',
+            description: 'Private merge-request content must not enter Sneup.',
+            state: 'opened',
+            draft: true,
+            labels: ['backend'],
+            author: { id: 1, username: 'robert', name: 'Robert' },
+            reviewers: [{ id: 3, username: 'milan', name: 'Milan' }],
+            project_id: 42,
+            created_at: '2026-07-09T11:00:00.000Z',
+            updated_at: '2026-07-10T12:00:00.000Z',
+            web_url: 'https://gitlab.com/noodzakelijk/sneup/-/merge_requests/18'
+          }],
+          headers: { 'x-next-page': '' }
+        })
+    };
+    const client = new GitLabWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'gitlab-access-token' })) }
+    });
+    const originalEnv = { ...process.env };
+    process.env.SNEUP_GITLAB_MAX_ITEMS = '20';
+    process.env.SNEUP_GITLAB_PAGE_SIZE = '10';
+    process.env.SNEUP_GITLAB_CURSOR_LOOKBACK_MS = '60000';
+
+    try {
+      const result = await client.fetchDelta({ connectorId: 'gitlab' }, '2026-07-10T09:59:00.000Z');
+
+      expect(http.get).toHaveBeenCalledTimes(2);
+      expect(http.get.mock.calls.map(call => call[0])).toEqual([
+        'https://gitlab.com/api/v4/issues',
+        'https://gitlab.com/api/v4/merge_requests'
+      ]);
+      expect(http.get.mock.calls[0][1]).toMatchObject({
+        params: expect.objectContaining({
+          scope: 'all', state: 'all', order_by: 'updated_at', sort: 'desc', per_page: 10,
+          updated_after: '2026-07-10T09:58:00.000Z'
+        }),
+        headers: { Accept: 'application/json', Authorization: 'Bearer gitlab-access-token' }
+      });
+      const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+      expect(requested).not.toMatch(/description|notes|diff|repository_files|content/i);
+      expect(result).toMatchObject({
+        nextCursor: '2026-07-10T12:00:00.000Z',
+        hasMore: false,
+        metadata: { source: 'gitlab_api', issues: 1, mergeRequests: 1, items: 2 }
+      });
+      expect(result.records).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'issue:17', sourceType: 'issue', title: 'Coordinate release owner' }),
+        expect.objectContaining({ id: 'merge_request:18', sourceType: 'pull_request', title: 'Review connector release' })
+      ]));
+      expect(result.records[0]).not.toHaveProperty('description');
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  test('GitLab normalization preserves work metadata without provider descriptions', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'gitlab' }, {
+      id: 'merge_request:18',
+      gitlabSource: 'merge_request',
+      title: 'Review connector release',
+      state: 'opened',
+      labels: ['P1', 'backend'],
+      author: { username: 'robert' },
+      reviewers: [{ username: 'milan' }],
+      webUrl: 'https://gitlab.com/noodzakelijk/sneup/-/merge_requests/18',
+      updatedAt: '2026-07-10T12:00:00.000Z'
+    });
+
+    expect(normalized).toMatchObject({
+      externalId: 'merge_request:18',
+      sourceType: 'pull_request',
+      description: '',
+      status: 'open',
+      priority: 'high',
+      owners: ['milan', 'robert'],
+      labels: ['P1', 'backend']
+    });
+    expect(normalized.raw).not.toHaveProperty('description');
   });
 
   test('Trello API sync uses linked credentials with bounded read-only board and card requests', async () => {

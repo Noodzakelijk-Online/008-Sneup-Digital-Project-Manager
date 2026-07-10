@@ -13,7 +13,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 
 | ID | Priority | Area | Finding | Next step |
 | --- | --- | --- | --- | --- |
-| ENH-001 | P0 | Connectors | Linked accounts now have first-wave read-only provider sync adapters. | Replace metadata-fed deltas with provider API clients, retries, and per-provider rate limits. |
+| ENH-001 | P0 | Connectors | Linked accounts now have bounded read-only API clients for 20 first-wave providers, including GitLab issue and merge-request metadata with `read_api`; Job Health retains the provider's issue and merge-request counts. | Add the next credential-backed provider client, preserving bounded read-only sync and provider-specific health evidence. |
 | ENH-002 | P0 | Autonomy | Autopilot needs a durable human approval queue. | Add ActionApproval model, approval routes, and command queue controls. |
 | ENH-003 | P0 | Security | Shared production use needs users, workspaces, RBAC, and audit logs. | Add workspace-scoped identity and audit models, then gate every sensitive route. |
 | ENH-004 | P1 | Trust | Recommendations include inspectable, validated source evidence. | Extend source drilldowns into chat and notifications. |

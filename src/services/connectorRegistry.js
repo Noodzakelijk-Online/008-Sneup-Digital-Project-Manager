@@ -338,7 +338,7 @@ const CONNECTORS = [
       envPrefix: 'GITLAB',
       authorizationUrl: 'https://gitlab.com/oauth/authorize',
       tokenUrl: 'https://gitlab.com/oauth/token',
-      scopes: ['api', 'read_user'],
+      scopes: ['read_api', 'read_user'],
       docsUrl: 'https://docs.gitlab.com/integration/oauth_provider/'
     }),
     sync: ['groups', 'projects', 'issues', 'epics', 'merge_requests', 'pipelines']

@@ -5,6 +5,7 @@ const FIRST_WAVE_ADAPTERS = [
   'asana',
   'slack',
   'github',
+  'gitlab',
   'google_workspace',
   'microsoft_365',
   'linear',
@@ -17,6 +18,7 @@ const FIRST_WAVE_ADAPTERS = [
   'airtable', 'todoist', 'shortcut', 'bitbucket'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
+const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
 const jiraWorkSignalClient = require('./jiraWorkSignalClient');
 const asanaWorkSignalClient = require('./asanaWorkSignalClient');
@@ -260,6 +262,27 @@ githubAdapter.capabilities.credentialBackedSync = true;
 githubAdapter.list = async (account) => (await githubWorkSignalClient.fetchDelta(account, null)).records;
 githubAdapter.fetchDelta = (account, cursor) => githubWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('github', githubAdapter);
+
+const gitlabAdapter = buildAdapter('gitlab', 'GitLab issue and merge request adapter', (account, item) => ({
+  externalId: pick(item.externalId, item.id),
+  sourceType: item.gitlabSource === 'merge_request' || item.sourceType === 'pull_request' ? 'pull_request' : 'issue',
+  title: pick(item.title, item.name),
+  description: '',
+  status: statusFromText(item.status, item.state, item.mergedAt ? 'merged' : ''),
+  priority: priorityFromText(item.priority, item.labels, item.draft ? 'draft' : ''),
+  url: pick(item.url, item.webUrl, item.web_url),
+  owners: userNames([...(item.assignees || []), ...(item.reviewers || []), item.author]),
+  labels: labelNames(item.labels),
+  dueAt: pick(item.dueAt, item.dueDate, item.milestone?.dueDate),
+  providerCreatedAt: pick(item.providerCreatedAt, item.createdAt, item.created_at),
+  providerUpdatedAt: pick(item.providerUpdatedAt, item.updatedAt, item.updated_at, item.closedAt, item.mergedAt),
+  evidenceRefs: baseEvidence(account, item, item.gitlabSource === 'merge_request' ? 'GitLab merge request' : 'GitLab issue'),
+  raw: item
+}));
+gitlabAdapter.capabilities.credentialBackedSync = true;
+gitlabAdapter.list = async (account) => (await gitlabWorkSignalClient.fetchDelta(account, null)).records;
+gitlabAdapter.fetchDelta = (account, cursor) => gitlabWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('gitlab', gitlabAdapter);
 
 const googleWorkspaceAdapter = buildAdapter('google_workspace', 'Google Workspace artifact adapter', (account, item) => {
   const mime = String(item.mimeType || item.kind || '').toLowerCase();
