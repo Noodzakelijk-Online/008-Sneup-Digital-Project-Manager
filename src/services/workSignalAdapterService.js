@@ -14,7 +14,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable'
+  'airtable', 'todoist'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const trelloWorkSignalClient = require('./trelloWorkSignalClient');
@@ -31,6 +31,7 @@ const azureDevOpsWorkSignalClient = require('./azureDevOpsWorkSignalClient');
 const wrikeWorkSignalClient = require('./wrikeWorkSignalClient');
 const smartsheetWorkSignalClient = require('./smartsheetWorkSignalClient');
 const airtableWorkSignalClient = require('./airtableWorkSignalClient');
+const todoistWorkSignalClient = require('./todoistWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -523,6 +524,11 @@ airtableAdapter.capabilities.credentialBackedSync = true;
 airtableAdapter.list = async (account) => (await airtableWorkSignalClient.fetchDelta(account, null)).records;
 airtableAdapter.fetchDelta = (account, cursor) => airtableWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('airtable', airtableAdapter);
+const todoistAdapter = buildAdapter('todoist', 'Todoist task adapter', (account, task) => ({ externalId: pick(task.id), sourceType: 'task', title: pick(task.content), description: '', status: 'open', priority: priorityFromText({ 4: 'critical', 3: 'high', 2: 'normal', 1: 'low' }[Number(task.priority)]), url: pick(task.url), owners: userNames(task.assigneeId), labels: compact([task.project?.name, task.sectionId]), dueAt: pick(task.due), providerCreatedAt: pick(task.createdAt), providerUpdatedAt: pick(task.createdAt), evidenceRefs: baseEvidence(account, task, 'Todoist task'), raw: task }));
+todoistAdapter.capabilities.credentialBackedSync = true;
+todoistAdapter.list = async account => (await todoistWorkSignalClient.fetchDelta(account, null)).records;
+todoistAdapter.fetchDelta = (account, cursor) => todoistWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('todoist', todoistAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
