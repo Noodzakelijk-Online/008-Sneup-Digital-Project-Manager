@@ -8,6 +8,7 @@ const state = {
   connectors: [],
   categories: [],
   accounts: [],
+  connectorSafety: null,
   workSignals: [],
   workGraph: null,
   workGraphCandidates: [],
@@ -84,6 +85,7 @@ const els = {
   connectorSearch: document.getElementById('connectorSearch'),
   connectorHeading: document.getElementById('connectorHeading'),
   connectedCount: document.getElementById('connectedCount'),
+  connectorSafety: document.getElementById('connectorSafety'),
   enhancementCount: document.getElementById('enhancementCount'),
   enhancementMetrics: document.getElementById('enhancementMetrics'),
   enhancementStatusSummary: document.getElementById('enhancementStatusSummary'),
@@ -578,6 +580,7 @@ async function loadConnectors() {
     state.connectors = data.connectors || [];
     state.categories = data.categories || [];
     state.accounts = data.accounts || [];
+    state.connectorSafety = data.safety || null;
     renderConnectors();
   } catch (error) {
     els.connectorGrid.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -2707,6 +2710,7 @@ function renderConnectors() {
 
   const selectedCategory = state.categories.find(category => category.id === state.category);
   els.connectorHeading.textContent = selectedCategory ? selectedCategory.name : 'All connectors';
+  renderConnectorSafety();
 
   const accountsByConnectorId = new Map(state.accounts.map(account => [account.connectorId, account]));
   const filtered = state.connectors.filter((connector) => {
@@ -2733,6 +2737,21 @@ function renderConnectors() {
   });
 }
 
+function renderConnectorSafety() {
+  const safety = state.connectorSafety;
+  if (!safety) {
+    els.connectorSafety.innerHTML = '';
+    return;
+  }
+  els.connectorSafety.innerHTML = `
+    <div>
+      <strong>${safety.providerWritesBlocked} tools are write-blocked</strong>
+      <span>Signals are read-only. ${safety.scopeReviews} account links require a scope review.</span>
+    </div>
+    <span>${safety.providerScopeReviews} broad provider grants flagged</span>
+  `;
+}
+
 function renderCategories() {
   const allCount = state.connectors.length;
   const rows = [{ id: 'all', name: 'All tools', count: allCount }, ...state.categories];
@@ -2755,6 +2774,7 @@ function renderConnector(connector, account) {
   const initials = connector.name.split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase();
   const configured = connector.auth.configured;
   const authLabel = connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type.replaceAll('_', ' ');
+  const safety = connector.safety || {};
   const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
   const canSync = Boolean(account && contract?.adapterStatus === 'implemented');
   const isJira = connector.id === 'jira_software' || connector.id === 'jira_service_management';
@@ -2791,12 +2811,13 @@ function renderConnector(connector, account) {
           <div class="connector-logo">${escapeHtml(initials)}</div>
           <div>
             <h3>${escapeHtml(connector.name)}</h3>
-            <div class="meta"><span>${escapeHtml(connector.categoryName)}</span><span>${escapeHtml(authLabel)}</span></div>
+            <div class="meta"><span>${escapeHtml(connector.categoryName)}</span><span>${escapeHtml(authLabel)}</span><span>${safety.scopeRisk === 'review' ? 'scope review' : 'read-only'}</span></div>
           </div>
         </div>
         <span class="pill ${connected ? 'connected' : configured ? 'review' : 'high'}">${connected ? 'connected' : configured ? 'ready' : 'setup'}</span>
       </div>
       <p>${escapeHtml(connector.description)}</p>
+      <div class="connector-policy ${safety.scopeRisk === 'review' ? 'review' : ''}">${escapeHtml(safety.summary || 'Read-only ingestion only.')}</div>
       ${syncSummary}
       <div class="connector-actions">
         <span class="meta">${connector.sync.slice(0, 3).map(escapeHtml).join('  |  ')}</span>
@@ -2933,17 +2954,22 @@ async function syncConnectorAccount(accountId) {
   }
 }
 
-async function startConnection(connectorId) {
+async function startConnection(connectorId, options = {}) {
   const connector = state.connectors.find(item => item.id === connectorId);
   if (!connector) return;
   try {
     const response = await apiFetch(`/api/connectors/${connectorId}/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ returnTo: '/?connectors=1' })
+      body: JSON.stringify({ returnTo: '/?connectors=1', scopeAcknowledged: options.scopeAcknowledged === true })
     });
     const data = await response.json();
     if (!data.success) throw new Error(data.error || 'Could not start connection');
+
+    if (data.scopeReviewRequired) {
+      openConnectorSafetyReview(connector, data);
+      return;
+    }
 
     if (data.authUrl) {
       window.location.href = data.authUrl;
@@ -2954,6 +2980,31 @@ async function startConnection(connectorId) {
   } catch (error) {
     openNotice(connector.name, error.message);
   }
+}
+
+function openConnectorSafetyReview(connector, data) {
+  const safety = data.safety || connector.safety || {};
+  els.modalTitle.textContent = `Review ${connector.name} access`;
+  els.modalBody.innerHTML = `
+    <div class="notice-stack">
+      <div class="notice"><strong>Read-only signal ingestion.</strong> Sneup blocks provider writes and turns proposed provider changes into exact-payload approval decisions.</div>
+      <div class="scope-review-list">
+        <span>Requested provider scopes</span>
+        <code>${escapeHtml((safety.requestedScopes || []).join(', ') || 'Provider-managed token permissions')}</code>
+      </div>
+      ${(safety.reviewReasons || []).map(reason => `<div class="notice">${escapeHtml(reason)}</div>`).join('')}
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelScopeReview">Cancel</button>
+        <button class="button primary" type="button" id="continueScopeReview">Continue to ${escapeHtml(connector.name)}</button>
+      </div>
+    </div>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelScopeReview').addEventListener('click', closeModal);
+  document.getElementById('continueScopeReview').addEventListener('click', () => {
+    closeModal();
+    startConnection(connector.id, { scopeAcknowledged: true });
+  });
 }
 
 function openCredentialModal(connector, data) {

@@ -27,6 +27,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 | ENH-012 | P3 | Reporting | Stakeholder-ready reports export in Markdown and PDF. | Add scheduled delivery policies after notification channels are configured. |
 | ENH-013 | P2 | Connectors | PM connectors are onboarded but many providers still need adapter sync implementations. | Finish the production-safe connector onboarding baseline, validate metadata consistency, and ship first-wave adapters for the added catalog providers. |
 | ENH-014 | P2 | Resource | In-memory rate limiting can still grow under extreme unique traffic. | Bound rate bucket cardinality and expose operational tuning guidance and metrics. |
+| ENH-015 | P1 | Connector safety | Account linking now stops at a scope-review gate, exposes requested scopes, narrows four provider permissions to read-only equivalents, and blocks provider writes within Sneup. | Add workspace-scoped credential encryption configuration and provider-specific consent evidence to the audit ledger. |
 
 ## Recommended Build Order
 

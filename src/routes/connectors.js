@@ -56,6 +56,19 @@ router.get('/categories', (req, res) => {
   }
 });
 
+router.get('/safety', (req, res) => {
+  try {
+    const catalog = accountConnectorService.getCatalog();
+    res.json({
+      success: true,
+      safety: catalog.safety
+    });
+  } catch (error) {
+    logger.error('Failed to get connector safety summary:', error);
+    sendError(res, error);
+  }
+});
+
 router.get('/accounts', async (req, res) => {
   try {
     const accounts = await accountConnectorService.listAccounts(connectorRequestOptions(req));
@@ -178,6 +191,7 @@ router.post('/:connectorId/connect', requirePermission('connectors:manage'), (re
     const result = accountConnectorService.beginConnection(req.params.connectorId, {
       baseUrl: getBaseUrl(req),
       returnTo: req.body.returnTo,
+      scopeAcknowledged: req.body.scopeAcknowledged === true,
       workspaceId: getRequestWorkspaceObjectId(req)
     });
 

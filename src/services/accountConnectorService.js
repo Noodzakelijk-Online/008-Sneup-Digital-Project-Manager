@@ -3,6 +3,7 @@ const axios = require('axios');
 const mongoose = require('mongoose');
 const ConnectorAccount = require('../models/ConnectorAccount');
 const { CATEGORIES, getCategories, getConnector, getConnectors } = require('./connectorRegistry');
+const { buildConnectorSafetyProfile, summarizeConnectorSafety } = require('./connectorSafetyProfile');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -115,6 +116,7 @@ class AccountConnectorService {
     return {
       categories: getCategories(),
       connectors: slicedConnectors.map(connector => this.sanitizeConnector(connector)),
+      safety: summarizeConnectorSafety(filteredConnectors),
       total: filteredConnectors.length,
       offset,
       limit
@@ -184,8 +186,18 @@ class AccountConnectorService {
 
   beginConnection(connectorId, options = {}) {
     const connector = this.requireConnector(connectorId);
+    const safety = buildConnectorSafetyProfile(connector);
 
     if (connector.auth.type !== 'oauth2') {
+      if (safety.scopeReviewRequired && options.scopeAcknowledged !== true) {
+        return {
+          connector: this.sanitizeConnector(connector),
+          authType: connector.auth.type,
+          scopeReviewRequired: true,
+          safety,
+          message: 'Review the connector safety profile before entering provider credentials.'
+        };
+      }
       return {
         connector: this.sanitizeConnector(connector),
         authType: connector.auth.type,
@@ -207,6 +219,16 @@ class AccountConnectorService {
         authType: 'oauth2',
         missingConfig: missing,
         message: 'OAuth app credentials are required before Sneup can send users through this provider.'
+      };
+    }
+
+    if (safety.scopeReviewRequired && options.scopeAcknowledged !== true) {
+      return {
+        connector: this.sanitizeConnector(connector),
+        authType: 'oauth2',
+        scopeReviewRequired: true,
+        safety,
+        message: 'Review the requested provider scopes before opening the authorization page.'
       };
     }
 
@@ -561,6 +583,7 @@ class AccountConnectorService {
         fields: connector.auth.fields || [],
         configured: connector.auth.type !== 'oauth2' || this.hasOAuthEnvironment(connector)
       },
+      safety: buildConnectorSafetyProfile(connector),
       sync: connector.sync || []
     };
   }

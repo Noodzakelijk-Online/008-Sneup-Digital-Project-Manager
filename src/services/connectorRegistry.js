@@ -292,7 +292,7 @@ const CONNECTORS = [
         'openid',
         'email',
         'profile',
-        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/calendar.readonly',
         'https://www.googleapis.com/auth/drive.metadata.readonly',
         'https://www.googleapis.com/auth/gmail.readonly'
       ],
@@ -353,7 +353,7 @@ const CONNECTORS = [
       authorizationUrl: 'https://zoom.us/oauth/authorize',
       tokenUrl: 'https://zoom.us/oauth/token',
       tokenAuth: 'basic',
-      scopes: ['meeting:read', 'meeting:write', 'recording:read', 'user:read'],
+      scopes: ['meeting:read', 'recording:read', 'user:read'],
       docsUrl: 'https://developers.zoom.us/docs/integrations/'
     }),
     sync: ['meetings', 'recordings', 'webinars', 'users']
@@ -381,7 +381,7 @@ const CONNECTORS = [
       envPrefix: 'MIRO',
       authorizationUrl: 'https://miro.com/oauth/authorize',
       tokenUrl: 'https://api.miro.com/v1/oauth/token',
-      scopes: ['boards:read', 'boards:write', 'identity:read'],
+      scopes: ['boards:read', 'identity:read'],
       docsUrl: 'https://developers.miro.com/docs/getting-started-with-oauth'
     }),
     sync: ['boards', 'items', 'comments', 'users']
@@ -533,7 +533,7 @@ const CONNECTORS = [
   { id: 'jira_align', name: 'Jira Align', category: 'software_delivery', description: 'Program initiatives, enterprise epics, value streams, dependencies, and planning windows.', auth: manual({ docsUrl: 'https://www.atlassian.com/software/jira/align', fields: [{ name: 'baseUrl', label: 'Jira Align API URL', required: true }, { name: 'apiToken', label: 'API token', secret: true, required: true }] }), sync: ['programs', 'initiatives', 'work_items', 'dependencies', 'planning_windows'] },
   { id: 'teamgantt', name: 'TeamGantt', category: 'work_management', description: 'Projects, schedules, tasks, dependencies, milestones, and team capacities.', auth: apiKey({ docsUrl: 'https://help.teamgantt.com/en/articles/900-introducing-the-teamgantt-api' }), sync: ['projects', 'tasks', 'schedules', 'dependencies', 'milestones', 'timesheets'] },
   { id: 'kanbanize', name: 'Kanbanize', category: 'work_management', description: 'Boards, cards, swimlanes, dependencies, WIP policies, and release planning.', auth: apiKey({ docsUrl: 'https://kanbanize.com/ctrl_login/docs/1/api/index.html', fields: [{ name: 'apiUrl', label: 'Kanbanize API URL', required: true }, { name: 'apiToken', label: 'API token', secret: true, required: true }] }), sync: ['boards', 'cards', 'swimlanes', 'dependencies', 'workflows'] },
-  { id: 'google_chat', name: 'Google Chat', category: 'communication', description: 'Rooms, messages, mentions, spaces, and PM-ready team communication.', auth: oauth2({ envPrefix: 'GOOGLE_CHAT', authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token', scopes: ['https://www.googleapis.com/auth/chat.messages'], docsUrl: 'https://developers.google.com/chat/api/guides/auth' }), sync: ['spaces', 'members', 'messages', 'threads'] },
+  { id: 'google_chat', name: 'Google Chat', category: 'communication', description: 'Rooms, messages, mentions, spaces, and PM-ready team communication.', auth: oauth2({ envPrefix: 'GOOGLE_CHAT', authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token', scopes: ['https://www.googleapis.com/auth/chat.messages.readonly'], docsUrl: 'https://developers.google.com/chat/api/guides/auth' }), sync: ['spaces', 'members', 'messages', 'threads'] },
   { id: 'projectplace', name: 'Projectplace', category: 'work_management', description: 'Projects, tasks, templates, workstreams, files, and collaborative planning.', auth: apiKey({ docsUrl: 'https://help.projectplace.com/en/kb/api-api-interface', fields: [{ name: 'baseUrl', label: 'Projectplace API URL', required: true }, { name: 'apiKey', label: 'API key', secret: true, required: true }] }), sync: ['projects', 'tasks', 'workstreams', 'files', 'users'] },
   { id: 'clarizen', name: 'Clarizen', category: 'software_delivery', description: 'Programs, initiatives, dependencies, resource assignments, risks, milestones, and executive reporting.', auth: apiKey({ docsUrl: 'https://api.clarizen.com/api/2/rest', fields: [{ name: 'tenantUrl', label: 'Clarizen tenant URL', required: true }, { name: 'apiKey', label: 'API token', secret: true, required: true }] }), sync: ['projects', 'tasks', 'initiatives', 'assignments', 'risks', 'milestones'] },
   { id: 'scoro', name: 'Scoro', category: 'work_management', description: 'Work orders, tasks, CRM opportunities, estimates, billing, capacity, and team utilization.', auth: apiKey({ docsUrl: 'https://api.scoro.com', fields: [{ name: 'accountId', label: 'Scoro account ID', required: true }, { name: 'apiKey', label: 'API token', secret: true, required: true }] }), sync: ['projects', 'tasks', 'opportunities', 'invoices', 'timesheets'] },

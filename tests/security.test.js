@@ -83,6 +83,29 @@ describe('request security boundaries', () => {
     expect(res.body.error).toContain('SNEUP_API_KEY');
   });
 
+  test('permits the configured local application origin while rejecting an untrusted origin', async () => {
+    const originalPort = process.env.PORT;
+    process.env.PORT = '3215';
+    try {
+      const requestSecurity = require('../src/utils/requestSecurity');
+      await expect(new Promise((resolve, reject) => {
+        requestSecurity.corsOptions.origin('http://127.0.0.1:3215', (error, allowed) => {
+          if (error) return reject(error);
+          return resolve(allowed);
+        });
+      })).resolves.toBe(true);
+      await expect(new Promise((resolve, reject) => {
+        requestSecurity.corsOptions.origin('https://untrusted.example', (error, allowed) => {
+          if (error) return reject(error);
+          return resolve(allowed);
+        });
+      })).rejects.toThrow('Origin is not allowed');
+    } finally {
+      if (originalPort === undefined) delete process.env.PORT;
+      else process.env.PORT = originalPort;
+    }
+  });
+
   test('allows a valid configured API key and attaches service identity', async () => {
     process.env.SNEUP_API_KEY = 'test-api-key';
     process.env.SNEUP_DEFAULT_WORKSPACE_ID = 'workspace-main';
@@ -853,6 +876,52 @@ describe('connector registry', () => {
 
     expect(microsoft.auth.scopes).toEqual(expect.arrayContaining(['Calendars.Read', 'Tasks.Read', 'Files.Read']));
     expect(microsoft.auth.scopes).not.toEqual(expect.arrayContaining(['Mail.Read', 'Calendars.ReadWrite', 'Tasks.ReadWrite', 'Files.Read.All', 'Sites.Read.All']));
+  });
+
+  test('uses documented read-only scopes for Google Calendar, Zoom, Miro, and Google Chat', () => {
+    const byId = Object.fromEntries(getConnectors().map(connector => [connector.id, connector]));
+
+    expect(byId.google_workspace.auth.scopes).toContain('https://www.googleapis.com/auth/calendar.readonly');
+    expect(byId.google_workspace.auth.scopes).not.toContain('https://www.googleapis.com/auth/calendar');
+    expect(byId.zoom.auth.scopes).toEqual(expect.arrayContaining(['meeting:read', 'recording:read', 'user:read']));
+    expect(byId.zoom.auth.scopes).not.toContain('meeting:write');
+    expect(byId.miro.auth.scopes).toEqual(['boards:read', 'identity:read']);
+    expect(byId.google_chat.auth.scopes).toEqual(['https://www.googleapis.com/auth/chat.messages.readonly']);
+  });
+
+  test('makes provider scope risk explicit and requires acknowledgement before credentials or OAuth leave Sneup', () => {
+    const original = {
+      state: process.env.CONNECTOR_STATE_SECRET,
+      clientId: process.env.MIRO_CLIENT_ID,
+      clientSecret: process.env.MIRO_CLIENT_SECRET
+    };
+    process.env.CONNECTOR_STATE_SECRET = 'connector-state-secret-for-scope-review-tests-123456';
+    process.env.MIRO_CLIENT_ID = 'miro-client-id';
+    process.env.MIRO_CLIENT_SECRET = 'miro-client-secret';
+
+    try {
+      const safety = accountConnectorService.getConnectorDetails('github').safety;
+      expect(safety).toMatchObject({
+        ingestion: 'read_only',
+        providerWritesBlocked: true,
+        scopeReviewRequired: true,
+        providerScopeReviewRequired: true
+      });
+
+      const pendingReview = accountConnectorService.beginConnection('miro', { baseUrl: 'https://sneup.example' });
+      expect(pendingReview).toMatchObject({ scopeReviewRequired: true });
+      expect(pendingReview).not.toHaveProperty('authUrl');
+
+      const approvedReview = accountConnectorService.beginConnection('miro', {
+        baseUrl: 'https://sneup.example',
+        scopeAcknowledged: true
+      });
+      expect(approvedReview.authUrl).toContain('https://miro.com/oauth/authorize');
+    } finally {
+      process.env.CONNECTOR_STATE_SECRET = original.state;
+      process.env.MIRO_CLIENT_ID = original.clientId;
+      process.env.MIRO_CLIENT_SECRET = original.clientSecret;
+    }
   });
 
   test('does not request Linear write scopes for read-only connector ingestion', () => {

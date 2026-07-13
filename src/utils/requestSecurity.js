@@ -393,6 +393,7 @@ const apiRateLimit = (req, res, next) => {
 };
 
 const buildAllowedOrigins = () => {
+  const localPort = String(process.env.PORT || 3000).trim();
   const configured = (process.env.SNEUP_ALLOWED_ORIGINS || '')
     .split(',')
     .map(origin => origin.trim())
@@ -401,6 +402,8 @@ const buildAllowedOrigins = () => {
   return new Set([
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    `http://localhost:${localPort}`,
+    `http://127.0.0.1:${localPort}`,
     ...configured
   ]);
 };
@@ -411,7 +414,7 @@ let allowedOriginsCache = {
 };
 
 const getAllowedOrigins = () => {
-  const source = process.env.SNEUP_ALLOWED_ORIGINS || '';
+  const source = `${process.env.PORT || 3000}:${process.env.SNEUP_ALLOWED_ORIGINS || ''}`;
   if (allowedOriginsCache.source !== source || !allowedOriginsCache.set) {
     allowedOriginsCache = {
       source,

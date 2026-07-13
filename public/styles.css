@@ -522,6 +522,45 @@ h1 {
   gap: 12px;
 }
 
+.connector-safety {
+  border: 1px solid #b8dfd2;
+  background: #effaf6;
+  color: #1d5b4d;
+  border-radius: 8px;
+  padding: 11px 12px;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.connector-safety div {
+  display: grid;
+  gap: 3px;
+}
+
+.connector-policy,
+.scope-review-list {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.connector-policy.review {
+  color: #8a4700;
+}
+
+.scope-review-list {
+  display: grid;
+  gap: 5px;
+}
+
+.scope-review-list code {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+
 .connector-card {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -869,6 +908,11 @@ h1 {
   .connectors-layout,
   .ledger-layout {
     grid-template-columns: 1fr;
+  }
+
+  .connector-safety {
+    align-items: start;
+    flex-direction: column;
   }
 }
 
