@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -56,6 +56,7 @@ const resourceGuruWorkSignalClient = require('./resourceGuruWorkSignalClient');
 const sentryWorkSignalClient = require('./sentryWorkSignalClient');
 const pagerDutyWorkSignalClient = require('./pagerDutyWorkSignalClient');
 const statuspageWorkSignalClient = require('./statuspageWorkSignalClient');
+const genericRestApiWorkSignalClient = require('./genericRestApiWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -884,6 +885,12 @@ statuspageAdapter.capabilities.credentialBackedSync = true;
 statuspageAdapter.list = async account => (await statuspageWorkSignalClient.fetchDelta(account, null)).records;
 statuspageAdapter.fetchDelta = (account, cursor) => statuspageWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('statuspage', statuspageAdapter);
+
+const genericRestApiAdapter = buildAdapter('rest_api_generic', 'Generic REST API bounded metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'record'), title: titleFromText(item.name, 'External record'), description: '', status: item.status || 'unknown', priority: priorityFromText(item.priority), owners: [], labels: compact(['rest_api_generic', item.sourceType, item.status, item.priority]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Generic REST API metadata'), raw: { id: item.id, sourceType: item.sourceType, recordId: item.recordId, status: item.status, priority: item.priority, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+genericRestApiAdapter.capabilities.credentialBackedSync = true;
+genericRestApiAdapter.list = async account => (await genericRestApiWorkSignalClient.fetchDelta(account, null)).records;
+genericRestApiAdapter.fetchDelta = (account, cursor) => genericRestApiWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('rest_api_generic', genericRestApiAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

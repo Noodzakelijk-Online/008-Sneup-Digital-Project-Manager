@@ -234,6 +234,8 @@ PagerDuty uses a read-only REST API token. It reads bounded active incident and 
 
 Atlassian Statuspage uses a page-scoped API key and explicit page ID. It reads bounded component and incident metadata with GET only, validates fixed-page pagination, excludes subscribers, incident update bodies, postmortems, component descriptions, and provider writes, and fails visibly at configured collection caps.
 
+Generic REST API connects one configured public HTTPS JSON collection with a bearer token. It resolves the configured host before each sync, rejects private-network targets and redirects, pins the request to vetted public addresses, enforces response and record caps, stores only normalized ID/title/status/priority/timestamp metadata, and never makes provider writes or guesses pagination.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations

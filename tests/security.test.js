@@ -89,6 +89,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/sentryWorkSignalClient');
     jest.dontMock('../src/services/pagerDutyWorkSignalClient');
     jest.dontMock('../src/services/statuspageWorkSignalClient');
+    jest.dontMock('../src/services/genericRestApiWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2090,6 +2091,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('statuspage').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Generic REST API adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'record:task-1' }] });
+    jest.doMock('../src/services/genericRestApiWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'rest_api_generic' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('rest_api_generic').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -4063,6 +4075,30 @@ describe('work signal normalization', () => {
     const http = { get: jest.fn((url) => Promise.resolve(url.endsWith('/components') ? { data: [{ id: 'comp123abc45', name: 'One' }] } : { data: [] })) };
     const capped = new StatuspageWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'statuspage-token' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { pageId: 'abc123def456' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_STATUSPAGE_MAX_COMPONENTS; else process.env.SNEUP_STATUSPAGE_MAX_COMPONENTS = previous; }
+  });
+
+  test('Generic REST API sync reads one bounded public JSON collection without raw payload retention or provider writes', async () => {
+    jest.dontMock('../src/services/genericRestApiWorkSignalClient');
+    jest.resetModules();
+    const { GenericRestApiWorkSignalClient } = require('../src/services/genericRestApiWorkSignalClient');
+    const http = { get: jest.fn(() => Promise.resolve({ data: { data: { items: [{ id: 'task-1', title: 'Payment failure with private@email.test', status: 'open', priority: 'high', updated_at: '2026-07-12T12:00:00.000Z', description: 'Private description', comments: [{ text: 'Private comment' }] }] } } })) };
+    const client = new GenericRestApiWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'generic-token' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
+    const result = await client.fetchDelta({ metadata: { fields: { baseUrl: 'https://api.example.test', endpointPath: '/v1/tasks', recordPath: 'data.items' } } }, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://api.example.test/v1/tasks', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer generic-token' }), maxRedirects: 0, proxy: false, maxContentLength: 2000000 }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private description|Private comment|private@email\.test/);
+    expect(result).toMatchObject({ metadata: { source: 'generic_rest_api', endpoint: '/v1/tasks', recordPath: 'data.items', records: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('Generic REST API sync blocks private-network targets and fails closed at its record cap', async () => {
+    jest.dontMock('../src/services/genericRestApiWorkSignalClient');
+    jest.resetModules();
+    const { GenericRestApiWorkSignalClient } = require('../src/services/genericRestApiWorkSignalClient');
+    const client = new GenericRestApiWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'generic-token' })) } });
+    await expect(client.fetchDelta({ metadata: { fields: { baseUrl: 'https://127.0.0.1', endpointPath: '/v1/tasks' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_GENERIC_REST_MAX_RECORDS; process.env.SNEUP_GENERIC_REST_MAX_RECORDS = '1';
+    const capped = new GenericRestApiWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: [{ id: 'task-1', name: 'One' }, { id: 'task-2', name: 'Two' }] })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'generic-token' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://api.example.test', endpointPath: '/v1/tasks' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_GENERIC_REST_MAX_RECORDS; else process.env.SNEUP_GENERIC_REST_MAX_RECORDS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {
