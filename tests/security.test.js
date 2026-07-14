@@ -88,6 +88,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/resourceGuruWorkSignalClient');
     jest.dontMock('../src/services/sentryWorkSignalClient');
     jest.dontMock('../src/services/pagerDutyWorkSignalClient');
+    jest.dontMock('../src/services/statuspageWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2078,6 +2079,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('pagerduty').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Statuspage adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'incident:abc123def456' }] });
+    jest.doMock('../src/services/statuspageWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'statuspage' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('statuspage').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -4024,6 +4036,33 @@ describe('work signal normalization', () => {
       : { data: { incidents: [], more: false } })) };
     const capped = new PagerDutyWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'pagerduty-token' })) } });
     try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_PAGERDUTY_MAX_SERVICES; else process.env.SNEUP_PAGERDUTY_MAX_SERVICES = previous; }
+  });
+
+  test('Statuspage sync reads bounded page-scoped component and incident metadata without subscriber or incident-body content or provider writes', async () => {
+    jest.dontMock('../src/services/statuspageWorkSignalClient');
+    jest.resetModules();
+    const { StatuspageWorkSignalClient } = require('../src/services/statuspageWorkSignalClient');
+    const http = { get: jest.fn((url) => Promise.resolve(url.endsWith('/components')
+      ? { data: [{ id: 'comp123abc45', name: 'Sneup API', status: 'operational', created_at: '2026-07-01T10:00:00.000Z', description: 'Private component description', automation_email: 'private@email.test' }] }
+      : { data: [{ id: 'inc123abc456', name: 'Payment failure with private@email.test', status: 'investigating', impact: 'major', created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-12T12:00:00.000Z', components: [{ id: 'comp123abc45', name: 'Sneup API' }], incident_updates: [{ body: 'Private incident update' }], postmortem_body: 'Private postmortem', subscribers: [{ email: 'private@email.test' }] }] })) };
+    const client = new StatuspageWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'statuspage-token' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { pageId: 'abc123def456' } } }, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://api.statuspage.io/v1/pages/abc123def456/incidents', expect.objectContaining({ params: { page: 1, limit: 100 }, headers: expect.objectContaining({ Authorization: 'OAuth statuspage-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private component description|Private incident update|Private postmortem|private@email\.test/);
+    expect(result).toMatchObject({ metadata: { source: 'statuspage_api', pageId: 'abc123def456', components: 1, incidents: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('Statuspage sync rejects unsafe page IDs and fails closed at a pagination cap', async () => {
+    jest.dontMock('../src/services/statuspageWorkSignalClient');
+    jest.resetModules();
+    const { StatuspageWorkSignalClient } = require('../src/services/statuspageWorkSignalClient');
+    const invalid = new StatuspageWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'statuspage-token' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { pageId: '../internal' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_STATUSPAGE_MAX_COMPONENTS; process.env.SNEUP_STATUSPAGE_MAX_COMPONENTS = '1';
+    const http = { get: jest.fn((url) => Promise.resolve(url.endsWith('/components') ? { data: [{ id: 'comp123abc45', name: 'One' }] } : { data: [] })) };
+    const capped = new StatuspageWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'statuspage-token' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { pageId: 'abc123def456' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_STATUSPAGE_MAX_COMPONENTS; else process.env.SNEUP_STATUSPAGE_MAX_COMPONENTS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

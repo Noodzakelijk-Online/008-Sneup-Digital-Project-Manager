@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -55,6 +55,7 @@ const floatWorkSignalClient = require('./floatWorkSignalClient');
 const resourceGuruWorkSignalClient = require('./resourceGuruWorkSignalClient');
 const sentryWorkSignalClient = require('./sentryWorkSignalClient');
 const pagerDutyWorkSignalClient = require('./pagerDutyWorkSignalClient');
+const statuspageWorkSignalClient = require('./statuspageWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -877,6 +878,12 @@ pagerDutyAdapter.capabilities.credentialBackedSync = true;
 pagerDutyAdapter.list = async account => (await pagerDutyWorkSignalClient.fetchDelta(account, null)).records;
 pagerDutyAdapter.fetchDelta = (account, cursor) => pagerDutyWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('pagerduty', pagerDutyAdapter);
+
+const statuspageAdapter = buildAdapter('statuspage', 'Atlassian Statuspage component and incident metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'incident'), title: item.sourceType === 'component' ? titleFromText(item.name, 'Statuspage component') : titleFromText(item.name, 'Statuspage incident'), description: '', status: item.status || 'unknown', priority: item.impact === 'critical' ? 'critical' : item.impact === 'major' ? 'high' : item.impact === 'minor' ? 'normal' : 'unknown', owners: [], labels: compact(['statuspage', item.sourceType, item.impact, item.status, ...(item.componentIds || []).slice(0, 100).map(componentId => `component:${componentId}`)]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.resolvedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Statuspage incident metadata'), raw: { id: item.id, sourceType: item.sourceType, componentId: item.componentId, incidentId: item.incidentId, componentIds: item.componentIds, status: item.status, impact: item.impact, createdAt: item.createdAt, updatedAt: item.updatedAt, resolvedAt: item.resolvedAt } }));
+statuspageAdapter.capabilities.credentialBackedSync = true;
+statuspageAdapter.list = async account => (await statuspageWorkSignalClient.fetchDelta(account, null)).records;
+statuspageAdapter.fetchDelta = (account, cursor) => statuspageWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('statuspage', statuspageAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

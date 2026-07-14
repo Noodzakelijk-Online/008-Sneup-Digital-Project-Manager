@@ -232,6 +232,8 @@ Sentry uses an auth token scoped to `org:read` and `event:read` plus one explici
 
 PagerDuty uses a read-only REST API token. It reads bounded active incident and service metadata with GET only, validates native offset pagination, excludes responders, escalation policies, schedules, notes, integrations, and provider writes, and fails visibly at configured collection caps.
 
+Atlassian Statuspage uses a page-scoped API key and explicit page ID. It reads bounded component and incident metadata with GET only, validates fixed-page pagination, excludes subscribers, incident update bodies, postmortems, component descriptions, and provider writes, and fails visibly at configured collection caps.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations
