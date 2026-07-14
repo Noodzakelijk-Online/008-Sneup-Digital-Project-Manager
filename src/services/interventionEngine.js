@@ -5,7 +5,7 @@ const Member = require('../models/Member');
 const Board = require('../models/Board');
 const trelloClient = require('./trelloClient');
 const operationsLedgerService = require('./operationsLedgerService');
-const interventionPolicy = require('./interventionPolicy');
+const policyRuleService = require('./policyRuleService');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -192,7 +192,10 @@ class InterventionEngine {
   async executeIntervention(intervention, options = {}) {
     try {
       const saved = await intervention.save();
-      const policy = interventionPolicy.classifyIntervention(saved);
+      const policy = await policyRuleService.resolveEffectivePolicy(saved.type, {
+        workspaceId: saved.workspaceId,
+        severity: saved.severity
+      });
 
       if (policy.requiresApproval) {
         if (options.approvedRecommendationId) {

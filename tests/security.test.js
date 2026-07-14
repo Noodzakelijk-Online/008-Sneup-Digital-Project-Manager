@@ -62,6 +62,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/models/WorkEvent');
     jest.dontMock('../src/models/WorkItem');
     jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/services/policyRuleService');
     jest.dontMock('../src/services/githubWorkSignalClient');
     jest.dontMock('../src/services/trelloWorkSignalClient');
     jest.dontMock('../src/services/jiraWorkSignalClient');
@@ -367,7 +368,8 @@ describe('request security boundaries', () => {
     expect(getPermissionsForRoles(['manager'])).toContain('jobs:manage');
     expect(getPermissionsForRoles(['manager'])).toEqual(expect.arrayContaining([
       'notification-policies:manage',
-      'notifications:dispatch'
+      'notifications:dispatch',
+      'policy-rules:manage'
     ]));
     expect(getPermissionsForRoles(['operator'])).not.toContain('jobs:manage');
     expect(getPermissionsForRoles(['admin'])).toContain('identity:manage');
@@ -903,6 +905,23 @@ describe('workspace identity models', () => {
     expect(workspaceScopeService.getBackfillConcurrency('0')).toBe(1);
     expect(workspaceScopeService.getBackfillConcurrency('99')).toBe(16);
     expect(workspaceScopeService.getBackfillConcurrency('not-a-number')).toBe(4);
+  });
+
+  test('creates policy indexes when the legacy collection does not exist yet', async () => {
+    const workspaceScopeService = require('../src/services/workspaceScopeService');
+    const Model = {
+      collection: {
+        indexes: jest.fn().mockRejectedValue({ code: 26, codeName: 'NamespaceNotFound' }),
+        dropIndex: jest.fn()
+      },
+      createIndexes: jest.fn().mockResolvedValue(undefined)
+    };
+
+    await expect(workspaceScopeService.ensurePolicyRuleIndexes({ Model })).resolves.toEqual({
+      removedLegacyNameIndex: false
+    });
+    expect(Model.createIndexes).toHaveBeenCalledTimes(1);
+    expect(Model.collection.dropIndex).not.toHaveBeenCalled();
   });
 
   test('operations ledger service adds workspace filters to shared queries', () => {
@@ -3305,6 +3324,7 @@ describe('work graph drilldowns', () => {
     jest.dontMock('../src/models/AuditEvent');
     jest.dontMock('../src/models/Board');
     jest.dontMock('../src/services/interventionPolicy');
+    jest.dontMock('../src/services/policyRuleService');
     jest.resetModules();
   });
 
@@ -3727,6 +3747,15 @@ describe('work graph drilldowns', () => {
         approvalReason: 'Approval required'
       }))
     }));
+    jest.doMock('../src/services/policyRuleService', () => ({
+      resolveEffectivePolicy: jest.fn().mockResolvedValue({
+        riskLevel: 'high',
+        requiresApproval: true,
+        ownerType: 'robert',
+        approvalReason: 'Approval required',
+        enabled: true
+      })
+    }));
 
     const operationsLedgerService = require('../src/services/operationsLedgerService');
     await operationsLedgerService.createRecommendationFromWorkItem('item-1', {
@@ -3992,6 +4021,43 @@ describe('operations ledger intervention policy', () => {
     });
   });
 
+  test('workspace rules can only tighten the Trello write baseline', () => {
+    const { PolicyRuleService } = require('../src/services/policyRuleService');
+    const interventionPolicy = require('../src/services/interventionPolicy');
+    const service = new PolicyRuleService();
+    const base = interventionPolicy.classifyAction('comment', { severity: 'medium' });
+
+    const relaxed = service.mergePolicy(base, {
+      _id: 'rule-1',
+      riskLevel: 'low',
+      requiresApproval: false,
+      ownerType: 'system',
+      enabled: true,
+      reason: 'Attempted bypass'
+    });
+    const paused = service.mergePolicy(base, {
+      _id: 'rule-2',
+      riskLevel: 'high',
+      requiresApproval: true,
+      ownerType: 'robert',
+      enabled: false,
+      reason: 'Freeze comment actions'
+    });
+
+    expect(relaxed).toMatchObject({
+      riskLevel: 'medium',
+      requiresApproval: true,
+      ownerType: 'team',
+      enabled: true
+    });
+    expect(paused).toMatchObject({
+      riskLevel: 'high',
+      requiresApproval: true,
+      ownerType: 'robert',
+      enabled: false
+    });
+  });
+
   test('intervention execution queues approval instead of writing directly to Trello', async () => {
     jest.resetModules();
 
@@ -4009,6 +4075,15 @@ describe('operations ledger intervention policy', () => {
       createRecommendationFromIntervention
     }));
     jest.doMock('../src/services/trelloClient', () => trelloClient);
+    jest.doMock('../src/services/policyRuleService', () => ({
+      resolveEffectivePolicy: jest.fn().mockResolvedValue({
+        riskLevel: 'medium',
+        requiresApproval: true,
+        ownerType: 'team',
+        approvalReason: 'Approval required',
+        enabled: true
+      })
+    }));
 
     const interventionEngine = require('../src/services/interventionEngine');
     const intervention = {
@@ -4044,6 +4119,7 @@ describe('approved Trello action execution safety', () => {
     jest.dontMock('../src/models/Recommendation');
     jest.dontMock('../src/services/operationsLedgerService');
     jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/services/policyRuleService');
     jest.resetModules();
   });
 
@@ -4072,6 +4148,12 @@ describe('approved Trello action execution safety', () => {
     jest.doMock('../src/services/workspaceScopeService', () => ({
       normalizeWorkspaceObjectId: jest.fn(value => value)
     }));
+    jest.doMock('../src/services/policyRuleService', () => ({
+      resolveEffectivePolicy: jest.fn().mockResolvedValue({
+        requiresApproval: true,
+        enabled: true
+      })
+    }));
 
     const operationsLedgerService = require('../src/services/operationsLedgerService');
     jest.spyOn(operationsLedgerService, 'isDatabaseReady').mockReturnValue(true);
@@ -4081,6 +4163,42 @@ describe('approved Trello action execution safety', () => {
     })).rejects.toMatchObject({
       statusCode: 409,
       message: expect.stringContaining('cannot be bypassed')
+    });
+  });
+
+  test('blocks an approved provider write after its workspace action type is paused', async () => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    jest.doMock('../src/models/Recommendation', () => ({
+      findOne: jest.fn().mockResolvedValue({
+        _id: 'recommendation-2',
+        workspaceId: 'workspace-1',
+        actionType: 'move_card',
+        riskLevel: 'high',
+        requiresApproval: true,
+        status: 'approved',
+        actionPayload: { executable: true, draftOnly: false }
+      })
+    }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+    jest.doMock('../src/services/policyRuleService', () => ({
+      resolveEffectivePolicy: jest.fn().mockResolvedValue({
+        requiresApproval: true,
+        enabled: false
+      })
+    }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    jest.spyOn(operationsLedgerService, 'isDatabaseReady').mockReturnValue(true);
+
+    await expect(operationsLedgerService.executeApprovedRecommendation('recommendation-2', {
+      workspaceId: 'workspace-1'
+    })).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining('paused by workspace safety policy')
     });
   });
 

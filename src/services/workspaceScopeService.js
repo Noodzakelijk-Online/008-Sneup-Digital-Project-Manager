@@ -27,6 +27,7 @@ const WorkContainer = require('../models/WorkContainer');
 const WorkDependency = require('../models/WorkDependency');
 const WorkEvent = require('../models/WorkEvent');
 const WorkItem = require('../models/WorkItem');
+const PolicyRule = require('../models/PolicyRule');
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i;
 const DEFAULT_BACKFILL_CONCURRENCY = 4;
@@ -94,7 +95,8 @@ const workspaceScopedModels = [
   ['workContainers', WorkContainer],
   ['workDependencies', WorkDependency],
   ['workEvents', WorkEvent],
-  ['workItems', WorkItem]
+  ['workItems', WorkItem],
+  ['policyRules', PolicyRule]
 ];
 
 const missingWorkspaceQuery = () => ({
@@ -211,9 +213,31 @@ const backfillDefaultWorkspace = async ({
   };
 };
 
+const ensurePolicyRuleIndexes = async ({ Model = PolicyRule } = {}) => {
+  let indexes = [];
+  try {
+    indexes = await Model.collection.indexes();
+  } catch (error) {
+    if (error.code !== 26 && error.codeName !== 'NamespaceNotFound') {
+      throw error;
+    }
+  }
+  const legacyNameIndex = indexes.find((index) => index.unique === true
+    && Object.keys(index.key || {}).length === 1
+    && index.key.name === 1);
+
+  if (legacyNameIndex) {
+    await Model.collection.dropIndex(legacyNameIndex.name);
+  }
+
+  await Model.createIndexes();
+  return { removedLegacyNameIndex: Boolean(legacyNameIndex) };
+};
+
 module.exports = {
   backfillDefaultWorkspace,
   defaultWorkspaceQuery,
+  ensurePolicyRuleIndexes,
   ensureDefaultWorkspace,
   getBackfillConcurrency,
   getDefaultWorkspaceKey,

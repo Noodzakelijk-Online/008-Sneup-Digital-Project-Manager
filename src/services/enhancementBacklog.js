@@ -264,6 +264,23 @@ const enhancements = [
       'Post-write internal failures cannot relabel a successful provider action as failed or retry it automatically.',
       'An operator can reconcile a claimed action with evidence without another provider write.'
     ]
+  },
+  {
+    id: 'ENH-017',
+    priority: 'P1',
+    area: 'autonomy',
+    title: 'Add workspace-scoped Trello action safety controls',
+    evidence: 'Workspace managers can inspect and configure the effective safety posture for every supported Trello write action. Rules may pause an action, raise its risk, or route it to a stricter owner, but cannot disable approval. The operations ledger rechecks the effective policy before its atomic execution claim, so pausing an action also blocks recommendations approved before the policy changed.',
+    impact: 'Lets humans immediately stop or tighten specific autonomous action types without bypassing the approval ledger or disabling the broader system.',
+    effort: 'M',
+    status: 'done',
+    nextStep: 'Add filterable policy history and optional time-bound emergency pauses with an expiry review.',
+    acceptanceCriteria: [
+      'Each workspace has an independent action policy for every supported Trello write type.',
+      'A policy cannot lower the baseline risk, weaken the baseline decision owner, or disable provider-write approval.',
+      'A paused action type is rejected by the executor before a provider request can start.',
+      'Relaxing an existing policy requires an explicit confirmation and produces an audit record.'
+    ]
   }
 ];
 

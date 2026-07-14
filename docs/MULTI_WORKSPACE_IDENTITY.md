@@ -137,5 +137,6 @@ Important MongoDB indexes:
 - `WorkspaceInvite.workspaceId + email + status`
 - `WorkspaceInvite.tokenPrefix + status`
 - workspace-scoped indexes on Trello/project collections
+- `PolicyRule.workspaceId + actionType`
 
-The app defines these indexes in Mongoose schemas. Production migrations should still monitor index build time and old duplicate data before enforcing uniqueness in shared databases.
+The app defines these indexes in Mongoose schemas. At successful database startup, Sneup backfills legacy policy rules into the default workspace, replaces the former global `PolicyRule.name` uniqueness index with the workspace-scoped action index, and then creates the current policy indexes. Production migrations should still monitor index build time and old duplicate data before enforcing uniqueness in shared databases.

@@ -41,6 +41,7 @@ const workSignalRoutes = require('./routes/workSignals');
 const reportRoutes = require('./routes/reports');
 const forecastRoutes = require('./routes/forecasts');
 const notificationRoutes = require('./routes/notifications');
+const policyRuleRoutes = require('./routes/policyRules');
 
 // Initialize Express app
 const app = express();
@@ -122,6 +123,7 @@ app.use('/api/work-signals', workSignalRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/forecasts', forecastRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/policy-rules', policyRuleRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -178,8 +180,12 @@ const initApp = async () => {
         await connectDatabase();
         databaseConnected = true;
         const workspaceBackfill = await workspaceScopeService.backfillDefaultWorkspace();
+        const policyRuleIndexMigration = await workspaceScopeService.ensurePolicyRuleIndexes();
         if (workspaceBackfill.totalModified > 0) {
           logger.info('Default workspace migration applied', workspaceBackfill);
+        }
+        if (policyRuleIndexMigration.removedLegacyNameIndex) {
+          logger.info('Migrated legacy global PolicyRule name index');
         }
       } catch (error) {
         logger.warn('MongoDB is not available. Starting Sneup in catalog/demo mode.');

@@ -59,7 +59,10 @@ const classifyIntervention = (intervention) => classifyAction(intervention.type,
   metadata: intervention.metadata
 });
 
+const getWriteActionTypes = () => [...WRITE_ACTIONS];
+
 module.exports = {
   classifyAction,
-  classifyIntervention
+  classifyIntervention,
+  getWriteActionTypes
 };

@@ -1,10 +1,16 @@
 const mongoose = require('mongoose');
 
 const policyRuleSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    required: true,
+    index: true
+  },
   name: {
     type: String,
     required: true,
-    unique: true
+    trim: true
   },
   actionType: {
     type: String,
@@ -42,5 +48,8 @@ const policyRuleSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+policyRuleSchema.index({ workspaceId: 1, actionType: 1 }, { unique: true });
+policyRuleSchema.index({ workspaceId: 1, enabled: 1, updatedAt: -1 });
 
 module.exports = mongoose.model('PolicyRule', policyRuleSchema);

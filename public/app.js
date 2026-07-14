@@ -19,6 +19,8 @@ const state = {
   workspaces: [],
   workspaceUsers: [],
   workspaceInvitations: [],
+  policyRules: [],
+  policyRuleError: '',
   activeWorkspaceId: localStorage.getItem('sneup.workspaceId') || '',
   sessionToken: sessionStorage.getItem(SESSION_TOKEN_KEY) || '',
   enhancements: [],
@@ -125,6 +127,8 @@ const els = {
   workspaceInviteCount: document.getElementById('workspaceInviteCount'),
   workspaceInvitations: document.getElementById('workspaceInvitations'),
   workspaceInviteButton: document.getElementById('workspaceInviteButton'),
+  policyRuleCount: document.getElementById('policyRuleCount'),
+  policyRuleList: document.getElementById('policyRuleList'),
   setupButton: document.getElementById('setupButton'),
   modal: document.getElementById('connectorModal'),
   modalTitle: document.getElementById('modalTitle'),
@@ -624,6 +628,14 @@ async function loadWorkspaceAdmin() {
   try {
     const current = await fetchApi('/api/workspaces/current');
     state.currentWorkspace = current.workspace;
+    try {
+      const policyData = await fetchApi('/api/policy-rules');
+      state.policyRules = policyData.policies || [];
+      state.policyRuleError = '';
+    } catch (error) {
+      state.policyRules = [];
+      state.policyRuleError = error.message;
+    }
 
     if (!current.auth?.workspaceOverrideAllowed) {
       state.workspaces = [current.workspace];
@@ -656,6 +668,8 @@ async function loadWorkspaceAdmin() {
   } catch (error) {
     state.workspaceUsers = [];
     state.workspaceInvitations = [];
+    state.policyRules = [];
+    state.policyRuleError = error.message;
     state.workspaces = state.currentWorkspace ? [state.currentWorkspace] : [];
     renderWorkspaces(error.message);
   }
@@ -1988,6 +2002,7 @@ function renderWorkspaces(errorMessage = '') {
 
   const users = state.workspaceUsers || [];
   const invitations = state.workspaceInvitations || [];
+  const policyRules = state.policyRules || [];
   const pendingInvitations = invitations.filter(invite => invite.status === 'pending');
   els.workspaceMetrics.innerHTML = [
     ['Workspace', currentWorkspace?.name || 'Current'],
@@ -2013,7 +2028,12 @@ function renderWorkspaces(errorMessage = '') {
   els.workspaceInviteCount.textContent = `${pendingInvitations.length} pending`;
   els.workspaceInvitations.innerHTML = listOrEmpty(invitations, renderWorkspaceInvitation);
   els.workspaceInviteButton.disabled = !currentWorkspace?.id || !state.securityContext?.permissions?.includes('identity:manage');
+  els.policyRuleCount.textContent = `${policyRules.length} action${policyRules.length === 1 ? '' : 's'}`;
+  els.policyRuleList.innerHTML = state.policyRuleError
+    ? `<div class="notice">${escapeHtml(state.policyRuleError)}</div>`
+    : listOrEmpty(policyRules, renderPolicyRule);
   bindWorkspaceIdentityActions();
+  bindPolicyRuleActions();
 }
 
 function renderWorkspace(workspace) {
@@ -2076,6 +2096,28 @@ function renderWorkspaceInvitation(invitation) {
   `;
 }
 
+function renderPolicyRule(policy) {
+  const canManage = state.securityContext?.permissions?.includes('policy-rules:manage');
+  const stateLabel = policy.enabled ? 'active' : 'paused';
+  const stateClass = policy.enabled ? 'healthy' : 'critical';
+  const riskClass = policy.riskLevel === 'critical' ? 'critical' : policy.riskLevel === 'high' ? 'high' : 'review';
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(policy.label || String(policy.actionType || '').replaceAll('_', ' '))}</strong>
+        <span class="pill ${stateClass}">${escapeHtml(stateLabel)}</span>
+      </div>
+      <div class="meta">
+        <span class="pill ${riskClass}">${escapeHtml(policy.riskLevel)} risk</span>
+        <span>${escapeHtml(policy.ownerType)} decides</span>
+        <span>approval required</span>
+        <span>${policy.configured ? 'workspace rule set' : 'baseline rule'}</span>
+      </div>
+      ${canManage ? `<div class="item-actions"><button class="button" data-policy-rule="${escapeHtml(policy.actionType)}" type="button">Configure</button></div>` : ''}
+    </div>
+  `;
+}
+
 function bindWorkspaceIdentityActions() {
   document.querySelectorAll('[data-workspace-user-sessions]').forEach((button) => {
     button.addEventListener('click', () => openWorkspaceUserSessions(button.dataset.workspaceUserSessions));
@@ -2083,6 +2125,75 @@ function bindWorkspaceIdentityActions() {
   document.querySelectorAll('[data-revoke-workspace-invite]').forEach((button) => {
     const invitation = state.workspaceInvitations.find(item => item.id === button.dataset.revokeWorkspaceInvite);
     button.addEventListener('click', () => openInviteRevocationConfirmation(invitation));
+  });
+}
+
+function bindPolicyRuleActions() {
+  document.querySelectorAll('[data-policy-rule]').forEach((button) => {
+    button.addEventListener('click', () => openPolicyRuleEditor(button.dataset.policyRule));
+  });
+}
+
+function openPolicyRuleEditor(actionType) {
+  const policy = (state.policyRules || []).find(item => item.actionType === actionType);
+  if (!policy) return;
+
+  const riskLevels = ['low', 'medium', 'high', 'critical'];
+  const ownerStrictness = { system: 0, va: 1, team: 1, robert: 2 };
+  const availableRisks = riskLevels.filter(level => riskLevels.indexOf(level) >= riskLevels.indexOf(policy.baselineRiskLevel));
+  const availableOwners = ['system', 'va', 'team', 'robert'].filter(owner => ownerStrictness[owner] >= ownerStrictness[policy.baselineOwnerType]);
+
+  els.modalTitle.textContent = `Action safety: ${policy.label}`;
+  els.modalBody.innerHTML = `
+    <form id="policyRuleForm" class="notice-stack">
+      <div class="notice">Every Trello write remains approval-gated. This workspace rule can pause this action type or make its risk and decision owner stricter.</div>
+      <label><input name="enabled" type="checkbox" ${policy.enabled ? 'checked' : ''}> Allow approved ${escapeHtml(policy.label)} actions to execute</label>
+      <label>Risk level
+        <select name="riskLevel">
+          ${availableRisks.map(level => `<option value="${escapeHtml(level)}" ${level === policy.riskLevel ? 'selected' : ''}>${escapeHtml(level)}</option>`).join('')}
+        </select>
+      </label>
+      <label>Decision owner
+        <select name="ownerType">
+          ${availableOwners.map(owner => `<option value="${escapeHtml(owner)}" ${owner === policy.ownerType ? 'selected' : ''}>${escapeHtml(owner)}</option>`).join('')}
+        </select>
+      </label>
+      <label>Reason<textarea name="reason" rows="3" maxlength="500" placeholder="Why this action needs this safety posture">${escapeHtml(policy.reason || '')}</textarea></label>
+      <label><input name="confirmRelaxation" type="checkbox"> I confirm that this may relax an existing workspace safety rule.</label>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelPolicyRule">Cancel</button>
+        <button class="button primary" type="submit">Save safety rule</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelPolicyRule').addEventListener('click', closeModal);
+  document.getElementById('policyRuleForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = form.querySelector('button[type="submit"]');
+    const values = new FormData(form);
+    submitButton.disabled = true;
+    submitButton.textContent = 'Saving...';
+    try {
+      await fetchApi(`/api/policy-rules/${encodeURIComponent(actionType)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: values.get('enabled') === 'on',
+          riskLevel: values.get('riskLevel'),
+          ownerType: values.get('ownerType'),
+          reason: values.get('reason'),
+          confirmRelaxation: values.get('confirmRelaxation') === 'on'
+        })
+      });
+      closeModal();
+      await loadWorkspaceAdmin();
+    } catch (error) {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Save safety rule';
+      openNotice('Safety rule blocked', error.message);
+    }
   });
 }
 

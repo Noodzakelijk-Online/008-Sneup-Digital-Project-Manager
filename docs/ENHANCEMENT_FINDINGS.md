@@ -5,7 +5,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 ## Priority Summary
 
 - P0: 4 findings that block serious production use.
-- P1: 4 findings that materially improve trust, operability, and desktop adoption, plus 1 completed operations control finding.
+- P1: 4 findings that materially improve trust, operability, and desktop adoption, plus 2 completed operations control findings.
 - P2: 6 findings that harden scale, quality, and workflow reach.
 - P3: 1 reporting enhancement with fast user-visible value.
 
@@ -29,6 +29,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 | ENH-014 | P2 | Resource | In-memory rate limiting can still grow under extreme unique traffic. | Bound rate bucket cardinality and expose operational tuning guidance and metrics. |
 | ENH-015 | P1 | Connector safety | Account linking now stops at a scope-review gate, exposes requested scopes, narrows four provider permissions to read-only equivalents, and blocks provider writes within Sneup. | Add workspace-scoped credential encryption configuration and provider-specific consent evidence to the audit ledger. |
 | ENH-016 | P0 | Autonomy safety | Approved Trello writes use an atomic execution claim, reject forged no-approval write records, retain the claim after post-write bookkeeping faults, and provide an operator-only evidence-backed reconciliation flow that never sends a second provider request. Aging health exposes warning and critical evidence gaps to the operator without retrying provider writes. | Add optional delivered alert policies after notification channels are configured. |
+| ENH-017 | P1 | Autonomy safety | Workspace managers can pause individual Trello action types or raise their risk/owner posture. The executor rechecks the effective policy immediately before its atomic claim, so a paused action cannot run from a stale approval. | Add policy change history filters and optional time-bound emergency pauses. |
 
 ## Recommended Build Order
 

@@ -16,7 +16,7 @@ const Card = require('../models/Card');
 const Member = require('../models/Member');
 const WorkItem = require('../models/WorkItem');
 const trelloClient = require('./trelloClient');
-const interventionPolicy = require('./interventionPolicy');
+const policyRuleService = require('./policyRuleService');
 const recommendationPayloadPolicy = require('./recommendationPayloadPolicy');
 const workGraphService = require('./workGraphService');
 const logger = require('../utils/logger');
@@ -60,8 +60,11 @@ class OperationsLedgerService {
     this.requireDatabase();
 
     const savedIntervention = intervention.isNew === false ? intervention : await intervention.save();
-    const resolvedPolicy = policy || interventionPolicy.classifyIntervention(savedIntervention);
     const workspaceId = this.resolveWorkspaceId(policy?.workspaceId || savedIntervention.workspaceId);
+    const resolvedPolicy = policy || await policyRuleService.resolveEffectivePolicy(savedIntervention.type, {
+      workspaceId,
+      severity: savedIntervention.severity
+    });
     const card = savedIntervention.cardId
       ? await Card.findOne({ _id: savedIntervention.cardId, workspaceId })
       : null;
@@ -145,7 +148,8 @@ class OperationsLedgerService {
     const savedFinding = finding.isNew === false ? finding : await finding.save();
     const workspaceId = this.resolveWorkspaceId(actionSpec.workspaceId || savedFinding.workspaceId);
     const actionType = actionSpec.actionType || this.defaultActionTypeForFinding(savedFinding);
-    const policy = interventionPolicy.classifyAction(actionType, {
+    const policy = await policyRuleService.resolveEffectivePolicy(actionType, {
+      workspaceId,
       severity: savedFinding.severity
     });
 
@@ -253,7 +257,8 @@ class OperationsLedgerService {
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const { card, member, boardId, cardId, memberId } = await this.resolveAutopilotCommandRefs(normalized, { workspaceId });
     const actionSpec = this.buildAutopilotActionSpec(normalized, card, member);
-    const policy = interventionPolicy.classifyAction(actionSpec.actionType, {
+    const policy = await policyRuleService.resolveEffectivePolicy(actionSpec.actionType, {
+      workspaceId,
       severity: normalized.severity
     });
     const riskLevel = normalized.severity === 'critical' ? 'critical' : actionSpec.riskLevel || policy.riskLevel;
@@ -383,7 +388,8 @@ class OperationsLedgerService {
       };
     }
 
-    const policy = interventionPolicy.classifyAction(candidate.actionType, {
+    const policy = await policyRuleService.resolveEffectivePolicy(candidate.actionType, {
+      workspaceId,
       severity: candidate.riskLevel
     });
     const recommendation = await Recommendation.create({
@@ -787,9 +793,15 @@ class OperationsLedgerService {
       throw error;
     }
 
-    const actionPolicy = interventionPolicy.classifyAction(recommendation.actionType, {
+    const actionPolicy = await policyRuleService.resolveEffectivePolicy(recommendation.actionType, {
+      workspaceId: recommendation.workspaceId,
       severity: recommendation.riskLevel
     });
+    if (actionPolicy.enabled === false) {
+      const error = new Error(`The ${recommendation.actionType.replaceAll('_', ' ')} Trello action is paused by workspace safety policy`);
+      error.statusCode = 409;
+      throw error;
+    }
     if (actionPolicy.requiresApproval && recommendation.requiresApproval !== true) {
       const error = new Error('Provider write approval cannot be bypassed by recommendation data');
       error.statusCode = 409;

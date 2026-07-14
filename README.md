@@ -164,6 +164,13 @@ All components are battle-tested, production-ready open source libraries:
 
 See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, and production migration notes.
 
+### Workspace Action Safety
+
+- `GET /api/policy-rules` - List the effective workspace safety posture for each supported Trello write action
+- `PUT /api/policy-rules/:actionType` - Pause an action type or raise its risk/decision-owner posture (`policy-rules:manage`)
+
+Trello writes remain approval-gated regardless of a workspace rule. A rule can pause a write action, raise its risk, or route its decision to a stricter owner. Re-enabling a paused action or relaxing a prior workspace rule requires explicit confirmation and creates an audit event. The executor resolves this policy immediately before its atomic execution claim, so a pause also blocks recommendations approved before the policy changed.
+
 ### Connectors and Work Signals
 
 - `GET /api/connectors` - List connector catalog entries and linked accounts
