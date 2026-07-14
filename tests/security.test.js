@@ -74,6 +74,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/codaWorkSignalClient');
     jest.dontMock('../src/services/teamworkWorkSignalClient');
     jest.dontMock('../src/services/teamganttWorkSignalClient');
+    jest.dontMock('../src/services/businessmapWorkSignalClient');
     jest.dontMock('../src/services/basecampWorkSignalClient');
     jest.dontMock('../src/services/redmineWorkSignalClient');
     jest.dontMock('../src/services/microsoftPlannerWorkSignalClient');
@@ -2269,6 +2270,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('teamgantt').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Businessmap adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'card:1' }] });
+    jest.doMock('../src/services/businessmapWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'kanbanize' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('kanbanize').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('Basecamp adapter delegates live delta reads to the credential-backed client', async () => {
     jest.resetModules();
     const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'todo:1' }] });
@@ -4178,6 +4191,64 @@ describe('work signal normalization', () => {
       externalId: 'task:18', sourceType: 'task', title: 'Ship TeamGantt connector', description: '', status: 'in_progress', priority: 'high', labels: ['teamgantt', 'task', 'Sneup release', 'in_progress', 'high']
     });
     expect(JSON.stringify(normalized.raw)).not.toMatch(/Private task detail|Private comment|Private user/);
+  });
+
+  test('Businessmap sync reads bounded active board and card metadata through API v2 without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/businessmapWorkSignalClient');
+    jest.resetModules();
+    const { BusinessmapWorkSignalClient } = require('../src/services/businessmapWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { data: [{ board_id: 9, name: 'Sneup release', is_archived: 0, description: 'Private board description', workflows: [{ id: 3 }] }] } })
+      .mockResolvedValueOnce({ data: { data: { pagination: { all_pages: 1, current_page: 1, results_per_page: 200 }, data: [{ card_id: 18, board_id: 9, title: 'Ship Businessmap connector', custom_id: 'SNEUP-18', workflow_id: 3, column_id: 7, lane_id: 4, priority: 2, deadline: '2026-07-15', created_at: '2026-07-10T10:00:00.000Z', last_modified: '2026-07-12T12:00:00.000Z', description: 'Private card description', comments: [{ text: 'Private comment' }], custom_fields: [{ value: 'Private field' }], attachments: [{ name: 'secret.pdf' }], links: [{ card_id: 22 }], owner_user_id: 99, logged_time: 120 }] } } }) };
+    const client = new BusinessmapWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'businessmap-token' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { apiUrl: 'https://sneup.kanbanize.com/api/v2' } } }, '2026-07-10T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://sneup.kanbanize.com/api/v2/boards', expect.objectContaining({
+      headers: expect.objectContaining({ apikey: 'businessmap-token' }), maxRedirects: 0, proxy: false
+    }));
+    expect(http.get).toHaveBeenCalledWith('https://sneup.kanbanize.com/api/v2/cards', expect.objectContaining({
+      params: { board_ids: '9', page: 1, state: 'active' }, headers: expect.objectContaining({ apikey: 'businessmap-token' }), maxRedirects: 0, proxy: false
+    }));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/description|comment|custom|attachment|dependenc|user|time|workflow/i);
+    expect(JSON.stringify(result.records)).not.toMatch(/Private board description|Private card description|Private comment|Private field|secret.pdf|owner_user_id|logged_time/);
+    expect(result).toMatchObject({ metadata: { source: 'businessmap_api_v2', boards: 1, cards: 1, contentPolicy: 'active_board_and_card_metadata_only_no_descriptions_comments_custom_fields_files_dependencies_users_time_data_or_provider_writes' }, hasMore: false, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'board:9', name: 'Sneup release', status: 'active' }),
+      expect.objectContaining({ id: 'card:18', boardId: '9', name: 'Ship Businessmap connector', customId: 'SNEUP-18', dueAt: '2026-07-15T00:00:00.000Z' })
+    ]));
+  });
+
+  test('Businessmap sync rejects unsafe account URLs and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/businessmapWorkSignalClient');
+    jest.resetModules();
+    const { BusinessmapWorkSignalClient } = require('../src/services/businessmapWorkSignalClient');
+    const invalidHttp = { get: jest.fn() };
+    const invalidClient = new BusinessmapWorkSignalClient({ http: invalidHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'businessmap-token' })) } });
+    await expect(invalidClient.fetchDelta({ metadata: { fields: { apiUrl: 'https://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 400 });
+    expect(invalidHttp.get).not.toHaveBeenCalled();
+
+    const previousLimit = process.env.SNEUP_BUSINESSMAP_MAX_BOARDS;
+    process.env.SNEUP_BUSINESSMAP_MAX_BOARDS = '1';
+    const cappedClient = new BusinessmapWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [{ board_id: 9, name: 'One board' }] } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'businessmap-token' })) } });
+    try {
+      await expect(cappedClient.fetchDelta({ metadata: { fields: { apiUrl: 'https://sneup.kanbanize.com' } } })).rejects.toMatchObject({ statusCode: 413 });
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_BUSINESSMAP_MAX_BOARDS;
+      else process.env.SNEUP_BUSINESSMAP_MAX_BOARDS = previousLimit;
+    }
+  });
+
+  test('Businessmap adapter retains only approved board and card metadata in normalized work signals', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'kanbanize' }, {
+      id: 'card:18', sourceType: 'card', cardId: '18', boardId: '9', board: { id: '9', name: 'Sneup release' }, name: 'Ship Businessmap connector', status: 'blocked', priority: '2', customId: 'SNEUP-18', workflowId: '3', columnId: '7', laneId: '4', dueAt: '2026-07-15T00:00:00.000Z', updatedAt: '2026-07-12T12:00:00.000Z', description: 'Private card detail', comments: ['Private comment'], customFields: [{ value: 'Private field' }], users: [{ name: 'Private user' }]
+    });
+    expect(normalized).toMatchObject({
+      externalId: 'card:18', sourceType: 'card', title: 'Ship Businessmap connector', description: '', status: 'blocked', labels: ['businessmap', 'kanbanize', 'card', 'Sneup release', 'blocked', '2']
+    });
+    expect(JSON.stringify(normalized.raw)).not.toMatch(/Private card detail|Private comment|Private field|Private user/);
   });
 
   test('Basecamp sync reads bounded project and to-do metadata without rich content or provider writes', async () => {

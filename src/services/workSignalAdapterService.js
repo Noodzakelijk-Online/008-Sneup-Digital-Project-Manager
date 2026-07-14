@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'n8n'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -41,6 +41,7 @@ const everhourWorkSignalClient = require('./everhourWorkSignalClient');
 const codaWorkSignalClient = require('./codaWorkSignalClient');
 const teamworkWorkSignalClient = require('./teamworkWorkSignalClient');
 const teamGanttWorkSignalClient = require('./teamganttWorkSignalClient');
+const businessmapWorkSignalClient = require('./businessmapWorkSignalClient');
 const basecampWorkSignalClient = require('./basecampWorkSignalClient');
 const redmineWorkSignalClient = require('./redmineWorkSignalClient');
 const microsoftPlannerWorkSignalClient = require('./microsoftPlannerWorkSignalClient');
@@ -768,6 +769,26 @@ teamGanttAdapter.capabilities.credentialBackedSync = true;
 teamGanttAdapter.list = async account => (await teamGanttWorkSignalClient.fetchDelta(account, null)).records;
 teamGanttAdapter.fetchDelta = (account, cursor) => teamGanttWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('teamgantt', teamGanttAdapter);
+
+const businessmapAdapter = buildAdapter('kanbanize', 'Businessmap board and card metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'card'),
+  title: titleFromText(item.name, 'Businessmap work item'),
+  description: '',
+  status: statusFromText(item.status),
+  priority: priorityFromText(item.priority),
+  owners: [],
+  labels: compact(['businessmap', 'kanbanize', item.sourceType, item.board?.name, item.status, item.priority]),
+  dueAt: pick(item.dueAt),
+  providerCreatedAt: pick(item.createdAt),
+  providerUpdatedAt: pick(item.updatedAt, item.createdAt),
+  evidenceRefs: baseEvidence(account, item, 'Businessmap metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, boardId: item.boardId, cardId: item.cardId, board: item.board, status: item.status, priority: item.priority, customId: item.customId, workflowId: item.workflowId, columnId: item.columnId, laneId: item.laneId, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+businessmapAdapter.capabilities.credentialBackedSync = true;
+businessmapAdapter.list = async account => (await businessmapWorkSignalClient.fetchDelta(account, null)).records;
+businessmapAdapter.fetchDelta = (account, cursor) => businessmapWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('kanbanize', businessmapAdapter);
 
 const basecampStatus = (item) => item.completedAt || item.status === 'completed' ? 'done' : statusFromText(item.status);
 const basecampAdapter = buildAdapter('basecamp', 'Basecamp project and to-do metadata adapter', (account, item) => ({
