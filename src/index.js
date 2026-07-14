@@ -6,7 +6,7 @@ const compression = require('compression');
 const path = require('path');
 const logger = require('./utils/logger');
 const { registerProcessHandlers } = require('./utils/processHandlers');
-const { connectDatabase, getDatabaseStatus } = require('./utils/database');
+const { connectDatabase, disconnectDatabase, isDatabaseConnected, getDatabaseStatus } = require('./utils/database');
 const {
   apiRateLimit,
   corsOptions,
@@ -236,8 +236,18 @@ const initApp = async () => {
   }
 };
 
+const closeServer = () => new Promise((resolve, reject) => {
+  if (!server) return resolve();
+  server.close(error => (error && error.code !== 'ERR_SERVER_NOT_RUNNING' ? reject(error) : resolve()));
+});
+
+const shutdown = async () => {
+  await closeServer();
+  if (isDatabaseConnected()) await disconnectDatabase();
+};
+
 // Process handlers are global: register once even when Sneup is embedded or hot-reloaded.
-registerProcessHandlers(logger);
+registerProcessHandlers(logger, { shutdown });
 
 if (require.main === module) {
   initApp();

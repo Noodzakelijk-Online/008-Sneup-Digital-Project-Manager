@@ -6465,6 +6465,45 @@ describe('optional AI startup', () => {
     expect(runtime.listeners('unhandledRejection')).toHaveLength(1);
   });
 
+  test('runs one graceful cleanup before exit when termination signals repeat', async () => {
+    const { registerProcessHandlers } = require('../src/utils/processHandlers');
+    const runtime = new EventEmitter();
+    const logger = { info: jest.fn(), error: jest.fn() };
+    const exit = jest.fn();
+    const shutdown = jest.fn().mockResolvedValue();
+
+    registerProcessHandlers(logger, { runtime, exit, shutdown });
+    runtime.emit('SIGINT');
+    runtime.emit('SIGTERM');
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
+    expect(logger.info).toHaveBeenCalledWith('SIGINT received, shutting down gracefully...');
+  });
+
+  test('database connection setup does not add a competing SIGINT listener', async () => {
+    const originalSigintListeners = process.listeners('SIGINT').length;
+    jest.resetModules();
+    const connection = {
+      readyState: 1,
+      on: jest.fn(),
+      close: jest.fn().mockResolvedValue(),
+      host: 'localhost',
+      port: 27017,
+      name: 'sneup'
+    };
+    jest.doMock('mongoose', () => ({ connect: jest.fn().mockResolvedValue(), connection }));
+    const database = require('../src/utils/database');
+
+    await database.connectDatabase();
+
+    expect(process.listeners('SIGINT')).toHaveLength(originalSigintListeners);
+    expect(connection.on).toHaveBeenCalledWith('error', expect.any(Function));
+    expect(connection.on).toHaveBeenCalledWith('disconnected', expect.any(Function));
+    expect(connection.on).toHaveBeenCalledWith('reconnected', expect.any(Function));
+  });
+
   test('reuses the Winston logger across module reloads without adding process listeners', () => {
     const first = require('../src/utils/logger');
     const afterFirst = {
