@@ -900,6 +900,32 @@ describe('notification delivery safety', () => {
     expect(JSON.stringify(generic)).not.toContain('never-send-this');
   });
 
+  test('keeps delivery-history evidence inspectable while removing unsafe source links', () => {
+    const delivery = notificationService.sanitizeDelivery({
+      _id: new mongoose.Types.ObjectId(),
+      workspaceId: new mongoose.Types.ObjectId(),
+      policyId: new mongoose.Types.ObjectId(),
+      eventType: 'reconciliation_digest',
+      severity: 'warning',
+      title: 'Evidence digest',
+      message: 'Review source evidence.',
+      sourceType: 'trello_action_attempt',
+      sourceId: 'attempt-1',
+      sourceUrl: 'https://trello.com/c/primary',
+      sourceEvidence: [
+        { label: 'Primary', url: 'https://trello.com/c/primary' },
+        { label: 'Unsafe', url: 'http://unsafe.example/path' },
+        { label: 'Credentialed', url: 'https://operator:secret@example.com/path' }
+      ],
+      status: 'delivered'
+    });
+
+    expect(delivery).toMatchObject({
+      sourceUrl: 'https://trello.com/c/primary',
+      sourceEvidence: [{ label: 'Primary', url: 'https://trello.com/c/primary' }]
+    });
+  });
+
   test('defers warning alerts in quiet hours without delaying critical evidence', () => {
     const policy = {
       quietHours: { enabled: true, startHourUtc: 18, endHourUtc: 8 }

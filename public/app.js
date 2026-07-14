@@ -1178,6 +1178,9 @@ function renderOperationsLedger() {
   document.querySelectorAll('[data-notification-policy-test]').forEach((button) => {
     button.addEventListener('click', () => openNotificationTest(button.dataset.notificationPolicyTest));
   });
+  document.querySelectorAll('[data-notification-delivery-evidence]').forEach((button) => {
+    button.addEventListener('click', () => openNotificationDeliveryEvidence(button.dataset.notificationDeliveryEvidence));
+  });
   bindLedgerDrilldownActions();
   bindGraphActions();
 }
@@ -1459,10 +1462,8 @@ function renderNotificationDelivery(delivery) {
   const policy = policies.find(item => getId(item.id || item._id) === getId(delivery.policyId));
   const statusClass = ['delivered', 'digested'].includes(delivery.status) ? 'healthy'
     : delivery.status === 'failed' ? 'critical' : 'review';
-  const sourceEvidence = [
-    ...(delivery.sourceEvidence || []).map(item => ({ ...item, type: item.sourceType || item.type })),
-    ...(delivery.sourceUrl ? [{ type: delivery.sourceType || 'source', label: 'Open source evidence', url: delivery.sourceUrl }] : [])
-  ];
+  const deliveryId = getId(delivery.id || delivery._id);
+  const sourceEvidence = notificationDeliverySourceEvidence(delivery);
   return `
     <div class="item">
       <div class="item-title">
@@ -1476,8 +1477,30 @@ function renderNotificationDelivery(delivery) {
       </div>
       <div class="meta"><span>${escapeHtml(delivery.errorMessage || delivery.message || 'Delivery recorded')}</span></div>
       ${renderSourceEvidence(sourceEvidence)}
+      ${sourceEvidence.length && deliveryId ? `<div class="item-actions"><button class="button" data-notification-delivery-evidence="${escapeHtml(deliveryId)}" type="button">Source details</button></div>` : ''}
     </div>
   `;
+}
+
+function notificationDeliverySourceEvidence(delivery = {}) {
+  const candidates = [
+    ...(Array.isArray(delivery.sourceEvidence) ? delivery.sourceEvidence : []).map(item => ({
+      ...item,
+      type: item.sourceType || item.type || 'source'
+    })),
+    ...(delivery.sourceUrl ? [{
+      type: delivery.sourceType || 'source',
+      label: 'Open source evidence',
+      url: delivery.sourceUrl
+    }] : [])
+  ];
+  const seenUrls = new Set();
+  return candidates.filter((item) => {
+    const sourceUrl = safeExternalUrl(item.url);
+    if (!sourceUrl || seenUrls.has(sourceUrl)) return false;
+    seenUrls.add(sourceUrl);
+    return true;
+  });
 }
 
 function renderFollowUp(followUp) {
@@ -1924,6 +1947,46 @@ function renderEvidenceModal(bundle = {}) {
   `;
   els.modal.classList.add('open');
   document.getElementById('evidenceClose').addEventListener('click', closeModal);
+}
+
+function openNotificationDeliveryEvidence(deliveryId) {
+  const delivery = (state.ledger.notificationDeliveries || [])
+    .find(item => getId(item.id || item._id) === deliveryId);
+  if (!delivery) return;
+
+  const sourceEvidence = notificationDeliverySourceEvidence(delivery);
+  if (sourceEvidence.length === 0) {
+    openNotice('Notification sources', 'This delivery has no validated source links.');
+    return;
+  }
+
+  els.modalTitle.textContent = 'Notification sources';
+  els.modalBody.innerHTML = `
+    <div class="notice-stack">
+      <div class="item">
+        <div class="item-title">
+          <strong>${escapeHtml(delivery.title || 'Notification delivery')}</strong>
+          <span class="pill ${['delivered', 'digested'].includes(delivery.status) ? 'healthy' : delivery.status === 'failed' ? 'critical' : 'review'}">${escapeHtml(delivery.status || 'recorded')}</span>
+        </div>
+        <div class="meta">
+          <span>${sourceEvidence.length} source ref${sourceEvidence.length === 1 ? '' : 's'}</span>
+          <span>${formatDate(delivery.deliveredAt || delivery.failedAt || delivery.createdAt)}</span>
+        </div>
+      </div>
+      <section>
+        <div class="panel-head evidence-head">
+          <h2>Source evidence</h2>
+          <span class="pill review">${sourceEvidence.length}</span>
+        </div>
+        <div class="list">${sourceEvidence.map(renderEvidenceRef).join('')}</div>
+      </section>
+      <div class="toolbar modal-actions">
+        <button class="button primary" type="button" id="notificationEvidenceClose">Done</button>
+      </div>
+    </div>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('notificationEvidenceClose').addEventListener('click', closeModal);
 }
 
 function bindLedgerDrilldownActions() {
