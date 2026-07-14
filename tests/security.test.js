@@ -81,6 +81,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/freedcampWorkSignalClient');
     jest.dontMock('../src/services/meisterTaskWorkSignalClient');
     jest.dontMock('../src/services/ahaWorkSignalClient');
+    jest.dontMock('../src/services/productboardWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1994,6 +1995,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('aha').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Productboard adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'feature:123e4567-e89b-12d3-a456-426614174000' }] });
+    jest.doMock('../src/services/productboardWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'productboard' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('productboard').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3746,6 +3758,33 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_AHA_MAX_PRODUCTS; process.env.SNEUP_AHA_MAX_PRODUCTS = '1';
     const capped = new AhaWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { products: [{ id: '1', name: 'One' }, { id: '2', name: 'Two' }], pagination: { total_records: 2, total_pages: 1, current_page: 1 } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'aha-token' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { accountUrl: 'https://sneup.aha.io' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_AHA_MAX_PRODUCTS; else process.env.SNEUP_AHA_MAX_PRODUCTS = previous; }
+  });
+
+  test('Productboard sync uses bounded allowlisted entity metadata and validates cursors', async () => {
+    jest.dontMock('../src/services/productboardWorkSignalClient');
+    jest.resetModules();
+    const { ProductboardWorkSignalClient } = require('../src/services/productboardWorkSignalClient');
+    const component = { id: '123e4567-e89b-12d3-a456-426614174000', type: 'component', fields: { name: 'Platform', description: 'Private component description', owner: { email: 'private@example.com' }, tags: [{ name: 'private' }] }, createdAt: '2026-07-10T10:00:00.000Z', updatedAt: '2026-07-11T12:00:00.000Z', relationships: { data: [{ type: 'parent' }] } };
+    const feature = { id: '123e4567-e89b-12d3-a456-426614174001', type: 'feature', fields: { name: 'Ship Productboard connector', status: { name: 'In progress' }, timeframe: { endDate: '2026-07-15' }, description: 'Private feature description', tags: [{ name: 'private' }], customField: 'secret' }, createdAt: '2026-07-10T10:00:00.000Z', updatedAt: '2026-07-12T12:00:00.000Z', relationships: { data: [{ type: 'parent' }] } };
+    const objective = { id: '123e4567-e89b-12d3-a456-426614174002', type: 'objective', fields: { name: 'Connect roadmap tools', status: { name: 'On track' }, description: 'Private objective description' }, createdAt: '2026-07-10T10:00:00.000Z', updatedAt: '2026-07-12T11:00:00.000Z' };
+    const http = { get: jest.fn().mockResolvedValueOnce({ data: { data: [component], links: { next: null } } }).mockResolvedValueOnce({ data: { data: [feature], links: { next: null } } }).mockResolvedValueOnce({ data: { data: [objective], links: { next: null } } }) };
+    const client = new ProductboardWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'productboard-token' })) } });
+    const result = await client.fetchDelta({}, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://api.productboard.com/v2/entities', expect.objectContaining({ params: { 'type[]': 'feature', 'fields[]': ['name', 'status', 'timeframe'] }, headers: expect.objectContaining({ Authorization: 'Bearer productboard-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private component description|Private feature description|Private objective description|private@example\.com|secret|parent/);
+    expect(result).toMatchObject({ metadata: { source: 'productboard_api', components: 1, features: 1, objectives: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(() => client.nextCursor('https://example.com/v2/entities?pageCursor=unsafe')).toThrow(/unsafe pagination cursor/);
+  });
+
+  test('Productboard sync fails closed at a type cap before following another cursor', async () => {
+    jest.dontMock('../src/services/productboardWorkSignalClient');
+    jest.resetModules();
+    const { ProductboardWorkSignalClient } = require('../src/services/productboardWorkSignalClient');
+    const previous = process.env.SNEUP_PRODUCTBOARD_MAX_COMPONENTS; process.env.SNEUP_PRODUCTBOARD_MAX_COMPONENTS = '1';
+    const component = { id: '123e4567-e89b-12d3-a456-426614174000', type: 'component', fields: { name: 'Platform' }, createdAt: '2026-07-10T10:00:00.000Z' };
+    const client = new ProductboardWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [component], links: { next: 'https://api.productboard.com/v2/entities?pageCursor=next-page' } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'productboard-token' })) } });
+    try { await expect(client.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_PRODUCTBOARD_MAX_COMPONENTS; else process.env.SNEUP_PRODUCTBOARD_MAX_COMPONENTS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

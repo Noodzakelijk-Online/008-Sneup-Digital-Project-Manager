@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -48,6 +48,7 @@ const backlogWorkSignalClient = require('./backlogWorkSignalClient');
 const freedcampWorkSignalClient = require('./freedcampWorkSignalClient');
 const meisterTaskWorkSignalClient = require('./meisterTaskWorkSignalClient');
 const ahaWorkSignalClient = require('./ahaWorkSignalClient');
+const productboardWorkSignalClient = require('./productboardWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -828,6 +829,12 @@ ahaAdapter.capabilities.credentialBackedSync = true;
 ahaAdapter.list = async account => (await ahaWorkSignalClient.fetchDelta(account, null)).records;
 ahaAdapter.fetchDelta = (account, cursor) => ahaWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('aha', ahaAdapter);
+
+const productboardAdapter = buildAdapter('productboard', 'Productboard component, feature, and objective metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'feature'), title: titleFromText(item.name, 'Productboard work item'), description: '', status: statusFromText(item.status), priority: 'unknown', owners: [], labels: compact(['productboard', item.sourceType, item.status]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Productboard metadata'), raw: { id: item.id, sourceType: item.sourceType, entityId: item.entityId, status: item.status, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+productboardAdapter.capabilities.credentialBackedSync = true;
+productboardAdapter.list = async account => (await productboardWorkSignalClient.fetchDelta(account, null)).records;
+productboardAdapter.fetchDelta = (account, cursor) => productboardWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('productboard', productboardAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
