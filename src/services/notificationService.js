@@ -360,7 +360,7 @@ class NotificationService {
             sourceUrl: safeExternalSourceUrl(alert.sourceUrl),
             now: options.now
           }, 'sneup-notification-worker');
-          if (['delivered', 'duplicate', 'deferred', 'digest_pending'].includes(result.status)) successCount += 1;
+          if (['delivered', 'duplicate', 'deferred', 'digest_pending', 'in_progress'].includes(result.status)) successCount += 1;
           else failureCount += 1;
         } catch (error) {
           failureCount += 1;
@@ -508,7 +508,7 @@ class NotificationService {
       totals.digestCount += 1;
       try {
         const result = await this.createAndDeliver(policy, this.buildDigestEvent(deliveries, pendingCount, now), 'sneup-notification-worker');
-        if (['delivered', 'deferred', 'duplicate'].includes(result.status)) totals.successCount += 1;
+        if (['delivered', 'deferred', 'duplicate', 'in_progress'].includes(result.status)) totals.successCount += 1;
         else totals.failureCount += 1;
       } catch (error) {
         totals.failureCount += 1;
@@ -549,8 +549,9 @@ class NotificationService {
       for (const delivery of deliveries) {
         totals.processedCount += 1;
         try {
-          await this.deliverExisting(policy, delivery, delivery, 'sneup-notification-worker');
-          totals.successCount += 1;
+          const result = await this.deliverExisting(policy, delivery, delivery, 'sneup-notification-worker');
+          if (['delivered', 'in_progress'].includes(result.status)) totals.successCount += 1;
+          else totals.failureCount += 1;
         } catch (error) {
           totals.failureCount += 1;
         }
@@ -560,28 +561,41 @@ class NotificationService {
   }
 
   async deliverExisting(policy, delivery, event, actor) {
-    delivery.status = 'sending';
-    delivery.claimedAt = new Date();
-    delivery.attemptCount = 1;
-    await delivery.save();
+    const claimed = await this.claimDelivery(delivery);
+    if (!claimed) {
+      // A concurrent worker already owns the delivery. Never retry a possibly
+      // completed external request just because its ledger finalization is late.
+      return { status: 'in_progress', delivery: this.sanitizeDelivery(delivery) };
+    }
 
     try {
       const response = await this.postWebhook(policy, event);
-      delivery.status = 'delivered';
-      delivery.deliveredAt = new Date();
-      delivery.responseStatus = response.status;
-      await delivery.save();
-      if (delivery.eventType === 'reconciliation_digest') await this.markDigestSourcesDelivered(delivery);
-      await this.recordAudit('notification_delivered', delivery, actor, { status: delivery.status, responseStatus: response.status });
-      return { status: 'delivered', delivery: this.sanitizeDelivery(delivery) };
+      claimed.status = 'delivered';
+      claimed.deliveredAt = new Date();
+      claimed.responseStatus = response.status;
+      await claimed.save();
+      if (claimed.eventType === 'reconciliation_digest') await this.markDigestSourcesDelivered(claimed);
+      await this.recordAudit('notification_delivered', claimed, actor, { status: claimed.status, responseStatus: response.status });
+      return { status: 'delivered', delivery: this.sanitizeDelivery(claimed) };
     } catch (error) {
-      delivery.status = 'failed';
-      delivery.failedAt = new Date();
-      delivery.errorMessage = this.sanitizeDeliveryError(error);
-      await delivery.save();
-      await this.recordAudit('notification_delivery_failed', delivery, actor, { status: delivery.status, errorMessage: delivery.errorMessage });
+      claimed.status = 'failed';
+      claimed.failedAt = new Date();
+      claimed.errorMessage = this.sanitizeDeliveryError(error);
+      await claimed.save();
+      await this.recordAudit('notification_delivery_failed', claimed, actor, { status: claimed.status, errorMessage: claimed.errorMessage });
       throw error;
     }
+  }
+
+  async claimDelivery(delivery) {
+    return NotificationDelivery.findOneAndUpdate({
+      _id: delivery._id,
+      workspaceId: delivery.workspaceId,
+      status: { $in: ['queued', 'deferred'] }
+    }, {
+      $set: { status: 'sending', claimedAt: new Date() },
+      $inc: { attemptCount: 1 }
+    }, { new: true });
   }
 
   async postWebhook(policy, event) {
