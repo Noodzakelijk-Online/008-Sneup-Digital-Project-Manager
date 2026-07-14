@@ -16,6 +16,8 @@ const {
 class ConnectorSyncService {
   constructor() {
     this.job = null;
+    this.activeScheduledSync = null;
+    this.scheduledSyncStartedAt = null;
   }
 
   init() {
@@ -46,6 +48,29 @@ class ConnectorSyncService {
   }
 
   async runScheduledSyncs() {
+    if (this.activeScheduledSync) {
+      const startedAt = this.scheduledSyncStartedAt;
+      logger.warn('Skipping overlapping scheduled connector sync', { startedAt });
+      return {
+        skipped: true,
+        reason: 'scheduled_sync_in_progress',
+        startedAt
+      };
+    }
+
+    this.scheduledSyncStartedAt = new Date().toISOString();
+    const scheduledRun = this.runScheduledSyncPass();
+    this.activeScheduledSync = scheduledRun;
+
+    try {
+      return await scheduledRun;
+    } finally {
+      this.activeScheduledSync = null;
+      this.scheduledSyncStartedAt = null;
+    }
+  }
+
+  async runScheduledSyncPass() {
     const workspaceIds = await listActiveWorkspaceIds();
     const results = [];
 

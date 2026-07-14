@@ -9029,6 +9029,49 @@ describe('job observability', () => {
     }
   });
 
+  test('coalesces overlapping scheduled connector syncs without blocking a later pass', async () => {
+    jest.resetModules();
+    const listActiveWorkspaceIds = jest.fn().mockResolvedValue(['workspace-1']);
+    const trackJob = jest.fn(async (context, handler) => handler());
+    let releaseFirstPass;
+    const firstPass = new Promise(resolve => {
+      releaseFirstPass = resolve;
+    });
+
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-default'),
+      listActiveWorkspaceIds,
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+    jest.doMock('../src/services/jobObservabilityService', () => ({ trackJob }));
+
+    try {
+      const connectorSyncService = require('../src/services/connectorSyncService');
+      connectorSyncService.syncConnectedAccounts = jest.fn(() => firstPass);
+
+      const activeRun = connectorSyncService.runScheduledSyncs();
+      await Promise.resolve();
+      const overlappingRun = await connectorSyncService.runScheduledSyncs();
+
+      expect(overlappingRun).toMatchObject({
+        skipped: true,
+        reason: 'scheduled_sync_in_progress'
+      });
+      expect(overlappingRun.startedAt).toEqual(expect.any(String));
+      expect(connectorSyncService.syncConnectedAccounts).toHaveBeenCalledTimes(1);
+
+      releaseFirstPass({ workspaceId: 'workspace-1' });
+      await expect(activeRun).resolves.toEqual([{ workspaceId: 'workspace-1' }]);
+
+      await connectorSyncService.runScheduledSyncs();
+      expect(connectorSyncService.syncConnectedAccounts).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.dontMock('../src/services/workspaceScopeService');
+      jest.dontMock('../src/services/jobObservabilityService');
+      jest.resetModules();
+    }
+  });
+
   test('runs scheduled interventions in the workspace attached to each job record', async () => {
     jest.resetModules();
     const listActiveWorkspaceIds = jest.fn().mockResolvedValue(['workspace-1', 'workspace-2']);
