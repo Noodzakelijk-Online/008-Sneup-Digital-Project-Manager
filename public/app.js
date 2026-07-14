@@ -769,6 +769,18 @@ async function loadWorkspaceAdmin() {
   try {
     const current = await fetchApi('/api/workspaces/current');
     state.currentWorkspace = current.workspace;
+    if (current.auth?.demoMode) {
+      state.activeWorkspaceId = current.workspace.id;
+      state.workspaces = [current.workspace];
+      state.workspaceUsers = [];
+      state.workspaceInvitations = [];
+      state.policyRules = [];
+      state.policyRuleError = '';
+      state.policyHistory = [];
+      state.policyHistoryError = '';
+      renderWorkspaces();
+      return;
+    }
     try {
       const [policyData, historyData] = await Promise.all([
         fetchApi('/api/policy-rules'),
@@ -2296,7 +2308,10 @@ function renderWorkspaces(errorMessage = '') {
   const notice = errorMessage
     ? `<div class="notice">${escapeHtml(errorMessage)}</div>`
     : '';
-  els.workspaceList.innerHTML = notice + listOrEmpty(workspaces, renderWorkspace);
+  const demoNotice = state.securityContext?.demoMode || currentWorkspace?.demoMode
+    ? '<div class="notice">Demo workspace is read-only. Connect a database and sign in to manage people, invitations, and action safety.</div>'
+    : '';
+  els.workspaceList.innerHTML = demoNotice + notice + listOrEmpty(workspaces, renderWorkspace);
   els.workspaceUserCount.textContent = `${users.length} user${users.length === 1 ? '' : 's'}`;
   els.workspaceUsers.innerHTML = listOrEmpty(users, renderWorkspaceUser);
   els.workspaceInviteCount.textContent = `${pendingInvitations.length} pending`;

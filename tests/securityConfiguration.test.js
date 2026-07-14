@@ -2,9 +2,33 @@ const {
   getTokenPepper,
   validateRuntimeSecurityConfiguration
 } = require('../src/utils/securityConfiguration');
+const {
+  getDemoSecurityContext,
+  getDemoWorkspace,
+  isDemoMode
+} = require('../src/services/demoWorkspaceService');
 const { getInviteUrl, sendInviteEmail } = require('../src/services/workspaceInviteService');
 
 const strong = (suffix) => `sneup-${suffix}-a-unique-production-secret-value-2026`;
+
+describe('demo workspace boundary', () => {
+  test('is explicitly read-only and does not inherit local privileges', () => {
+    expect(isDemoMode({ SNEUP_DEMO_MODE: 'true' })).toBe(true);
+    expect(isDemoMode({ SNEUP_DEMO_MODE: 'false' })).toBe(false);
+    expect(getDemoWorkspace()).toMatchObject({
+      id: 'demo',
+      name: 'Demo workspace',
+      demoMode: true
+    });
+    expect(getDemoSecurityContext()).toMatchObject({
+      authenticated: true,
+      workspaceId: 'demo',
+      workspaceOverrideAllowed: false,
+      demoMode: true
+    });
+    expect(getDemoSecurityContext().permissions).toEqual([]);
+  });
+});
 
 describe('production token-secret boundary', () => {
   test('permits development and demo runtimes without production token peppers', () => {

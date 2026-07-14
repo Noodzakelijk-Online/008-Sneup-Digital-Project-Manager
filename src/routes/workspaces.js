@@ -6,6 +6,11 @@ const SessionToken = require('../models/SessionToken');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const workspaceInviteService = require('../services/workspaceInviteService');
 const {
+  getDemoSecurityContext,
+  getDemoWorkspace,
+  isDemoMode
+} = require('../services/demoWorkspaceService');
+const {
   getRequestWorkspaceObjectId,
   slugifyWorkspaceKey
 } = require('../services/workspaceScopeService');
@@ -107,6 +112,14 @@ const validateEnum = (value, allowed, field, fallback) => {
 
 router.get('/current', async (req, res) => {
   try {
+    if (isDemoMode()) {
+      return res.json({
+        success: true,
+        workspace: getDemoWorkspace(),
+        auth: getDemoSecurityContext()
+      });
+    }
+
     const workspaceId = getRequestWorkspaceObjectId(req);
     const workspace = await Workspace.findById(workspaceId);
     res.json({
