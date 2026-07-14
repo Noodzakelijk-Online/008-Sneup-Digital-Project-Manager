@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -98,6 +98,7 @@ const outlookWorkSignalClient = require('./outlookWorkSignalClient');
 const tableauWorkSignalClient = require('./tableauWorkSignalClient');
 const sharePointWorkSignalClient = require('./sharePointWorkSignalClient');
 const xeroWorkSignalClient = require('./xeroWorkSignalClient');
+const googleFormsWorkSignalClient = require('./googleFormsWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1329,6 +1330,27 @@ xeroAdapter.capabilities.credentialBackedSync = true;
 xeroAdapter.list = async account => (await xeroWorkSignalClient.fetchDelta(account, null)).records;
 xeroAdapter.fetchDelta = (account, cursor) => xeroWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('xero', xeroAdapter);
+
+const googleFormsAdapter = buildAdapter('google_forms', 'Google Forms intake metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: 'form',
+  title: titleFromText(item.name, 'Google Form'),
+  description: '',
+  status: item.status || 'open',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['google_forms', 'form']),
+  dueAt: undefined,
+  providerCreatedAt: item.createdAt,
+  providerUpdatedAt: item.updatedAt,
+  evidenceRefs: baseEvidence(account, item, 'Google Forms intake metadata'),
+  raw: { id: item.id, sourceType: 'form', formId: item.formId, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+googleFormsAdapter.capabilities.credentialBackedSync = true;
+googleFormsAdapter.list = async account => (await googleFormsWorkSignalClient.fetchDelta(account, null)).records;
+googleFormsAdapter.fetchDelta = (account, cursor) => googleFormsWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('google_forms', googleFormsAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),

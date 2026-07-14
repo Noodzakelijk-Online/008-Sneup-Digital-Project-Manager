@@ -227,6 +227,8 @@ SharePoint is available as a separate Microsoft OAuth connection. It explicitly 
 
 Xero is available as a separate OAuth connection with `accounting.invoices.read`. Sneup lists authorized organisations, requires one selection, and makes one capped GET for sales-invoice status and date metadata. It retains only opaque invoice and organisation identifiers, status, and dates; contacts, invoice numbers, amounts, payment data, descriptions, line items, URLs, and provider writes are excluded.
 
+Google Forms is available as a separate Google OAuth connection with `drive.metadata.readonly`. Sneup makes one capped Drive metadata request for Google Forms owned by or shared to the signed-in user and retains only redacted form names, opaque identifiers, and timestamps. It excludes form bodies, questions, responses, owners, URLs, collaborators, sharing details, shared drives, and provider writes.
+
 SurveyMonkey is available with a View Surveys access token. Sneup makes one bounded survey-list GET and retains only redacted survey title and ID. It excludes questions, responses, collectors, contacts, links, and provider writes.
 
 Google Drive is available as a separate metadata-only Google OAuth connection. Sneup reads one bounded user-Drive page, rejects incomplete pagination, and retains only redacted file or folder names plus timestamps. It excludes file content, web URLs, permissions, owners, shared drives, and provider writes.
