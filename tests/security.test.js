@@ -86,6 +86,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/clockifyWorkSignalClient');
     jest.dontMock('../src/services/floatWorkSignalClient');
     jest.dontMock('../src/services/resourceGuruWorkSignalClient');
+    jest.dontMock('../src/services/sentryWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2054,6 +2055,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('resource_guru').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Sentry adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'issue:18' }] });
+    jest.doMock('../src/services/sentryWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'sentry' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('sentry').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3940,6 +3952,37 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_RESOURCE_GURU_MAX_PROJECTS; process.env.SNEUP_RESOURCE_GURU_MAX_PROJECTS = '1';
     const capped = new ResourceGuruWorkSignalClient({ http: { get: jest.fn((url, options) => Promise.resolve({ data: url.endsWith('/projects') ? options.params.offset === 0 ? [{ id: 1, name: 'One' }] : [{ id: 2, name: 'Two' }] : [] })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'resource-guru-token' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { resourceGuruAccountId: '123', resourceGuruAccountUrlId: 'sneup-team' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_RESOURCE_GURU_MAX_PROJECTS; else process.env.SNEUP_RESOURCE_GURU_MAX_PROJECTS = previous; }
+  });
+
+  test('Sentry sync reads bounded organization-scoped project and unresolved issue metadata without event content or provider writes', async () => {
+    jest.dontMock('../src/services/sentryWorkSignalClient');
+    jest.resetModules();
+    const { SentryWorkSignalClient } = require('../src/services/sentryWorkSignalClient');
+    const finalProjects = { link: '<https://sentry.io/api/0/organizations/sneup/projects/?cursor=0:0:0>; rel="next"; results="false"' };
+    const finalIssues = { link: '<https://sentry.io/api/0/organizations/sneup/issues/?cursor=0:0:0>; rel="next"; results="false"' };
+    const http = { get: jest.fn((url) => Promise.resolve(url.endsWith('/projects/')
+      ? { data: [{ id: '9', slug: 'sneup-api', name: 'Sneup API', status: 'active', dateCreated: '2026-07-01T10:00:00.000Z', team: { name: 'Private team' }, platforms: ['node'] }], headers: finalProjects }
+      : { data: [{ id: '18', title: 'Payment failure with private@email.test', status: 'unresolved', level: 'error', firstSeen: '2026-07-10T10:00:00.000Z', lastSeen: '2026-07-12T12:00:00.000Z', count: '12', userCount: 3, project: { id: '9', slug: 'sneup-api', name: 'Sneup API' }, culprit: 'private culprit', metadata: { value: 'private event detail' }, assignedTo: { email: 'private@email.test' }, tags: [{ key: 'private' }], latestEvent: { entries: [{ data: 'private stack trace' }] } }], headers: finalIssues })) };
+    const client = new SentryWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'sentry-token' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { organizationSlug: 'sneup' } } }, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://sentry.io/api/0/organizations/sneup/issues/', expect.objectContaining({ params: expect.objectContaining({ query: 'is:unresolved', sort: 'date', statsPeriod: '', start: '2026-07-09T23:59:00.000Z', limit: 100 }), headers: expect.objectContaining({ Authorization: 'Bearer sentry-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/private culprit|private event detail|private stack trace|Private team|private@email\.test/);
+    expect(result).toMatchObject({ metadata: { source: 'sentry_api', organizationSlug: 'sneup', projects: 1, unresolvedIssues: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('Sentry sync rejects unsafe organization slugs and fails closed at a provider pagination cap', async () => {
+    jest.dontMock('../src/services/sentryWorkSignalClient');
+    jest.resetModules();
+    const { SentryWorkSignalClient } = require('../src/services/sentryWorkSignalClient');
+    const invalid = new SentryWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'sentry-token' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { organizationSlug: '../internal' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_SENTRY_MAX_PROJECTS; process.env.SNEUP_SENTRY_MAX_PROJECTS = '1';
+    const http = { get: jest.fn((url) => Promise.resolve(url.endsWith('/projects/')
+      ? { data: [{ id: '1', slug: 'one', name: 'One' }], headers: { link: '<https://sentry.io/api/0/organizations/sneup/projects/?cursor=0:1:0>; rel="next"; results="true"' } }
+      : { data: [], headers: { link: '<https://sentry.io/api/0/organizations/sneup/issues/?cursor=0:0:0>; rel="next"; results="false"' } })) };
+    const capped = new SentryWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'sentry-token' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { organizationSlug: 'sneup' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_SENTRY_MAX_PROJECTS; else process.env.SNEUP_SENTRY_MAX_PROJECTS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

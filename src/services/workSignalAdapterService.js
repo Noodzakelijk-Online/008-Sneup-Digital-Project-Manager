@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -53,6 +53,7 @@ const togglTrackWorkSignalClient = require('./togglTrackWorkSignalClient');
 const clockifyWorkSignalClient = require('./clockifyWorkSignalClient');
 const floatWorkSignalClient = require('./floatWorkSignalClient');
 const resourceGuruWorkSignalClient = require('./resourceGuruWorkSignalClient');
+const sentryWorkSignalClient = require('./sentryWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -863,6 +864,12 @@ resourceGuruAdapter.capabilities.credentialBackedSync = true;
 resourceGuruAdapter.list = async account => (await resourceGuruWorkSignalClient.fetchDelta(account, null)).records;
 resourceGuruAdapter.fetchDelta = (account, cursor) => resourceGuruWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('resource_guru', resourceGuruAdapter);
+
+const sentryAdapter = buildAdapter('sentry', 'Sentry project and unresolved issue metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'issue'), title: item.sourceType === 'project' ? titleFromText(item.name, 'Sentry project') : titleFromText(item.name, 'Sentry issue'), description: '', status: item.sourceType === 'project' ? item.status || 'open' : item.status || 'unresolved', priority: priorityFromText(item.level), owners: [], labels: compact(['sentry', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.projectSlug ? `project:${item.projectSlug}` : undefined, item.level]), dueAt: undefined, providerCreatedAt: pick(item.createdAt, item.firstSeen), providerUpdatedAt: pick(item.updatedAt, item.lastSeen, item.firstSeen), evidenceRefs: baseEvidence(account, item, 'Sentry incident metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, projectSlug: item.projectSlug, slug: item.slug, status: item.status, level: item.level, firstSeen: item.firstSeen, lastSeen: item.lastSeen, eventCount: item.eventCount, affectedUsers: item.affectedUsers, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+sentryAdapter.capabilities.credentialBackedSync = true;
+sentryAdapter.list = async account => (await sentryWorkSignalClient.fetchDelta(account, null)).records;
+sentryAdapter.fetchDelta = (account, cursor) => sentryWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('sentry', sentryAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

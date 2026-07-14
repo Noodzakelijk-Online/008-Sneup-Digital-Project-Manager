@@ -228,6 +228,8 @@ Float uses a bearer API token. It reads bounded paginated project and date-filte
 
 Resource Guru uses authorization-code OAuth and requires selection of one authorized Resource Guru account before syncing. It reads bounded project and date-filtered booking metadata with GET only, excludes resource profiles and names, notes, clients, rates, availability, timesheets, and provider writes, and fails visibly at configured collection caps.
 
+Sentry uses an auth token scoped to `org:read` and `event:read` plus one explicit organization slug. It reads bounded project and unresolved issue metadata with GET only, validates Sentry's pagination signal, excludes event payloads, stack traces, culprits, owners, tags, users, releases, alerts, and provider writes, and fails visibly at configured collection caps.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations
