@@ -6,6 +6,7 @@ const Board = require('../models/Board');
 const trelloClient = require('./trelloClient');
 const operationsLedgerService = require('./operationsLedgerService');
 const policyRuleService = require('./policyRuleService');
+const interventionPolicy = require('./interventionPolicy');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -199,7 +200,9 @@ class InterventionEngine {
         severity: saved.severity
       });
 
-      if (policy.requiresApproval) {
+      // The legacy engine may detect work, but it never performs provider writes.
+      // Only the ledger executes an exact payload after a recorded approval.
+      if (interventionPolicy.getWriteActionTypes().includes(saved.type) || policy.requiresApproval) {
         if (options.approvedRecommendationId) {
           return operationsLedgerService.executeApprovedRecommendation(options.approvedRecommendationId, options);
         }

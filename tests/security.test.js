@@ -4767,6 +4767,34 @@ describe('operations ledger intervention policy', () => {
     expect(trelloClient.addLabelToCard).not.toHaveBeenCalled();
   });
 
+  test('intervention engine never falls back to direct Trello writes when a policy result is misconfigured', async () => {
+    jest.resetModules();
+
+    const recommendation = { _id: 'recommendation-1' };
+    const createRecommendationFromIntervention = jest.fn().mockResolvedValue(recommendation);
+    const trelloClient = { addCommentToCard: jest.fn() };
+    jest.doMock('../src/services/operationsLedgerService', () => ({ createRecommendationFromIntervention }));
+    jest.doMock('../src/services/trelloClient', () => trelloClient);
+    jest.doMock('../src/services/policyRuleService', () => ({
+      resolveEffectivePolicy: jest.fn().mockResolvedValue({
+        riskLevel: 'low', requiresApproval: false, ownerType: 'system', approvalReason: 'Misconfigured policy', enabled: true
+      })
+    }));
+
+    const interventionEngine = require('../src/services/interventionEngine');
+    const intervention = {
+      _id: 'intervention-1', type: 'comment', severity: 'low', action: 'Request status update', message: 'Please update this card.', metadata: {},
+      save: jest.fn(), markFailed: jest.fn()
+    };
+    intervention.save.mockResolvedValue(intervention);
+
+    await expect(interventionEngine.executeIntervention(intervention)).resolves.toMatchObject({
+      executed: false, requiresApproval: true, recommendation
+    });
+    expect(createRecommendationFromIntervention).toHaveBeenCalledTimes(1);
+    expect(trelloClient.addCommentToCard).not.toHaveBeenCalled();
+  });
+
   test('reuses a recent scheduled intervention instead of creating another approval candidate', async () => {
     jest.resetModules();
 
