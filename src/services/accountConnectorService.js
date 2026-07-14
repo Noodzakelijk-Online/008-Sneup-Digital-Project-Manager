@@ -908,6 +908,7 @@ class AccountConnectorService {
       description: connector.description,
       auth: {
         type: connector.auth.type,
+        displayType: connector.auth.displayType,
         docsUrl: connector.auth.docsUrl,
         scopes: connector.auth.scopes || [],
         fields: connector.auth.fields || [],

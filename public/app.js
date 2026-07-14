@@ -3270,7 +3270,7 @@ function renderConnector(connector, account) {
   const connected = Boolean(account);
   const initials = connector.name.split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase();
   const configured = connector.auth.configured;
-  const authLabel = connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type.replaceAll('_', ' ');
+  const authLabel = connector.auth.displayType || (connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type.replaceAll('_', ' '));
   const safety = connector.safety || {};
   const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
   const adapterImplemented = contract?.adapterStatus === 'implemented';
@@ -3633,7 +3633,7 @@ function openCredentialModal(connector, data, account) {
       ${fields.map(field => `
         <div class="field">
           <label for="field-${field.name}">${escapeHtml(field.label || field.name)}</label>
-          <input id="field-${field.name}" name="${field.name}" type="${field.secret ? 'password' : 'text'}" ${field.required ? 'required' : ''}>
+          <input id="field-${field.name}" name="${field.name}" type="${field.secret ? 'password' : 'text'}" autocomplete="${field.secret ? 'current-password' : 'off'}" ${field.required ? 'required' : ''}>
         </div>
       `).join('')}
       <div class="field">

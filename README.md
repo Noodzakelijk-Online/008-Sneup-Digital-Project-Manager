@@ -216,6 +216,8 @@ Backlog uses a project-member API key and a public `*.backlog.com` or `*.backlog
 
 Freedcamp uses an account API key in the `X-API-KEY` header and reads bounded project, task, and milestone metadata with `GET`. It validates the provider's pagination signal, excludes descriptions, comments, files, custom fields, and tags, and never makes provider writes.
 
+Zendesk uses an OAuth access token rather than a retiring static API token. It reads the bounded, cursor-based incremental ticket export with `GET`, excludes deleted tickets and all ticket body, comment, requester, assignee, collaborator, tag, custom-field, organization, SLA, and macro content, retains only small ticket metadata plus problem-ticket dependency identifiers, and never makes provider writes.
+
 MeisterTask uses a personal access token with bearer authorization and reads bounded active project and section metadata plus task metadata with `GET`. It pins pagination to ascending IDs, excludes notes, comments, checklists, attachments, labels, tokens, and tracked-time detail, and never makes provider writes.
 
 Aha! uses a user-scoped API token against one public `*.aha.io` account domain. It makes bounded `GET` requests for product and feature metadata using server-side field allowlists, excludes descriptions, notes, comments, attachments, custom fields, and provider writes, and fails visibly at configured collection caps.

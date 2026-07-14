@@ -91,6 +91,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/statuspageWorkSignalClient');
     jest.dontMock('../src/services/genericRestApiWorkSignalClient');
     jest.dontMock('../src/services/datadogWorkSignalClient');
+    jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1137,6 +1138,9 @@ describe('connector registry', () => {
     expect(getConnectors().map(connector => connector.id)).toEqual(
       expect.arrayContaining(['trello', 'jira_software', 'asana', 'slack', 'github', 'notion', 'microsoft_365', 'linear'])
     );
+    const zendesk = getConnectors().find(connector => connector.id === 'zendesk');
+    expect(zendesk.auth.displayType).toBe('OAuth token');
+    expect(zendesk.auth.fields.map(field => field.name)).toEqual(['subdomain', 'accessToken']);
   });
 
   test('does not request Microsoft 365 write scopes for read-only connector ingestion', () => {
@@ -2112,6 +2116,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('datadog').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Zendesk adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'ticket:18' }] });
+    jest.doMock('../src/services/zendeskWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'zendesk' };
+    await workSignalAdapterService.fetchDelta(account, 'opaque-cursor');
+    expect(fetchDelta).toHaveBeenCalledWith(account, 'opaque-cursor');
+    expect(workSignalAdapterService.getAdapter('zendesk').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4137,6 +4152,102 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_DATADOG_MAX_MONITORS; process.env.SNEUP_DATADOG_MAX_MONITORS = '1';
     const capped = new DatadogWorkSignalClient({ http: { get: jest.fn((url) => Promise.resolve(url.endsWith('/api/v1/monitor') ? { data: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }] } : { data: { data: [] } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'api', appKey: 'app' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { site: 'datadoghq.com' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_DATADOG_MAX_MONITORS; else process.env.SNEUP_DATADOG_MAX_MONITORS = previous; }
+  });
+
+  test('Zendesk sync reads bounded cursor-paginated ticket metadata with OAuth access', async () => {
+    jest.dontMock('../src/services/zendeskWorkSignalClient');
+    jest.resetModules();
+    const { ZendeskWorkSignalClient } = require('../src/services/zendeskWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({
+          data: {
+            after_cursor: 'cursor-2',
+            end_of_stream: false,
+            tickets: [{
+              id: 18,
+              subject: `Release blocker for ${privateEmail}`,
+              description: 'Private customer details must not enter Sneup.',
+              status: 'open',
+              priority: 'urgent',
+              type: 'incident',
+              group_id: 9,
+              problem_id: 17,
+              requester_id: 12,
+              assignee_id: 13,
+              tags: ['private'],
+              custom_fields: [{ id: 1, value: 'secret' }],
+              created_at: '2026-07-10T12:00:00.000Z',
+              updated_at: '2026-07-12T12:00:00.000Z'
+            }]
+          }
+        })
+        .mockResolvedValueOnce({
+          data: {
+            after_cursor: 'cursor-3',
+            end_of_stream: true,
+            tickets: [{
+              id: 19,
+              subject: 'Confirm customer handoff',
+              status: 'pending',
+              type: 'question',
+              created_at: '2026-07-11T12:00:00.000Z',
+              updated_at: '2026-07-13T12:00:00.000Z'
+            }]
+          }
+        })
+    };
+    const client = new ZendeskWorkSignalClient({
+      http,
+      now: () => new Date('2026-07-14T12:00:00.000Z'),
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'zendesk-access-token' })) }
+    });
+    const originalEnv = { ...process.env };
+    process.env.SNEUP_ZENDESK_MAX_TICKETS = '2';
+    process.env.SNEUP_ZENDESK_PAGE_SIZE = '1';
+    process.env.SNEUP_ZENDESK_INITIAL_LOOKBACK_DAYS = '30';
+
+    try {
+      const result = await client.fetchDelta({ metadata: { fields: { subdomain: 'sneup-demo' } } });
+      expect(http.get).toHaveBeenNthCalledWith(1,
+        'https://sneup-demo.zendesk.com/api/v2/incremental/tickets/cursor',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer zendesk-access-token' }),
+          maxRedirects: 0,
+          proxy: false
+        })
+      );
+      expect(http.get.mock.calls[0][1].params).toMatchObject({ per_page: 1, exclude_deleted: true });
+      expect(http.get.mock.calls[0][1].params.start_time).toEqual(expect.any(Number));
+      expect(http.get).toHaveBeenNthCalledWith(2,
+        'https://sneup-demo.zendesk.com/api/v2/incremental/tickets/cursor',
+        expect.objectContaining({ params: { cursor: 'cursor-2', per_page: 1, exclude_deleted: true } })
+      );
+      expect(result).toMatchObject({ metadata: { source: 'zendesk_incremental_ticket_export', tickets: 2, pages: 2 }, nextCursor: 'cursor-3', hasMore: false });
+      expect(result.records[0]).toMatchObject({ id: 'ticket:18', status: 'open', priority: 'urgent', blockedBy: [{ externalId: 'ticket:17', relationship: 'blocked_by' }] });
+      expect(result.records[0]).not.toHaveProperty('description');
+      expect(result.records[0]).not.toHaveProperty('requester_id');
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  test('Zendesk sync fails visibly when its ticket cap is reached before the stream ends', async () => {
+    jest.dontMock('../src/services/zendeskWorkSignalClient');
+    jest.resetModules();
+    const { ZendeskWorkSignalClient } = require('../src/services/zendeskWorkSignalClient');
+    const http = { get: jest.fn().mockResolvedValue({ data: { after_cursor: 'cursor-2', end_of_stream: false, tickets: [{ id: 18, subject: 'Blocked release', updated_at: '2026-07-12T12:00:00.000Z' }] } }) };
+    const client = new ZendeskWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'zendesk-access-token' })) } });
+    const previous = process.env.SNEUP_ZENDESK_MAX_TICKETS;
+    process.env.SNEUP_ZENDESK_MAX_TICKETS = '1';
+    try {
+      await expect(client.fetchDelta({ metadata: { fields: { subdomain: 'sneup-demo' } } })).rejects.toMatchObject({ statusCode: 413 });
+    } finally {
+      if (previous === undefined) delete process.env.SNEUP_ZENDESK_MAX_TICKETS;
+      else process.env.SNEUP_ZENDESK_MAX_TICKETS = previous;
+    }
   });
 
   test('projects provider signals into normalized work graph records', () => {
