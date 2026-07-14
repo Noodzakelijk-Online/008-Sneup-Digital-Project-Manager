@@ -71,6 +71,13 @@ describe('production token-secret boundary', () => {
       NODE_ENV: 'production',
       SNEUP_API_TOKEN_PEPPER: strong('api')
     })).toThrow(/SNEUP_SESSION_TOKEN_PEPPER/);
+
+    const reused = {
+      ...environment,
+      SNEUP_SESSION_TOKEN_PEPPER: environment.SNEUP_API_TOKEN_PEPPER
+    };
+    expect(() => validateRuntimeSecurityConfiguration(reused))
+      .toThrow(/SNEUP_API_TOKEN_PEPPER.*SNEUP_SESSION_TOKEN_PEPPER/);
   });
 });
 

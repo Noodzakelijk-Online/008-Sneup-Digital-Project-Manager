@@ -339,14 +339,14 @@ const enhancements = [
     priority: 'P0',
     area: 'security',
     title: 'Reject predictable token-hashing secrets in live production',
-    evidence: 'Live production startup now requires separate, non-placeholder 32+ character peppers for database API tokens, desktop sessions, and workspace invitations. Each token model also rejects an absent or weak production pepper at hash time, while loopback-only demo mode remains credential-free.',
+    evidence: 'Live production startup now requires separate, non-placeholder 32+ character peppers for database API tokens, desktop sessions, and workspace invitations. Each token model also rejects an absent or weak production pepper at hash time. The `npm run check:release-security` gate verifies all persisted-token and connector secrets are present, strong, and distinct by purpose without printing their values, while loopback-only demo mode remains credential-free.',
     impact: 'Prevents persisted access and invitation tokens from depending on shared or predictable development fallback values.',
     effort: 'S',
     status: 'done',
-    nextStep: 'Add release-environment checks that verify these secrets are supplied by the deployment platform without exposing their values.',
+    nextStep: 'Add the release-security command to the production deployment workflow once release infrastructure is configured.',
     acceptanceCriteria: [
       'A non-demo production runtime refuses missing, weak, or placeholder token peppers.',
-      'API token, session token, and invitation token hashing each use an independent configured secret.',
+      'API token, session token, invitation token, connector encryption, and OAuth state each use an independent configured secret.',
       'Demo mode remains usable without production secrets.'
     ]
   }

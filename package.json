@@ -11,6 +11,7 @@
     "dev": "nodemon src/index.js",
     "migrate:workspace": "node scripts/migrate-workspace-scope.js",
     "evaluate:recommendations": "node scripts/evaluate-recommendations.js",
+    "check:release-security": "node scripts/verify-release-security.js",
     "test": "jest",
     "lint": "eslint src/**/*.js"
   },
