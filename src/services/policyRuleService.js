@@ -8,12 +8,21 @@ const RISK_LEVELS = ['low', 'medium', 'high', 'critical'];
 const OWNER_TYPES = ['robert', 'va', 'team', 'system'];
 const OWNER_STRICTNESS = Object.freeze({ system: 0, va: 1, team: 1, robert: 2 });
 const MAX_REASON_LENGTH = 500;
+const DECISION_QUEUE_SNOOZE_ACTION = 'decision_queue_snooze';
+const DEFAULT_SNOOZE_HOURS = 24;
+const MIN_SNOOZE_HOURS = 1;
+const MAX_SNOOZE_HOURS = 168;
 
 const clampText = (value, maximum = MAX_REASON_LENGTH) => String(value || '').trim().slice(0, maximum);
 const riskRank = (riskLevel) => RISK_LEVELS.indexOf(riskLevel);
 const ownerRank = (ownerType) => OWNER_STRICTNESS[ownerType] ?? -1;
 const actionLabel = (actionType) => String(actionType || '').replaceAll('_', ' ');
 const getPolicyRuleModel = () => require('../models/PolicyRule');
+const isDecisionQueueSnoozeAction = actionType => actionType === DECISION_QUEUE_SNOOZE_ACTION;
+const parseSnoozeHours = value => {
+  const parsed = typeof value === 'string' && !value.trim() ? Number.NaN : Number(value);
+  return Number.isInteger(parsed) && parsed >= MIN_SNOOZE_HOURS && parsed <= MAX_SNOOZE_HOURS ? parsed : null;
+};
 const toValidDate = (value) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -38,7 +47,7 @@ class PolicyRuleService {
   }
 
   assertActionType(actionType) {
-    if (!interventionPolicy.getWriteActionTypes().includes(actionType)) {
+    if (!interventionPolicy.getWriteActionTypes().includes(actionType) && !isDecisionQueueSnoozeAction(actionType)) {
       const error = new Error('Action type is not eligible for a Trello safety policy');
       error.statusCode = 400;
       throw error;
@@ -109,6 +118,43 @@ class PolicyRuleService {
     };
   }
 
+  decisionQueueSnoozeBaseline() {
+    return {
+      actionType: DECISION_QUEUE_SNOOZE_ACTION,
+      label: 'Decision queue snooze',
+      policyKind: 'workflow',
+      enabled: true,
+      configured: false,
+      riskLevel: 'low',
+      baselineRiskLevel: 'low',
+      ownerType: 'robert',
+      baselineOwnerType: 'robert',
+      requiresApproval: false,
+      approvalReason: 'Snoozing only reschedules an internal decision queue item; it never prepares or performs a provider write.',
+      defaultSnoozeHours: DEFAULT_SNOOZE_HOURS,
+      baselineDefaultSnoozeHours: DEFAULT_SNOOZE_HOURS,
+      policyRuleId: null,
+      updatedAt: null,
+      updatedBy: null,
+      reason: ''
+    };
+  }
+
+  mergeDecisionQueueSnoozePolicy(rule) {
+    const baseline = this.decisionQueueSnoozeBaseline();
+    if (!rule) return baseline;
+    const configuredHours = parseSnoozeHours(rule.conditions?.defaultSnoozeHours);
+    return {
+      ...baseline,
+      configured: true,
+      defaultSnoozeHours: configuredHours || DEFAULT_SNOOZE_HOURS,
+      policyRuleId: rule._id ? String(rule._id) : null,
+      updatedAt: rule.updatedAt || null,
+      updatedBy: rule.updatedBy || 'system',
+      reason: rule.reason || ''
+    };
+  }
+
   async listEffectivePolicies(options = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
@@ -116,10 +162,11 @@ class PolicyRuleService {
     const rules = await PolicyRule.find({ workspaceId }).sort({ actionType: 1 });
     const rulesByAction = new Map(rules.map(rule => [rule.actionType, rule]));
 
-    return interventionPolicy.getWriteActionTypes().map((actionType) => {
+    const writePolicies = interventionPolicy.getWriteActionTypes().map((actionType) => {
       const base = interventionPolicy.classifyAction(actionType);
       return this.serializePolicy(actionType, this.mergePolicy(base, rulesByAction.get(actionType)));
     });
+    return [...writePolicies, this.mergeDecisionQueueSnoozePolicy(rulesByAction.get(DECISION_QUEUE_SNOOZE_ACTION))];
   }
 
   async listPolicyHistory(options = {}) {
@@ -129,7 +176,7 @@ class PolicyRuleService {
     return AuditEvent.find({
       workspaceId,
       entityType: 'policy_rule',
-      action: 'trello_action_policy_updated'
+      action: { $in: ['trello_action_policy_updated', 'decision_queue_snooze_policy_updated'] }
     })
       .sort({ createdAt: -1 })
       .limit(limit);
@@ -148,9 +195,20 @@ class PolicyRuleService {
     return this.mergePolicy(base, rule);
   }
 
+  async getDecisionQueueSnoozePolicy(options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const PolicyRule = getPolicyRuleModel();
+    const rule = await PolicyRule.findOne({ workspaceId, actionType: DECISION_QUEUE_SNOOZE_ACTION });
+    return this.mergeDecisionQueueSnoozePolicy(rule);
+  }
+
   async updateActionPolicy(actionType, body = {}, options = {}) {
     this.requireDatabase();
     this.assertActionType(actionType);
+    if (isDecisionQueueSnoozeAction(actionType)) {
+      return this.updateDecisionQueueSnoozePolicy(body, options);
+    }
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const base = interventionPolicy.classifyAction(actionType);
     const actor = options.actor || 'sneup-operator';
@@ -256,6 +314,64 @@ class PolicyRuleService {
 
     return this.serializePolicy(actionType, effectivePolicy);
   }
+
+  async updateDecisionQueueSnoozePolicy(body = {}, options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const actor = options.actor || 'sneup-operator';
+    const PolicyRule = getPolicyRuleModel();
+    const existing = await PolicyRule.findOne({ workspaceId, actionType: DECISION_QUEUE_SNOOZE_ACTION });
+    const requestedHours = body.defaultSnoozeHours === undefined
+      ? parseSnoozeHours(existing?.conditions?.defaultSnoozeHours) || DEFAULT_SNOOZE_HOURS
+      : parseSnoozeHours(body.defaultSnoozeHours);
+    if (!requestedHours) {
+      const error = new Error(`defaultSnoozeHours must be a whole number between ${MIN_SNOOZE_HOURS} and ${MAX_SNOOZE_HOURS}`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const beforePolicy = this.mergeDecisionQueueSnoozePolicy(existing);
+    const rule = await PolicyRule.findOneAndUpdate(
+      { workspaceId, actionType: DECISION_QUEUE_SNOOZE_ACTION },
+      {
+        $set: {
+          name: 'Decision queue snooze workflow policy',
+          riskLevel: 'low',
+          requiresApproval: false,
+          ownerType: 'robert',
+          enabled: true,
+          pauseExpiresAt: null,
+          reason: body.reason === undefined ? existing?.reason || '' : clampText(body.reason),
+          updatedBy: actor,
+          conditions: {
+            ...(existing?.conditions || {}),
+            defaultSnoozeHours: requestedHours
+          }
+        },
+        $setOnInsert: { workspaceId, actionType: DECISION_QUEUE_SNOOZE_ACTION }
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    const policy = this.mergeDecisionQueueSnoozePolicy(rule);
+    try {
+      await AuditEvent.create({
+        workspaceId,
+        entityType: 'policy_rule',
+        entityId: rule._id,
+        action: 'decision_queue_snooze_policy_updated',
+        actor,
+        source: 'api',
+        riskLevel: 'low',
+        beforeState: beforePolicy,
+        afterState: policy
+      });
+    } catch (error) {
+      logger.error('Decision queue snooze policy audit write failed:', error);
+    }
+
+    return policy;
+  }
 }
 
 module.exports = new PolicyRuleService();
@@ -263,3 +379,7 @@ module.exports.PolicyRuleService = PolicyRuleService;
 module.exports.RISK_LEVELS = RISK_LEVELS;
 module.exports.OWNER_TYPES = OWNER_TYPES;
 module.exports.OWNER_STRICTNESS = OWNER_STRICTNESS;
+module.exports.DECISION_QUEUE_SNOOZE_ACTION = DECISION_QUEUE_SNOOZE_ACTION;
+module.exports.DEFAULT_SNOOZE_HOURS = DEFAULT_SNOOZE_HOURS;
+module.exports.MIN_SNOOZE_HOURS = MIN_SNOOZE_HOURS;
+module.exports.MAX_SNOOZE_HOURS = MAX_SNOOZE_HOURS;

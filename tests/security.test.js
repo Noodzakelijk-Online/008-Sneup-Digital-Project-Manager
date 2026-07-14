@@ -7265,6 +7265,39 @@ describe('operations ledger intervention policy', () => {
     });
   });
 
+  test('decision queue snooze defaults are bounded workspace workflow policies', () => {
+    const { PolicyRuleService, DEFAULT_SNOOZE_HOURS } = require('../src/services/policyRuleService');
+    const service = new PolicyRuleService();
+
+    expect(service.mergeDecisionQueueSnoozePolicy(null)).toMatchObject({
+      actionType: 'decision_queue_snooze',
+      policyKind: 'workflow',
+      defaultSnoozeHours: DEFAULT_SNOOZE_HOURS,
+      requiresApproval: false
+    });
+    expect(service.mergeDecisionQueueSnoozePolicy({
+      _id: 'snooze-policy',
+      conditions: { defaultSnoozeHours: 72 },
+      updatedBy: 'workspace-manager',
+      reason: 'Give weekly decision reviews room to breathe'
+    })).toMatchObject({
+      configured: true,
+      defaultSnoozeHours: 72,
+      updatedBy: 'workspace-manager'
+    });
+    expect(service.mergeDecisionQueueSnoozePolicy({ conditions: { defaultSnoozeHours: 169 } }).defaultSnoozeHours).toBe(DEFAULT_SNOOZE_HOURS);
+    expect(service.mergeDecisionQueueSnoozePolicy({ conditions: { defaultSnoozeHours: '1.5' } }).defaultSnoozeHours).toBe(DEFAULT_SNOOZE_HOURS);
+  });
+
+  test('decision queue snooze timing uses the policy default, preserves explicit future deadlines, and rejects past deadlines', () => {
+    const { resolveSnoozedUntil } = require('../src/services/operationsLedgerService');
+    const now = new Date('2026-07-14T08:00:00.000Z');
+
+    expect(resolveSnoozedUntil({ defaultSnoozeHours: 72, now }).toISOString()).toBe('2026-07-17T08:00:00.000Z');
+    expect(resolveSnoozedUntil({ snoozedUntil: '2026-07-15T12:00:00.000Z', defaultSnoozeHours: 24, now }).toISOString()).toBe('2026-07-15T12:00:00.000Z');
+    expect(() => resolveSnoozedUntil({ snoozedUntil: '2026-07-14T07:59:59.000Z', defaultSnoozeHours: 24, now })).toThrow('in the future');
+  });
+
   test('lists only bounded workspace policy update evidence', async () => {
     jest.resetModules();
     const chain = {
@@ -7284,7 +7317,7 @@ describe('operations ledger intervention policy', () => {
     expect(AuditEvent.find).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       entityType: 'policy_rule',
-      action: 'trello_action_policy_updated'
+      action: { $in: ['trello_action_policy_updated', 'decision_queue_snooze_policy_updated'] }
     });
     expect(chain.sort).toHaveBeenCalledWith({ createdAt: -1 });
     expect(chain.limit).toHaveBeenCalledWith(100);

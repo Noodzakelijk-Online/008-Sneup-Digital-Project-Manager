@@ -1592,7 +1592,6 @@ async function runDecisionAction(itemId, action) {
   const body = action === 'snooze'
     ? {
       snoozedBy: 'robert',
-      snoozedUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       reason: 'Snoozed from Sneup command center'
     }
     : {
@@ -1608,7 +1607,7 @@ async function runDecisionAction(itemId, action) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    openNotice('Decision updated', action === 'snooze' ? 'Decision snoozed for 24 hours.' : 'Decision delegated.');
+    openNotice('Decision updated', action === 'snooze' ? 'Decision snoozed using this workspace default.' : 'Decision delegated.');
     await loadOperationsLedger();
   } catch (error) {
     openNotice('Decision update failed', error.message);
@@ -2372,6 +2371,7 @@ function renderWorkspaceInvitation(invitation) {
 
 function renderPolicyRule(policy) {
   const canManage = state.securityContext?.permissions?.includes('policy-rules:manage');
+  const isWorkflowPolicy = policy.policyKind === 'workflow';
   const stateLabel = policy.enabled ? 'active' : 'paused';
   const stateClass = policy.enabled ? 'healthy' : 'critical';
   const riskClass = policy.riskLevel === 'critical' ? 'critical' : policy.riskLevel === 'high' ? 'high' : 'review';
@@ -2387,9 +2387,9 @@ function renderPolicyRule(policy) {
         <span class="pill ${stateClass}">${escapeHtml(stateLabel)}</span>
       </div>
       <div class="meta">
-        <span class="pill ${riskClass}">${escapeHtml(policy.riskLevel)} risk</span>
-        <span>${escapeHtml(policy.ownerType)} decides</span>
-        <span>approval required</span>
+        ${isWorkflowPolicy
+          ? `<span>${escapeHtml(String(policy.defaultSnoozeHours || 24))}-hour default</span><span>internal queue only</span>`
+          : `<span class="pill ${riskClass}">${escapeHtml(policy.riskLevel)} risk</span><span>${escapeHtml(policy.ownerType)} decides</span><span>approval required</span>`}
         <span>${policy.configured ? 'workspace rule set' : 'baseline rule'}</span>
         ${pauseReview}
       </div>
@@ -2439,6 +2439,51 @@ function bindPolicyRuleActions() {
 function openPolicyRuleEditor(actionType) {
   const policy = (state.policyRules || []).find(item => item.actionType === actionType);
   if (!policy) return;
+
+  if (policy.policyKind === 'workflow') {
+    els.modalTitle.textContent = policy.label;
+    els.modalBody.innerHTML = `
+      <form id="policyRuleForm" class="notice-stack">
+        <div class="notice">This default only reschedules internal decision queue items. It never prepares or performs a provider write.</div>
+        <label>Default snooze duration (hours)
+          <input name="defaultSnoozeHours" type="number" min="1" max="168" step="1" value="${escapeHtml(String(policy.defaultSnoozeHours || 24))}" required>
+          <small>Choose between 1 hour and 7 days. People can still choose an explicit future deadline where the API permits it.</small>
+        </label>
+        <label>Reason<textarea name="reason" rows="3" maxlength="500" placeholder="Why this workspace needs this default">${escapeHtml(policy.reason || '')}</textarea></label>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelPolicyRule">Cancel</button>
+          <button class="button primary" type="submit">Save workflow default</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelPolicyRule').addEventListener('click', closeModal);
+    document.getElementById('policyRuleForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const submitButton = form.querySelector('button[type="submit"]');
+      const values = new FormData(form);
+      submitButton.disabled = true;
+      submitButton.textContent = 'Saving...';
+      try {
+        await fetchApi(`/api/policy-rules/${encodeURIComponent(actionType)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            defaultSnoozeHours: Number(values.get('defaultSnoozeHours')),
+            reason: values.get('reason')
+          })
+        });
+        closeModal();
+        await loadWorkspaceAdmin();
+      } catch (error) {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Save workflow default';
+        openNotice('Workflow default blocked', error.message);
+      }
+    });
+    return;
+  }
 
   const riskLevels = ['low', 'medium', 'high', 'critical'];
   const ownerStrictness = { system: 0, va: 1, team: 1, robert: 2 };

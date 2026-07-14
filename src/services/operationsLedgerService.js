@@ -26,6 +26,23 @@ const HOURS = 60 * 60 * 1000;
 const DEFAULT_RECONCILIATION_WARNING_HOURS = 4;
 const DEFAULT_RECONCILIATION_CRITICAL_HOURS = 24;
 
+const resolveSnoozedUntil = ({ snoozedUntil, defaultSnoozeHours, now = new Date() } = {}) => {
+  const currentTime = now instanceof Date ? now : new Date(now);
+  const explicitDeadline = snoozedUntil ? new Date(snoozedUntil) : null;
+  const deadline = explicitDeadline || new Date(currentTime.getTime() + Number(defaultSnoozeHours) * HOURS);
+  if (Number.isNaN(currentTime.getTime()) || Number.isNaN(deadline.getTime())) {
+    const error = new Error('snoozedUntil must be a valid date');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (deadline.getTime() <= currentTime.getTime()) {
+    const error = new Error('snoozedUntil must be in the future');
+    error.statusCode = 400;
+    throw error;
+  }
+  return deadline;
+};
+
 const boundedHours = (value, fallback, minimum, maximum) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -1098,12 +1115,11 @@ class OperationsLedgerService {
       throw error;
     }
 
-    const snoozedUntil = body.snoozedUntil ? new Date(body.snoozedUntil) : new Date(Date.now() + 24 * HOURS);
-    if (Number.isNaN(snoozedUntil.getTime())) {
-      const error = new Error('snoozedUntil must be a valid date');
-      error.statusCode = 400;
-      throw error;
-    }
+    const snoozePolicy = await policyRuleService.getDecisionQueueSnoozePolicy({ workspaceId: item.workspaceId });
+    const snoozedUntil = resolveSnoozedUntil({
+      snoozedUntil: body.snoozedUntil,
+      defaultSnoozeHours: snoozePolicy.defaultSnoozeHours
+    });
 
     const beforeState = item.toObject();
     item.status = 'snoozed';
@@ -1127,7 +1143,10 @@ class OperationsLedgerService {
       riskLevel: item.riskLevel,
       recommendationId: item.recommendationId,
       beforeState,
-      afterState: item.toObject()
+      afterState: {
+        ...item.toObject(),
+        appliedDefaultSnoozeHours: body.snoozedUntil ? null : snoozePolicy.defaultSnoozeHours
+      }
     });
 
     return item;
@@ -2427,4 +2446,8 @@ class OperationsLedgerService {
   }
 }
 
-module.exports = new OperationsLedgerService();
+const operationsLedgerService = new OperationsLedgerService();
+
+module.exports = operationsLedgerService;
+module.exports.OperationsLedgerService = OperationsLedgerService;
+module.exports.resolveSnoozedUntil = resolveSnoozedUntil;
