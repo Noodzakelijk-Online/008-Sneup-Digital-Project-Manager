@@ -4,8 +4,8 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 
 ## Priority Summary
 
-- P0: 3 findings that block serious production use.
-- P1: 3 findings that materially improve trust, operability, and desktop adoption, plus 1 completed operations control finding.
+- P0: 4 findings that block serious production use.
+- P1: 4 findings that materially improve trust, operability, and desktop adoption, plus 1 completed operations control finding.
 - P2: 6 findings that harden scale, quality, and workflow reach.
 - P3: 1 reporting enhancement with fast user-visible value.
 
@@ -28,6 +28,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 | ENH-013 | P2 | Connectors | PM connectors are onboarded but many providers still need adapter sync implementations. | Finish the production-safe connector onboarding baseline, validate metadata consistency, and ship first-wave adapters for the added catalog providers. |
 | ENH-014 | P2 | Resource | In-memory rate limiting can still grow under extreme unique traffic. | Bound rate bucket cardinality and expose operational tuning guidance and metrics. |
 | ENH-015 | P1 | Connector safety | Account linking now stops at a scope-review gate, exposes requested scopes, narrows four provider permissions to read-only equivalents, and blocks provider writes within Sneup. | Add workspace-scoped credential encryption configuration and provider-specific consent evidence to the audit ledger. |
+| ENH-016 | P0 | Autonomy safety | Approved Trello writes now use an atomic execution claim, reject forged no-approval write records, and retain the claim after post-write bookkeeping faults to prevent duplicate provider mutations. | Add an operator-only reconciliation workflow for a rare action left executing after a provider response cannot be finalized. |
 
 ## Recommended Build Order
 

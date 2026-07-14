@@ -231,6 +231,38 @@ const enhancements = [
       'Rate limiting behavior stays stable while stale bucket cleanup and LRU-style pruning run.',
       'Operational docs explain tuning values and their safety envelope.'
     ]
+  },
+  {
+    id: 'ENH-015',
+    priority: 'P1',
+    area: 'connectors',
+    title: 'Require explicit scope review before linking provider accounts',
+    evidence: 'Every connector now exposes a safety profile, signals are read-only, provider writes are blocked, and a user must acknowledge the requested provider scopes before Sneup opens OAuth or accepts provider credentials. Google Calendar, Zoom, Miro, and Google Chat use their documented read-only scopes.',
+    impact: 'Makes account linking legible and prevents a convenience connection flow from silently requesting broad provider permissions.',
+    effort: 'M',
+    status: 'done',
+    nextStep: 'Record provider consent metadata and workspace-scoped credential rotation evidence in the audit ledger.',
+    acceptanceCriteria: [
+      'Connector catalog displays requested scopes and safety posture.',
+      'OAuth and credential flows require an explicit scope-review acknowledgement.',
+      'Connector ingestion does not perform provider writes.'
+    ]
+  },
+  {
+    id: 'ENH-016',
+    priority: 'P0',
+    area: 'autonomy',
+    title: 'Make approved Trello action execution single-claim and fail-safe',
+    evidence: 'Approved Trello writes now atomically claim the recommendation from approved to executing, reject forged no-approval write records, and remain claimed if post-write ledger finalization fails so Sneup cannot retry a potentially completed provider action.',
+    impact: 'Prevents duplicate comments, moves, assignments, labels, and other consequential provider writes under concurrent requests or partial internal failures.',
+    effort: 'M',
+    status: 'done',
+    nextStep: 'Add an operator-only reconciliation workflow for rare actions left executing after a provider response cannot be finalized.',
+    acceptanceCriteria: [
+      'Only one executor can claim an approved provider write.',
+      'Provider writes cannot be executed from a record that disables required approval.',
+      'Post-write internal failures cannot relabel a successful provider action as failed or retry it automatically.'
+    ]
   }
 ];
 

@@ -3986,6 +3986,93 @@ describe('operations ledger intervention policy', () => {
   });
 });
 
+describe('approved Trello action execution safety', () => {
+  afterEach(() => {
+    jest.dontMock('../src/models/Recommendation');
+    jest.dontMock('../src/services/operationsLedgerService');
+    jest.dontMock('../src/services/workspaceScopeService');
+    jest.resetModules();
+  });
+
+  test('rejects a provider write whose persisted recommendation attempts to bypass approval', async () => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const recommendation = {
+      _id: 'recommendation-1',
+      workspaceId: 'workspace-1',
+      actionType: 'comment',
+      riskLevel: 'medium',
+      requiresApproval: false,
+      status: 'approved',
+      actionPayload: {
+        executable: true,
+        draftOnly: false,
+        cardTrelloId: 'trello-card-1',
+        commentText: 'This must not be sent without approval.'
+      }
+    };
+
+    jest.doMock('../src/models/Recommendation', () => ({
+      findOne: jest.fn().mockResolvedValue(recommendation)
+    }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    jest.spyOn(operationsLedgerService, 'isDatabaseReady').mockReturnValue(true);
+
+    await expect(operationsLedgerService.executeApprovedRecommendation('recommendation-1', {
+      workspaceId: 'workspace-1'
+    })).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining('cannot be bypassed')
+    });
+  });
+
+  test('uses an atomic approved-to-executing claim so a second executor cannot duplicate a provider write', async () => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const findOneAndUpdate = jest.fn().mockResolvedValue(null);
+    const findOne = jest.fn().mockResolvedValue({
+      _id: 'recommendation-1',
+      status: 'executing'
+    });
+
+    jest.doMock('../src/models/Recommendation', () => ({
+      findOne,
+      findOneAndUpdate
+    }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+
+    await expect(operationsLedgerService.claimApprovedRecommendationExecution({
+      _id: 'recommendation-1',
+      workspaceId: 'workspace-1'
+    }, {
+      workspaceId: 'workspace-1'
+    })).rejects.toMatchObject({
+      statusCode: 409,
+      message: 'Recommendation execution is already in progress'
+    });
+
+    expect(findOneAndUpdate).toHaveBeenCalledWith({
+      _id: 'recommendation-1',
+      workspaceId: 'workspace-1',
+      status: 'approved'
+    }, {
+      $set: { status: 'executing' }
+    }, {
+      new: true
+    });
+  });
+});
+
 describe('operating ledger analyzer', () => {
   test('detects stale, blocked, Robert-required, and missing-next-action findings without Trello writes', () => {
     const analyzer = require('../src/services/operatingLedgerAnalyzer');

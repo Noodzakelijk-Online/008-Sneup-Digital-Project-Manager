@@ -779,7 +779,16 @@ class OperationsLedgerService {
       throw error;
     }
 
-    if (recommendation.requiresApproval && recommendation.status !== 'approved') {
+    const actionPolicy = interventionPolicy.classifyAction(recommendation.actionType, {
+      severity: recommendation.riskLevel
+    });
+    if (actionPolicy.requiresApproval && recommendation.requiresApproval !== true) {
+      const error = new Error('Provider write approval cannot be bypassed by recommendation data');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (actionPolicy.requiresApproval && recommendation.status !== 'approved') {
       const error = new Error('Recommendation must be approved before execution');
       error.statusCode = 409;
       throw error;
@@ -791,13 +800,13 @@ class OperationsLedgerService {
       decision: 'approved'
     }).sort({ decidedAt: -1 });
 
-    if (recommendation.requiresApproval && !approval) {
+    if (actionPolicy.requiresApproval && !approval) {
       const error = new Error('Approved payload snapshot not found');
       error.statusCode = 409;
       throw error;
     }
 
-    if (recommendation.requiresApproval && !isDeepStrictEqual(approval.approvedPayloadSnapshot || {}, recommendation.actionPayload || {})) {
+    if (actionPolicy.requiresApproval && !isDeepStrictEqual(approval.approvedPayloadSnapshot || {}, recommendation.actionPayload || {})) {
       const error = new Error('The action payload changed after approval. Review and approve the current payload before execution.');
       error.statusCode = 409;
       throw error;
@@ -809,75 +818,87 @@ class OperationsLedgerService {
       throw error;
     }
 
-    recommendation.status = 'executing';
-    await recommendation.save();
+    const claimedRecommendation = await this.claimApprovedRecommendationExecution(recommendation, options);
 
-    const attempt = await TrelloActionAttempt.create({
-      workspaceId: recommendation.workspaceId,
-      recommendationId: recommendation._id,
-      interventionId: recommendation.interventionId,
-      approvalId: approval?._id,
-      boardId: recommendation.boardId,
-      cardId: recommendation.cardId,
-      actionType: recommendation.actionType,
-      payload: recommendation.actionPayload,
-      status: 'in_progress',
-      startedAt: new Date()
-    });
+    let attempt;
+    let providerWriteCompleted = false;
 
     try {
-      const trelloResponse = await this.performTrelloAction(recommendation);
+      attempt = await TrelloActionAttempt.create({
+        workspaceId: claimedRecommendation.workspaceId,
+        recommendationId: claimedRecommendation._id,
+        interventionId: claimedRecommendation.interventionId,
+        approvalId: approval?._id,
+        boardId: claimedRecommendation.boardId,
+        cardId: claimedRecommendation.cardId,
+        actionType: claimedRecommendation.actionType,
+        payload: claimedRecommendation.actionPayload,
+        status: 'in_progress',
+        startedAt: new Date()
+      });
+
+      const trelloResponse = await this.performTrelloAction(claimedRecommendation);
+      providerWriteCompleted = true;
       attempt.status = 'succeeded';
       attempt.finishedAt = new Date();
       attempt.trelloResponse = trelloResponse;
       await attempt.save();
 
-      recommendation.status = 'executed';
-      recommendation.executedAt = attempt.finishedAt;
-      await recommendation.save();
+      claimedRecommendation.status = 'executed';
+      claimedRecommendation.executedAt = attempt.finishedAt;
+      await claimedRecommendation.save();
 
-      if (recommendation.interventionId) {
+      if (claimedRecommendation.interventionId) {
         const intervention = await Intervention.findOne({
-          _id: recommendation.interventionId,
-          workspaceId: recommendation.workspaceId
+          _id: claimedRecommendation.interventionId,
+          workspaceId: claimedRecommendation.workspaceId
         });
         if (intervention) {
           await intervention.markExecuted({
-            recommendationId: recommendation._id,
+            recommendationId: claimedRecommendation._id,
             trelloActionAttemptId: attempt._id
           });
         }
       }
 
-      await this.scheduleFollowUp(recommendation);
+      await this.scheduleFollowUp(claimedRecommendation);
       await this.recordAudit({
         entityType: 'trello_action_attempt',
         entityId: attempt._id,
         action: 'trello_action_succeeded',
         actor: options.actor || approval?.decidedBy || 'sneup',
         source: 'trello',
-        riskLevel: recommendation.riskLevel,
+        riskLevel: claimedRecommendation.riskLevel,
         approvalId: approval?._id,
-        recommendationId: recommendation._id,
+        recommendationId: claimedRecommendation._id,
         trelloActionAttemptId: attempt._id,
         afterState: attempt.toObject()
       });
 
-      return { recommendation, attempt };
+      return { recommendation: claimedRecommendation, attempt };
     } catch (error) {
-      attempt.status = 'failed';
-      attempt.finishedAt = new Date();
-      attempt.errorMessage = error.message;
-      await attempt.save();
+      if (providerWriteCompleted) {
+        logger.error('Trello write succeeded but post-write ledger finalization failed. Leaving the recommendation claimed to prevent a duplicate provider write.', error);
+        const finalizationError = new Error('The Trello action succeeded, but Sneup could not finish recording it. Review the action history before taking another action.');
+        finalizationError.statusCode = 503;
+        throw finalizationError;
+      }
 
-      recommendation.status = 'failed';
-      recommendation.failureReason = error.message;
-      await recommendation.save();
+      if (attempt) {
+        attempt.status = 'failed';
+        attempt.finishedAt = new Date();
+        attempt.errorMessage = error.message;
+        await attempt.save();
+      }
 
-      if (recommendation.interventionId) {
+      claimedRecommendation.status = 'failed';
+      claimedRecommendation.failureReason = error.message;
+      await claimedRecommendation.save();
+
+      if (claimedRecommendation.interventionId) {
         const intervention = await Intervention.findOne({
-          _id: recommendation.interventionId,
-          workspaceId: recommendation.workspaceId
+          _id: claimedRecommendation.interventionId,
+          workspaceId: claimedRecommendation.workspaceId
         });
         if (intervention) {
           await intervention.markFailed(error);
@@ -885,20 +906,53 @@ class OperationsLedgerService {
       }
 
       await this.recordAudit({
-        entityType: 'trello_action_attempt',
-        entityId: attempt._id,
-        action: 'trello_action_failed',
+        entityType: attempt ? 'trello_action_attempt' : 'recommendation',
+        entityId: attempt ? attempt._id : claimedRecommendation._id,
+        action: attempt ? 'trello_action_failed' : 'trello_action_attempt_creation_failed',
         actor: options.actor || approval?.decidedBy || 'sneup',
         source: 'trello',
-        riskLevel: recommendation.riskLevel,
+        riskLevel: claimedRecommendation.riskLevel,
         approvalId: approval?._id,
-        recommendationId: recommendation._id,
-        trelloActionAttemptId: attempt._id,
-        afterState: attempt.toObject()
+        recommendationId: claimedRecommendation._id,
+        trelloActionAttemptId: attempt?._id,
+        afterState: attempt ? attempt.toObject() : {
+          recommendationId: claimedRecommendation._id,
+          errorMessage: error.message
+        }
       });
 
       throw error;
     }
+  }
+
+  async claimApprovedRecommendationExecution(recommendation, options = {}) {
+    const claimed = await Recommendation.findOneAndUpdate(
+      this.workspaceQuery(options, {
+        _id: recommendation._id,
+        status: 'approved'
+      }),
+      {
+        $set: {
+          status: 'executing'
+        }
+      },
+      { new: true }
+    );
+
+    if (claimed) {
+      return claimed;
+    }
+
+    const latest = await Recommendation.findOne(this.workspaceQuery(options, { _id: recommendation._id }));
+    const error = new Error(
+      latest?.status === 'executing'
+        ? 'Recommendation execution is already in progress'
+        : latest?.status === 'executed'
+          ? 'Recommendation has already been executed. Review the Trello action history instead.'
+          : 'Recommendation is no longer approved for execution'
+    );
+    error.statusCode = 409;
+    throw error;
   }
 
   async performTrelloAction(recommendation) {
