@@ -17,6 +17,7 @@ const MAX_CALENDAR_SIGNALS = 2000;
 const UTILIZATION_WINDOW_DAYS = 28;
 const ALLOCATION_WINDOW_DAYS = 28;
 const CALENDAR_WINDOW_DAYS = 28;
+const TIME_TRACKING_PROVIDERS = ['harvest', 'everhour'];
 const RESOURCING_PROVIDERS = ['float', 'resource_guru'];
 const CALENDAR_PROVIDERS = ['google_workspace', 'microsoft_365'];
 const MAX_CALENDAR_EVENT_HOURS = 12;
@@ -103,6 +104,10 @@ const identityKey = (value) => String(value || '')
   .toLowerCase()
   .replace(/[^a-z0-9]/g, '');
 
+const providerNameList = (providers = []) => providers
+  .map((provider) => ({ harvest: 'Harvest', everhour: 'Everhour' }[provider] || provider))
+  .join(' and ');
+
 const utilizationSummary = ({ signals = [], members = [], now = new Date(), truncated = false }) => {
   const cutoff = new Date(now);
   cutoff.setUTCDate(cutoff.getUTCDate() - UTILIZATION_WINDOW_DAYS);
@@ -119,28 +124,68 @@ const utilizationSummary = ({ signals = [], members = [], now = new Date(), trun
   let matchedEntries = 0;
   let unmatchedEntries = 0;
   let unmatchedHours = 0;
+  const providerSummaries = new Map();
   signals.forEach((signal) => {
+    const provider = String(signal?.provider || 'harvest').toLowerCase();
     const raw = signal?.raw || {};
     const spentAt = new Date(raw.spentDate || signal.providerCreatedAt || '');
     const hours = Number(raw.hours);
-    if (!Number.isFinite(hours) || hours <= 0 || Number.isNaN(spentAt.getTime()) || spentAt < cutoff || spentAt > now) return;
+    if (!TIME_TRACKING_PROVIDERS.includes(provider)
+      || !Number.isFinite(hours) || hours <= 0 || Number.isNaN(spentAt.getTime()) || spentAt < cutoff || spentAt > now) return;
+    const providerSummary = providerSummaries.get(provider) || {
+      entries: 0, hours: 0, matchedEntries: 0, matchedHours: 0, unmatchedEntries: 0, unmatchedHours: 0, members: new Set()
+    };
     entries += 1;
     totalHours += hours;
+    providerSummary.entries += 1;
+    providerSummary.hours += hours;
     const memberId = memberIdByIdentity.get(identityKey(raw.user?.name || signal.owners?.[0]));
     if (!memberId) {
       unmatchedEntries += 1;
       unmatchedHours += hours;
+      providerSummary.unmatchedEntries += 1;
+      providerSummary.unmatchedHours += hours;
+      providerSummaries.set(provider, providerSummary);
       return;
     }
     matchedEntries += 1;
-    const current = byMember.get(memberId) || { entries: 0, hours: 0 };
+    providerSummary.matchedEntries += 1;
+    providerSummary.matchedHours += hours;
+    providerSummary.members.add(memberId);
+    const current = byMember.get(memberId) || { entries: 0, hours: 0, providers: {} };
     current.entries += 1;
     current.hours += hours;
+    const memberProvider = current.providers[provider] || { entries: 0, hours: 0 };
+    memberProvider.entries += 1;
+    memberProvider.hours += hours;
+    current.providers[provider] = memberProvider;
     byMember.set(memberId, current);
+    providerSummaries.set(provider, providerSummary);
   });
 
+  const activeProviders = TIME_TRACKING_PROVIDERS.filter((provider) => providerSummaries.get(provider)?.entries > 0);
+  const providerEvidence = Object.fromEntries(TIME_TRACKING_PROVIDERS.map((provider) => {
+    const summary = providerSummaries.get(provider) || {
+      entries: 0, hours: 0, matchedEntries: 0, matchedHours: 0, unmatchedEntries: 0, unmatchedHours: 0, members: new Set()
+    };
+    return [provider, {
+      entries: summary.entries,
+      hours: round(summary.hours),
+      weeklyHours: round(summary.hours / (UTILIZATION_WINDOW_DAYS / 7)),
+      matchedEntries: summary.matchedEntries,
+      matchedHours: round(summary.matchedHours),
+      unmatchedEntries: summary.unmatchedEntries,
+      unmatchedHours: round(summary.unmatchedHours),
+      matchedMembers: summary.members.size
+    }];
+  }));
+
   return {
-    provider: 'harvest',
+    provider: activeProviders.length === 1 ? activeProviders[0] : activeProviders.length > 1 ? 'multi_provider' : null,
+    providers: TIME_TRACKING_PROVIDERS,
+    activeProviders,
+    providerLabel: providerNameList(activeProviders),
+    providerEvidence,
     windowDays: UTILIZATION_WINDOW_DAYS,
     recordsRead: signals.length,
     entries,
@@ -358,7 +403,8 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
     const profile = profileForMember(member, profilesByMember);
     const weeklyAvailableHours = Math.max(0, profile.weeklyHours * (profile.allocationPercent / 100) - profile.focusHoursPerWeek);
     const timeOffHours = timeOffHoursInWindow(profile, now);
-    const harvest = utilization.byMember.get(asId(member)) || { entries: 0, hours: 0 };
+    const trackedTime = utilization.byMember.get(asId(member)) || { entries: 0, hours: 0, providers: {} };
+    const harvest = trackedTime.providers.harvest || { entries: 0, hours: 0 };
     const scheduled = allocation.byMember.get(asId(member)) || { entries: 0, hours: 0 };
     const meetings = calendar.byMember.get(asId(member)) || { entries: 0, hours: 0 };
     return {
@@ -370,6 +416,10 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
       weeklyAvailableHours: round(weeklyAvailableHours),
       dailyAvailableHours: round(weeklyAvailableHours / 5),
       timeOffHours: round(timeOffHours),
+      trackedTimeEntriesLast28Days: trackedTime.entries,
+      trackedTimeHoursLast28Days: round(trackedTime.hours),
+      trackedTimeWeeklyHours: round(trackedTime.hours / (UTILIZATION_WINDOW_DAYS / 7)),
+      trackedTimeProvidersLast28Days: Object.keys(trackedTime.providers),
       harvestEntriesLast28Days: harvest.entries,
       harvestHoursLast28Days: round(harvest.hours),
       harvestWeeklyHours: round(harvest.hours / (UTILIZATION_WINDOW_DAYS / 7)),
@@ -402,8 +452,8 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
     const highRisk = scopeCards.filter((card) => ['high', 'critical'].includes(card.riskLevel)).length;
     const overdue = scopeCards.filter((card) => card.due && new Date(card.due) < now && !card.dueComplete).length;
     const capacityDays = dailyHours > 0 ? workHours / dailyHours : null;
-    const utilizationMembers = usableCapacity.filter((member) => member.harvestEntriesLast28Days > 0);
-    const overCommittedMembers = utilizationMembers.filter((member) => member.harvestWeeklyHours > member.weeklyAvailableHours * 1.1);
+    const utilizationMembers = usableCapacity.filter((member) => member.trackedTimeEntriesLast28Days > 0);
+    const overCommittedMembers = utilizationMembers.filter((member) => member.trackedTimeWeeklyHours > member.weeklyAvailableHours * 1.1);
     const utilizationCoverage = usableCapacity.length === 0 ? 0 : utilizationMembers.length / usableCapacity.length;
     const allocationMembers = usableCapacity.filter((member) => member.scheduledAllocationEntriesNext28Days > 0);
     const overAllocatedMembers = allocationMembers.filter((member) => member.scheduledAllocationWeeklyHours > member.weeklyAvailableHours * 1.1);
@@ -437,14 +487,14 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
       ...(overdue ? [`${overdue} card${overdue === 1 ? ' is' : 's are'} overdue`] : []),
       ...(highRisk ? [`${highRisk} high-risk card${highRisk === 1 ? '' : 's'} increase delivery uncertainty`] : []),
       ...(usableCapacity.some((member) => member.timeOffHours > 0) ? ['Planned time off reduces the available forecast window'] : []),
-      ...(overCommittedMembers.length > 0 ? [`Harvest reports more tracked hours than modeled capacity for ${overCommittedMembers.length} assigned contributor${overCommittedMembers.length === 1 ? '' : 's'}`] : []),
+      ...(overCommittedMembers.length > 0 ? [`Tracked-time evidence reports more hours than modeled capacity for ${overCommittedMembers.length} assigned contributor${overCommittedMembers.length === 1 ? '' : 's'}`] : []),
       ...(overAllocatedMembers.length > 0 ? [`Mapped resourcing allocations exceed modeled capacity for ${overAllocatedMembers.length} assigned contributor${overAllocatedMembers.length === 1 ? '' : 's'}`] : []),
       ...(meetingHeavyMembers.length > 0 ? [`Mapped calendars show high meeting load for ${meetingHeavyMembers.length} assigned contributor${meetingHeavyMembers.length === 1 ? '' : 's'}`] : [])
     ];
     const assumptions = [
       `Capacity uses ${round(weeklyHours)} available team hours per week after allocation and focus time.`,
       `Open cards use ${round(teamCardHours)} hours each when a personal historical estimate is unavailable.`,
-      ...(utilizationMembers.length > 0 ? [`Harvest time-entry metadata covers ${utilizationMembers.length}/${usableCapacity.length} assigned contributors over the last ${UTILIZATION_WINDOW_DAYS} days and calibrates forecast confidence only.`] : []),
+      ...(utilizationMembers.length > 0 ? [`Bounded ${utilization.providerLabel || 'tracked-time'} metadata covers ${utilizationMembers.length}/${usableCapacity.length} assigned contributors over the last ${UTILIZATION_WINDOW_DAYS} days and calibrates forecast confidence only.`] : []),
       ...(allocationMembers.length > 0 ? [`Explicit Float or Resource Guru member mappings cover ${allocationMembers.length}/${usableCapacity.length} assigned contributors over the next ${ALLOCATION_WINDOW_DAYS} days and calibrate forecast confidence only.`] : []),
       ...(boardId && boardSchedule.entries > 0 ? [`${round(boardSchedule.hours / (ALLOCATION_WINDOW_DAYS / 7))} scheduled hours per week map explicitly to this board and remain confidence-only evidence.`] : []),
       ...(calendarMembers.length > 0 ? [`Explicit Google Workspace or Microsoft 365 organizer mappings cover ${calendarMembers.length}/${usableCapacity.length} assigned contributors over the next ${CALENDAR_WINDOW_DAYS} days and calibrate forecast confidence only.`] : []),
@@ -499,6 +549,10 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
       historicalPerformanceRecords: performances.length,
       utilization: {
         provider: utilization.provider,
+        providers: utilization.providers,
+        activeProviders: utilization.activeProviders,
+        providerLabel: utilization.providerLabel,
+        providerEvidence: utilization.providerEvidence,
         windowDays: utilization.windowDays,
         recordsRead: utilization.recordsRead,
         entries: utilization.entries,
@@ -565,11 +619,31 @@ const demoForecast = () => ({
     { boardId: 'demo-board-2', boardName: 'Client Launches', openCards: 27, workHours: 184, weeklyAvailableHours: 28, utilizationPercent: 657, p50: { businessDays: 33, date: addBusinessDays(new Date(), 33) }, p80: { businessDays: 44, date: addBusinessDays(new Date(), 44) }, nearestDueDate: addBusinessDays(new Date(), 18), confidence: 62, confidenceLabel: 'directional', health: 'at_risk', assumptions: ['One contributor is unavailable for part of the window.'], risks: ['3 cards are overdue'], members: [] }
   ],
   memberCapacity: [
-    { memberId: 'demo-member-1', name: 'Milan', weeklyHours: 32, allocationPercent: 85, focusHoursPerWeek: 4, weeklyAvailableHours: 23.2, dailyAvailableHours: 4.6, timeOffHours: 0, configured: true, historicalCardHours: 5.4, active: true, skills: ['engineering'] },
-    { memberId: 'demo-member-2', name: 'Nina', weeklyHours: 32, allocationPercent: 75, focusHoursPerWeek: 4, weeklyAvailableHours: 20, dailyAvailableHours: 4, timeOffHours: 12, configured: true, historicalCardHours: 6.2, active: true, skills: ['operations'] },
-    { memberId: 'demo-member-3', name: 'Sam', weeklyHours: 24, allocationPercent: 100, focusHoursPerWeek: 4, weeklyAvailableHours: 20, dailyAvailableHours: 4, timeOffHours: 0, configured: false, historicalCardHours: 6, active: true, skills: [] }
+    { memberId: 'demo-member-1', name: 'Milan', weeklyHours: 32, allocationPercent: 85, focusHoursPerWeek: 4, weeklyAvailableHours: 23.2, dailyAvailableHours: 4.6, timeOffHours: 0, configured: true, historicalCardHours: 5.4, trackedTimeEntriesLast28Days: 4, trackedTimeHoursLast28Days: 16, trackedTimeWeeklyHours: 4, trackedTimeProvidersLast28Days: ['harvest', 'everhour'], active: true, skills: ['engineering'] },
+    { memberId: 'demo-member-2', name: 'Nina', weeklyHours: 32, allocationPercent: 75, focusHoursPerWeek: 4, weeklyAvailableHours: 20, dailyAvailableHours: 4, timeOffHours: 12, configured: true, historicalCardHours: 6.2, trackedTimeEntriesLast28Days: 3, trackedTimeHoursLast28Days: 10, trackedTimeWeeklyHours: 2.5, trackedTimeProvidersLast28Days: ['everhour'], active: true, skills: ['operations'] },
+    { memberId: 'demo-member-3', name: 'Sam', weeklyHours: 24, allocationPercent: 100, focusHoursPerWeek: 4, weeklyAvailableHours: 20, dailyAvailableHours: 4, timeOffHours: 0, configured: false, historicalCardHours: 6, trackedTimeEntriesLast28Days: 1, trackedTimeHoursLast28Days: 4, trackedTimeWeeklyHours: 1, trackedTimeProvidersLast28Days: ['harvest'], active: true, skills: [] }
   ],
-  dataQuality: { openCards: 89, members: 3, capacityProfiles: 2, historicalPerformanceRecords: 8, truncated: false }
+  dataQuality: {
+    openCards: 89,
+    members: 3,
+    capacityProfiles: 2,
+    historicalPerformanceRecords: 8,
+    utilization: {
+      provider: 'multi_provider',
+      providers: TIME_TRACKING_PROVIDERS,
+      activeProviders: TIME_TRACKING_PROVIDERS,
+      providerLabel: 'Harvest and Everhour',
+      entries: 8,
+      totalHours: 30,
+      weeklyHours: 7.5,
+      matchedEntries: 8,
+      unmatchedEntries: 0,
+      unmatchedHours: 0,
+      matchedMembers: 3,
+      truncated: false
+    },
+    truncated: false
+  }
 });
 
 class ForecastService {
@@ -591,10 +665,10 @@ class ForecastService {
       Performance.find({ workspaceId, period: 'weekly' }).sort({ startDate: -1 }).limit(500),
       WorkSignal.find({
         workspaceId,
-        provider: 'harvest',
+        provider: { $in: TIME_TRACKING_PROVIDERS },
         sourceType: 'time_entry',
         providerCreatedAt: { $gte: utilizationStart }
-      }).select('raw owners providerCreatedAt').sort({ providerCreatedAt: -1 }).limit(MAX_UTILIZATION_SIGNALS + 1),
+      }).select('provider raw owners providerCreatedAt').sort({ providerCreatedAt: -1 }).limit(MAX_UTILIZATION_SIGNALS + 1),
       WorkSignal.find({
         workspaceId,
         provider: { $in: RESOURCING_PROVIDERS },

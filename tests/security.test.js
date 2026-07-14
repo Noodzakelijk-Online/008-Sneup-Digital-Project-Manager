@@ -591,7 +591,7 @@ describe('capacity-aware forecasting', () => {
       harvestWeeklyHours: 5
     });
     expect(forecast.dataQuality.utilization).toMatchObject({ provider: 'harvest', entries: 1, totalHours: 20, matchedMembers: 1 });
-    expect(forecast.portfolio.assumptions.join(' ')).toContain('Harvest time-entry metadata');
+    expect(forecast.portfolio.assumptions.join(' ')).toContain('Bounded Harvest metadata');
     expect(forecast.boards[0]).toMatchObject({ boardId: 'board-1', boardName: 'Launch' });
   });
 
@@ -612,7 +612,7 @@ describe('capacity-aware forecasting', () => {
     expect(forecast.portfolio.health).toBe('watch');
   });
 
-  test('flags a declared-capacity mismatch from bounded Harvest utilization evidence without changing provider data', () => {
+  test('flags a declared-capacity mismatch from bounded tracked-time evidence without changing provider data', () => {
     const { buildForecast } = require('../src/services/forecastService');
     const forecast = buildForecast({
       now: new Date('2026-07-06T09:00:00.000Z'),
@@ -624,8 +624,51 @@ describe('capacity-aware forecasting', () => {
     });
 
     expect(forecast.memberCapacity[0]).toMatchObject({ harvestWeeklyHours: 25, weeklyAvailableHours: 16 });
-    expect(forecast.portfolio.risks.join(' ')).toContain('Harvest reports more tracked hours than modeled capacity');
+    expect(forecast.portfolio.risks.join(' ')).toContain('Tracked-time evidence reports more hours than modeled capacity');
     expect(forecast.portfolio.assumptions.join(' ')).toContain('calibrates forecast confidence only');
+  });
+
+  test('combines bounded Harvest and Everhour utilization evidence without changing provider data', () => {
+    const { buildForecast } = require('../src/services/forecastService');
+    const forecast = buildForecast({
+      now: new Date('2026-07-06T09:00:00.000Z'),
+      boards: [{ _id: 'board-1', name: 'Launch' }],
+      members: [{ _id: 'member-1', username: 'milan', fullName: 'Milan' }],
+      profiles: [{ _id: 'profile-1', memberId: 'member-1', weeklyHours: 20, allocationPercent: 100, focusHoursPerWeek: 4 }],
+      cards: [{ _id: 'card-1', boardId: 'board-1', members: ['member-1'], riskLevel: 'normal' }],
+      utilizationSignals: [
+        { provider: 'harvest', raw: { hours: 20, spentDate: '2026-07-03', user: { name: 'Milan' } } },
+        { provider: 'everhour', raw: { hours: 80, spentDate: '2026-07-04', user: { name: 'Milan' } } },
+        { provider: 'everhour', raw: { hours: 4, spentDate: '2026-07-04', user: { name: 'Unmapped' } } }
+      ]
+    });
+
+    expect(forecast.memberCapacity[0]).toMatchObject({
+      trackedTimeEntriesLast28Days: 2,
+      trackedTimeHoursLast28Days: 100,
+      trackedTimeWeeklyHours: 25,
+      trackedTimeProvidersLast28Days: ['harvest', 'everhour'],
+      harvestHoursLast28Days: 20,
+      harvestWeeklyHours: 5
+    });
+    expect(forecast.dataQuality.utilization).toMatchObject({
+      provider: 'multi_provider',
+      providers: ['harvest', 'everhour'],
+      activeProviders: ['harvest', 'everhour'],
+      providerLabel: 'Harvest and Everhour',
+      entries: 3,
+      totalHours: 104,
+      matchedEntries: 2,
+      unmatchedEntries: 1,
+      unmatchedHours: 4,
+      matchedMembers: 1,
+      providerEvidence: {
+        everhour: { entries: 2, hours: 84, matchedEntries: 1, unmatchedEntries: 1 },
+        harvest: { entries: 1, hours: 20, matchedEntries: 1, unmatchedEntries: 0 }
+      }
+    });
+    expect(forecast.portfolio.risks.join(' ')).toContain('Tracked-time evidence reports more hours than modeled capacity');
+    expect(forecast.portfolio.assumptions.join(' ')).toContain('Bounded Harvest and Everhour metadata');
   });
 
   test('uses only explicit Float and Resource Guru member mappings as bounded allocation evidence', () => {

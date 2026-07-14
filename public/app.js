@@ -405,7 +405,7 @@ function renderForecast(errorMessage = '') {
     ['Open cards', portfolio.openCards || 0],
     ['Weekly capacity', `${portfolio.weeklyAvailableHours || 0}h`],
     ['Estimated work', `${portfolio.workHours || 0}h`],
-    ['Tracked utilization', utilization.entries ? `${utilization.weeklyHours || 0}h/week` : 'No Harvest evidence'],
+    ['Tracked utilization', utilization.entries ? `${utilization.weeklyHours || 0}h/week from ${formatProviderNames(utilization.activeProviders)}` : 'No tracked-time evidence'],
     ['Mapped allocations', allocations.matchedEntries ? `${allocations.matchedWeeklyHours || 0}h/week` : 'No resourcing evidence'],
     ['Board-mapped schedule', allocations.mappedProjectEntries ? `${allocations.mappedProjectWeeklyHours || 0}h/week` : 'No project mappings'],
     ['Mapped calendar', calendar.matchedEntries ? `${calendar.matchedWeeklyHours || 0}h/week` : 'No calendar evidence']
@@ -425,6 +425,12 @@ function formatForecastDate(value) {
   if (!value) return 'Needs capacity';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 'Needs capacity' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function formatProviderNames(providers = []) {
+  const labels = providers.map(provider => ({ harvest: 'Harvest', everhour: 'Everhour' }[provider] || provider)).filter(Boolean);
+  if (labels.length <= 1) return labels[0] || 'connected time tools';
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
 }
 
 function renderForecastSummary(forecast = {}) {
@@ -501,7 +507,7 @@ function renderCapacityMember(member = {}) {
     <div class="item">
       <div class="item-title"><strong>${escapeHtml(member.name || 'Team member')}</strong><span class="pill ${member.configured ? 'healthy' : 'review'}">${member.configured ? 'configured' : 'default'}</span></div>
       <div class="meta"><span>${member.weeklyAvailableHours || 0}h/week</span><span>${member.dailyAvailableHours || 0}h/day</span><span>${member.allocationPercent || 0}% allocation</span><span>${member.focusHoursPerWeek || 0}h focus</span>${member.timeOffHours ? `<span>${member.timeOffHours}h planned time off</span>` : ''}</div>
-      <div class="meta">Historical card effort: ${member.historicalCardHours || 0}h. ${member.harvestEntriesLast28Days ? `Harvest tracked ${member.harvestWeeklyHours || 0}h/week recently.` : 'No matched Harvest utilization evidence.'} ${member.scheduledAllocationEntriesNext28Days ? `Mapped allocations schedule ${member.scheduledAllocationWeeklyHours || 0}h/week.` : 'No mapped allocation evidence.'} ${member.calendarEventsNext28Days ? `Mapped calendar blocks ${member.calendarBusyWeeklyHours || 0}h/week.` : 'No mapped calendar evidence.'} ${(member.skills || []).map(escapeHtml).join(' | ') || 'No skills recorded.'}</div>
+      <div class="meta">Historical card effort: ${member.historicalCardHours || 0}h. ${member.trackedTimeEntriesLast28Days ? `${escapeHtml(formatProviderNames(member.trackedTimeProvidersLast28Days))} tracked ${member.trackedTimeWeeklyHours || 0}h/week recently.` : 'No matched tracked-time evidence.'} ${member.scheduledAllocationEntriesNext28Days ? `Mapped allocations schedule ${member.scheduledAllocationWeeklyHours || 0}h/week.` : 'No mapped allocation evidence.'} ${member.calendarEventsNext28Days ? `Mapped calendar blocks ${member.calendarBusyWeeklyHours || 0}h/week.` : 'No mapped calendar evidence.'} ${(member.skills || []).map(escapeHtml).join(' | ') || 'No skills recorded.'}</div>
       ${editable ? `<div class="item-actions"><button class="button" type="button" data-capacity-member="${escapeHtml(member.memberId)}">Edit capacity</button></div>` : ''}
     </div>
   `;
