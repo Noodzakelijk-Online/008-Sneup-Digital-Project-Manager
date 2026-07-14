@@ -619,6 +619,58 @@ describe('notification delivery safety', () => {
       quietHours: { enabled: true, startHourUtc: 8, endHourUtc: 8 }
     })).toThrow(/quiet hours/i);
   });
+
+  test('keeps warning digests bounded, scheduled, and linked only to safe evidence', () => {
+    const policy = notificationService.normalizePolicyInput({
+      name: 'Operations digest',
+      channel: 'generic_webhook',
+      digest: { enabled: true, hourUtc: 9, maximumItems: 2 }
+    });
+    const deliveries = [
+      {
+        _id: new mongoose.Types.ObjectId(),
+        sourceType: 'trello_action_attempt',
+        sourceId: 'attempt-1',
+        title: 'First gap',
+        message: 'First warning needs evidence.',
+        sourceUrl: 'https://trello.com/c/first'
+      },
+      {
+        _id: new mongoose.Types.ObjectId(),
+        sourceType: 'trello_action_attempt',
+        sourceId: 'attempt-2',
+        title: 'Second gap',
+        message: 'Second warning needs evidence.',
+        sourceUrl: 'http://unsafe.test/second'
+      }
+    ];
+
+    expect(notificationService.isDigestDue(policy, '2026-07-14T08:59:00.000Z')).toBe(false);
+    expect(notificationService.isDigestDue(policy, '2026-07-14T09:00:00.000Z')).toBe(true);
+    expect(notificationService.digestDedupeKey('2026-07-14T09:00:00.000Z')).toBe('reconciliation-digest:2026-07-14');
+    expect(notificationService.buildDigestEvent(deliveries, 3, '2026-07-14T09:00:00.000Z')).toMatchObject({
+      eventType: 'reconciliation_digest',
+      severity: 'warning',
+      dedupeKey: 'reconciliation-digest:2026-07-14',
+      sourceEvidence: [{ label: 'First gap', url: 'https://trello.com/c/first' }]
+    });
+    expect(notificationService.buildWebhookPayload('generic_webhook', {
+      eventType: 'reconciliation_digest',
+      severity: 'warning',
+      title: 'Digest',
+      message: 'Review evidence.',
+      sourceUrl: 'https://trello.com/c/first',
+      sourceEvidence: [{ label: 'Safe', url: 'https://trello.com/c/first' }, { label: 'Unsafe', url: 'http://unsafe.test' }]
+    })).toMatchObject({
+      sourceUrl: 'https://trello.com/c/first',
+      sourceEvidence: [{ label: 'Safe', url: 'https://trello.com/c/first' }]
+    });
+    expect(() => notificationService.normalizePolicyInput({
+      name: 'Bad digest',
+      channel: 'generic_webhook',
+      digest: { enabled: true, hourUtc: 24, maximumItems: 50 }
+    })).toThrow(/digest settings/i);
+  });
 });
 
 describe('dashboard content security policy', () => {

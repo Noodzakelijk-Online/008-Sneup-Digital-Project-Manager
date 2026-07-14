@@ -42,6 +42,11 @@ const notificationPolicySchema = new mongoose.Schema({
     startHourUtc: { type: Number, min: 0, max: 23, default: 18 },
     endHourUtc: { type: Number, min: 0, max: 23, default: 8 }
   },
+  digest: {
+    enabled: { type: Boolean, default: false },
+    hourUtc: { type: Number, min: 0, max: 23, default: 9 },
+    maximumItems: { type: Number, min: 1, max: 25, default: 10 }
+  },
   status: {
     type: String,
     enum: ['active', 'paused'],

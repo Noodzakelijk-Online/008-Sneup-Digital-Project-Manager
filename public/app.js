@@ -1277,6 +1277,7 @@ function renderNotificationPolicy(policy) {
         <span>${escapeHtml(policy.minimumSeverity)} and above</span>
       </div>
       <div class="meta"><span>${policy.destinationConfigured ? 'Encrypted destination configured' : 'Destination needs configuration'}</span><span>${policy.quietHours?.enabled ? `Warning alerts defer ${escapeHtml(policy.quietHours.startHourUtc)}:00-${escapeHtml(policy.quietHours.endHourUtc)}:00 UTC` : 'No quiet hours'}</span></div>
+      <div class="meta"><span>${policy.digest?.enabled ? `Warning digest at ${escapeHtml(policy.digest.hourUtc)}:00 UTC, up to ${escapeHtml(policy.digest.maximumItems)} items` : 'Warning alerts deliver individually'}</span></div>
       <div class="item-actions">
         ${policy.status === 'active'
     ? `<button class="button" data-notification-policy-pause="${escapeHtml(policyId)}" type="button">Pause</button>`
@@ -1290,8 +1291,12 @@ function renderNotificationPolicy(policy) {
 function renderNotificationDelivery(delivery) {
   const policies = state.ledger.notificationPolicies || [];
   const policy = policies.find(item => getId(item.id || item._id) === getId(delivery.policyId));
-  const statusClass = delivery.status === 'delivered' ? 'healthy'
+  const statusClass = ['delivered', 'digested'].includes(delivery.status) ? 'healthy'
     : delivery.status === 'failed' ? 'critical' : 'review';
+  const sourceEvidence = [
+    ...(delivery.sourceEvidence || []).map(item => ({ ...item, type: item.sourceType || item.type })),
+    ...(delivery.sourceUrl ? [{ type: delivery.sourceType || 'source', label: 'Open source evidence', url: delivery.sourceUrl }] : [])
+  ];
   return `
     <div class="item">
       <div class="item-title">
@@ -1304,6 +1309,7 @@ function renderNotificationDelivery(delivery) {
         <span>${formatDate(delivery.deliveredAt || delivery.failedAt || delivery.createdAt)}</span>
       </div>
       <div class="meta"><span>${escapeHtml(delivery.errorMessage || delivery.message || 'Delivery recorded')}</span></div>
+      ${renderSourceEvidence(sourceEvidence)}
     </div>
   `;
 }
@@ -3581,6 +3587,11 @@ function openNotificationPolicy() {
         <label>Quiet start UTC<input name="quietStartHourUtc" type="number" min="0" max="23" value="18"></label>
         <label>Quiet end UTC<input name="quietEndHourUtc" type="number" min="0" max="23" value="8"></label>
       </div>
+      <label><input name="digestEnabled" type="checkbox"> Send warning evidence as one daily digest (critical alerts stay immediate)</label>
+      <div class="form-grid">
+        <label>Digest hour UTC<input name="digestHourUtc" type="number" min="0" max="23" value="9"></label>
+        <label>Maximum digest items<input name="digestMaximumItems" type="number" min="1" max="25" value="10"></label>
+      </div>
       <div class="notice">The policy starts paused. Activate it separately when this workspace is ready to deliver matching reconciliation alerts.</div>
       <div class="toolbar modal-actions">
         <button class="button" type="button" id="cancelNotificationPolicy">Cancel</button>
@@ -3605,6 +3616,11 @@ function openNotificationPolicy() {
             enabled: event.currentTarget.elements.quietHoursEnabled.checked,
             startHourUtc: Number(event.currentTarget.elements.quietStartHourUtc.value),
             endHourUtc: Number(event.currentTarget.elements.quietEndHourUtc.value)
+          },
+          digest: {
+            enabled: event.currentTarget.elements.digestEnabled.checked,
+            hourUtc: Number(event.currentTarget.elements.digestHourUtc.value),
+            maximumItems: Number(event.currentTarget.elements.digestMaximumItems.value)
           }
         })
       });

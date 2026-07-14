@@ -155,11 +155,11 @@ const enhancements = [
     priority: 'P2',
     area: 'notifications',
     title: 'Add multi-channel notification delivery',
-    evidence: 'Workspace-scoped Slack, Teams, and generic webhook policies now store destinations encrypted, require explicit activation, limit delivery to reconciliation evidence gaps, ledger every delivery, prevent duplicate alert delivery within a day, and defer warning alerts through auditable bounded UTC quiet hours while critical evidence remains immediate.',
+    evidence: 'Workspace-scoped Slack, Teams, and generic webhook policies now store destinations encrypted, require explicit activation, limit delivery to reconciliation evidence gaps, ledger every delivery, prevent duplicate alert delivery within a day, defer warning alerts through auditable bounded UTC quiet hours while critical evidence remains immediate, and can group warning evidence into a bounded daily digest with validated source links. Digest source deliveries are only marked digested after the external destination accepts the bundle.',
     impact: 'Moves Sneup from dashboard-only visibility into the places project managers and teams already work.',
     effort: 'L',
     status: 'in-progress',
-    nextStep: 'Add email, digest cadence, and source-evidence deep links while retaining explicit policy activation and delivery-ledger controls.',
+    nextStep: 'Add email delivery while retaining explicit policy activation and delivery-ledger controls.',
     acceptanceCriteria: [
       'Users can choose channel, severity threshold, digest cadence, and quiet hours.',
       'Notifications link back to source evidence and the approval queue.',

@@ -15,7 +15,7 @@ const notificationDeliverySchema = new mongoose.Schema({
   },
   eventType: {
     type: String,
-    enum: ['reconciliation_alert', 'test'],
+    enum: ['reconciliation_alert', 'reconciliation_digest', 'test'],
     required: true,
     index: true
   },
@@ -42,9 +42,23 @@ const notificationDeliverySchema = new mongoose.Schema({
   sourceType: String,
   sourceId: String,
   sourceUrl: String,
+  sourceEvidence: [{
+    sourceType: { type: String, maxlength: 80 },
+    sourceId: { type: String, maxlength: 160 },
+    label: { type: String, maxlength: 240 },
+    url: { type: String, maxlength: 2000 }
+  }],
+  digestSourceDeliveryIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'NotificationDelivery'
+  }],
+  digestDeliveryId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'NotificationDelivery'
+  },
   status: {
     type: String,
-    enum: ['queued', 'deferred', 'sending', 'delivered', 'failed', 'suppressed'],
+    enum: ['queued', 'deferred', 'digest_pending', 'digested', 'sending', 'delivered', 'failed', 'suppressed'],
     default: 'queued',
     index: true
   },
@@ -64,5 +78,6 @@ const notificationDeliverySchema = new mongoose.Schema({
 
 notificationDeliverySchema.index({ workspaceId: 1, policyId: 1, dedupeKey: 1 }, { unique: true });
 notificationDeliverySchema.index({ workspaceId: 1, status: 1, createdAt: -1 });
+notificationDeliverySchema.index({ workspaceId: 1, policyId: 1, eventType: 1, status: 1, createdAt: 1 });
 
 module.exports = mongoose.model('NotificationDelivery', notificationDeliverySchema);

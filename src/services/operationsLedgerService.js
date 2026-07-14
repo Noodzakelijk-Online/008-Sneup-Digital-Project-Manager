@@ -1252,6 +1252,7 @@ class OperationsLedgerService {
         ageHours,
         severity,
         recommendationId: recommendation?._id ? String(recommendation._id) : attempt.recommendationId ? String(attempt.recommendationId) : null,
+        sourceUrl: safeExternalSourceUrl(attempt.cardId?.url),
         message: severity === 'critical'
           ? `Unresolved for ${ageHours}h. Confirm the observed Trello result before any new action.`
           : severity === 'warning'

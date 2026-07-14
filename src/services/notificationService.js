@@ -8,10 +8,12 @@ const AuditEvent = require('../models/AuditEvent');
 const accountConnectorService = require('./accountConnectorService');
 const operationsLedgerService = require('./operationsLedgerService');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
+const { safeExternalSourceUrl } = require('../utils/externalSourceUrl');
 const logger = require('../utils/logger');
 
 const MAX_POLICY_LIMIT = 100;
 const MAX_DELIVERY_LIMIT = 250;
+const MAX_DIGEST_ITEMS = 25;
 const severityRank = { warning: 1, critical: 2 };
 
 const compact = (value, maximum = 4000) => String(value || '').trim().slice(0, maximum);
@@ -117,6 +119,15 @@ class NotificationService {
       error.statusCode = 400;
       throw error;
     }
+    const digest = body.digest || {};
+    const digestHourUtc = Number(digest.hourUtc ?? 9);
+    const digestMaximumItems = Number(digest.maximumItems ?? 10);
+    if (!Number.isInteger(digestHourUtc) || digestHourUtc < 0 || digestHourUtc > 23
+      || !Number.isInteger(digestMaximumItems) || digestMaximumItems < 1 || digestMaximumItems > MAX_DIGEST_ITEMS) {
+      const error = new Error(`Digest settings require a UTC hour from 0 through 23 and 1 through ${MAX_DIGEST_ITEMS} items`);
+      error.statusCode = 400;
+      throw error;
+    }
     return {
       name,
       channel,
@@ -124,7 +135,8 @@ class NotificationService {
       minimumSeverity,
       status,
       eventTypes: this.normalizeEventTypes(body.eventTypes),
-      quietHours: { enabled: quietHours.enabled === true, startHourUtc, endHourUtc }
+      quietHours: { enabled: quietHours.enabled === true, startHourUtc, endHourUtc },
+      digest: { enabled: digest.enabled === true, hourUtc: digestHourUtc, maximumItems: digestMaximumItems }
     };
   }
 
@@ -140,6 +152,7 @@ class NotificationService {
       eventTypes: policy.eventTypes || [],
       minimumSeverity: policy.minimumSeverity,
       quietHours: policy.quietHours || { enabled: false, startHourUtc: 18, endHourUtc: 8 },
+      digest: policy.digest || { enabled: false, hourUtc: 9, maximumItems: 10 },
       status: policy.status,
       activatedBy: policy.activatedBy || '',
       activatedAt: policy.activatedAt,
@@ -162,7 +175,13 @@ class NotificationService {
       message: delivery.message,
       sourceType: delivery.sourceType || '',
       sourceId: delivery.sourceId || '',
-      sourceUrl: delivery.sourceUrl || '',
+      sourceUrl: safeExternalSourceUrl(delivery.sourceUrl) || '',
+      sourceEvidence: (delivery.sourceEvidence || []).map((item = {}) => ({
+        sourceType: compact(item.sourceType, 80),
+        sourceId: compact(item.sourceId, 160),
+        label: compact(item.label, 240),
+        url: safeExternalSourceUrl(item.url)
+      })).filter(item => item.url),
       status: delivery.status,
       claimedAt: delivery.claimedAt,
       deliveredAt: delivery.deliveredAt,
@@ -233,7 +252,8 @@ class NotificationService {
       minimumSeverity: body.minimumSeverity ?? policy.minimumSeverity,
       status: body.status ?? policy.status,
       eventTypes: body.eventTypes ?? policy.eventTypes,
-      quietHours: body.quietHours ?? policy.quietHours
+      quietHours: body.quietHours ?? policy.quietHours,
+      digest: body.digest ?? policy.digest
     });
     const actor = options.actor || body.updatedBy || 'sneup-operator';
     const statusChangedToActive = input.status === 'active' && policy.status !== 'active';
@@ -309,9 +329,11 @@ class NotificationService {
             title: `Sneup: ${alert.severity} reconciliation evidence gap`,
             message: `${alert.actionType || 'Trello action'} ${alert.message}`,
             sourceType: 'trello_action_attempt',
-            sourceId: alert.attemptId
+            sourceId: alert.attemptId,
+            sourceUrl: safeExternalSourceUrl(alert.sourceUrl),
+            now: options.now
           }, 'sneup-notification-worker');
-          if (['delivered', 'duplicate', 'deferred'].includes(result.status)) successCount += 1;
+          if (['delivered', 'duplicate', 'deferred', 'digest_pending'].includes(result.status)) successCount += 1;
           else failureCount += 1;
         } catch (error) {
           failureCount += 1;
@@ -320,6 +342,11 @@ class NotificationService {
       }
     }
 
+    const digests = await this.flushDueDigests(policies, options.now);
+    processedCount += digests.processedCount;
+    successCount += digests.successCount;
+    failureCount += digests.failureCount;
+
     return {
       processedCount,
       successCount,
@@ -327,6 +354,7 @@ class NotificationService {
       metadata: {
         activePolicies: policies.length,
         reconciliationAlerts: alerts.length,
+        digests: digests.digestCount,
         warningHours: health.thresholds.warningHours,
         criticalHours: health.thresholds.criticalHours
       }
@@ -366,6 +394,13 @@ class NotificationService {
       throw error;
     }
 
+    if (event.eventType === 'reconciliation_alert' && event.severity === 'warning' && policy.digest?.enabled) {
+      delivery.status = 'digest_pending';
+      await delivery.save();
+      await this.recordAudit('notification_digest_pending', delivery, actor, { status: delivery.status });
+      return { status: 'digest_pending', delivery: this.sanitizeDelivery(delivery) };
+    }
+
     if (event.severity !== 'critical' && this.isQuietHours(policy, event.now)) {
       delivery.status = 'deferred';
       delivery.deferredUntil = this.nextQuietHoursEnd(policy, event.now);
@@ -375,6 +410,81 @@ class NotificationService {
     }
 
     return this.deliverExisting(policy, delivery, event, actor);
+  }
+
+  digestDedupeKey(now = new Date()) {
+    return `reconciliation-digest:${new Date(now).toISOString().slice(0, 10)}`;
+  }
+
+  isDigestDue(policy, now = new Date()) {
+    return Boolean(policy.digest?.enabled) && new Date(now).getUTCHours() >= policy.digest.hourUtc;
+  }
+
+  buildDigestEvent(deliveries, pendingCount, now = new Date()) {
+    const sourceEvidence = deliveries.map((delivery) => ({
+      sourceType: delivery.sourceType || 'trello_action_attempt',
+      sourceId: delivery.sourceId || String(delivery._id),
+      label: compact(delivery.title, 240),
+      url: safeExternalSourceUrl(delivery.sourceUrl)
+    })).filter(item => item.url);
+    const shownCount = deliveries.length;
+    const omittedCount = Math.max(0, pendingCount - shownCount);
+    const message = [
+      `${pendingCount} warning reconciliation evidence gap${pendingCount === 1 ? '' : 's'} need operator review.`,
+      ...deliveries.map(item => `- ${compact(item.message, 500)}`),
+      omittedCount > 0 ? `- ${omittedCount} additional gap${omittedCount === 1 ? '' : 's'} remain in the Sneup ledger.` : ''
+    ].filter(Boolean).join('\n');
+    return {
+      eventType: 'reconciliation_digest',
+      dedupeKey: this.digestDedupeKey(now),
+      severity: 'warning',
+      title: `Sneup: ${pendingCount} reconciliation evidence gap${pendingCount === 1 ? '' : 's'} need review`,
+      message,
+      sourceType: 'trello_action_attempt',
+      sourceEvidence,
+      digestSourceDeliveryIds: deliveries.map(item => item._id),
+      now
+    };
+  }
+
+  async flushDueDigests(policies, now = new Date()) {
+    const totals = { processedCount: 0, successCount: 0, failureCount: 0, digestCount: 0 };
+    for (const policy of policies) {
+      if (!this.isDigestDue(policy, now)) continue;
+
+      const dedupeKey = this.digestDedupeKey(now);
+      const existing = await NotificationDelivery.exists({
+        workspaceId: policy.workspaceId,
+        policyId: policy._id,
+        dedupeKey
+      });
+      if (existing) continue;
+
+      const pendingQuery = {
+        workspaceId: policy.workspaceId,
+        policyId: policy._id,
+        eventType: 'reconciliation_alert',
+        status: 'digest_pending'
+      };
+      const maximumItems = Math.min(policy.digest.maximumItems || 10, MAX_DIGEST_ITEMS);
+      const [pendingCount, deliveries] = await Promise.all([
+        NotificationDelivery.countDocuments(pendingQuery),
+        NotificationDelivery.find(pendingQuery).sort({ createdAt: 1 }).limit(maximumItems)
+      ]);
+      if (pendingCount === 0 || deliveries.length === 0) continue;
+
+      totals.processedCount += deliveries.length;
+      totals.digestCount += 1;
+      try {
+        const result = await this.createAndDeliver(policy, this.buildDigestEvent(deliveries, pendingCount, now), 'sneup-notification-worker');
+        if (['delivered', 'deferred', 'duplicate'].includes(result.status)) totals.successCount += 1;
+        else totals.failureCount += 1;
+      } catch (error) {
+        totals.failureCount += 1;
+        logger.error('Notification digest delivery failed:', error);
+      }
+    }
+    return totals;
   }
 
   isQuietHours(policy, now = new Date()) {
@@ -430,6 +540,7 @@ class NotificationService {
       delivery.deliveredAt = new Date();
       delivery.responseStatus = response.status;
       await delivery.save();
+      if (delivery.eventType === 'reconciliation_digest') await this.markDigestSourcesDelivered(delivery);
       await this.recordAudit('notification_delivered', delivery, actor, { status: delivery.status, responseStatus: response.status });
       return { status: 'delivered', delivery: this.sanitizeDelivery(delivery) };
     } catch (error) {
@@ -454,7 +565,13 @@ class NotificationService {
   }
 
   buildWebhookPayload(channel, event) {
-    const text = `${event.title}\n${event.message}`;
+    const sourceUrl = safeExternalSourceUrl(event.sourceUrl);
+    const sourceEvidence = (event.sourceEvidence || []).map((item = {}) => ({
+      label: compact(item.label, 240),
+      url: safeExternalSourceUrl(item.url)
+    })).filter(item => item.url);
+    const evidenceText = sourceEvidence.map(item => `Source: ${item.label || 'Evidence'} ${item.url}`).join('\n');
+    const text = [event.title, event.message, sourceUrl ? `Source: ${sourceUrl}` : '', evidenceText].filter(Boolean).join('\n');
     if (channel === 'slack_webhook') return { text, unfurl_links: false, unfurl_media: false };
     if (channel === 'teams_webhook') return {
       '@type': 'MessageCard',
@@ -462,7 +579,12 @@ class NotificationService {
       summary: event.title,
       themeColor: event.severity === 'critical' ? 'C4314B' : 'D79E00',
       title: event.title,
-      text: event.message
+      text: [event.message, sourceUrl ? `Source: ${sourceUrl}` : '', evidenceText].filter(Boolean).join('<br>'),
+      potentialAction: sourceUrl ? [{
+        '@type': 'OpenUri',
+        name: 'Open source evidence',
+        targets: [{ os: 'default', uri: sourceUrl }]
+      }] : undefined
     };
     return {
       eventType: event.eventType,
@@ -470,8 +592,23 @@ class NotificationService {
       title: event.title,
       message: event.message,
       sourceType: event.sourceType,
-      sourceId: event.sourceId
+      sourceId: event.sourceId,
+      sourceUrl,
+      sourceEvidence
     };
+  }
+
+  async markDigestSourcesDelivered(delivery) {
+    const sourceIds = (delivery.digestSourceDeliveryIds || []).filter(Boolean);
+    if (sourceIds.length === 0) return;
+    await NotificationDelivery.updateMany({
+      workspaceId: delivery.workspaceId,
+      policyId: delivery.policyId,
+      _id: { $in: sourceIds },
+      status: 'digest_pending'
+    }, {
+      $set: { status: 'digested', digestDeliveryId: delivery._id }
+    });
   }
 
   sanitizeDeliveryError(error) {
