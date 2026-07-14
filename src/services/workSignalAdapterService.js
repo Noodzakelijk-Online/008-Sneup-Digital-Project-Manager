@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -69,6 +69,7 @@ const miroWorkSignalClient = require('./miroWorkSignalClient');
 const dropboxWorkSignalClient = require('./dropboxWorkSignalClient');
 const calendlyWorkSignalClient = require('./calendlyWorkSignalClient');
 const teamsWorkSignalClient = require('./teamsWorkSignalClient');
+const googleChatWorkSignalClient = require('./googleChatWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -975,6 +976,12 @@ teamsAdapter.capabilities.credentialBackedSync = true;
 teamsAdapter.list = async account => (await teamsWorkSignalClient.fetchDelta(account, null)).records;
 teamsAdapter.fetchDelta = (account, cursor) => teamsWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('teams', teamsAdapter);
+
+const googleChatAdapter = buildAdapter('google_chat', 'Google Chat named-space metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'space'), title: titleFromText(item.name, 'Google Chat space'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['google_chat', item.sourceType, item.spaceType]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Google Chat space metadata'), raw: { id: item.id, sourceType: item.sourceType, spaceId: item.spaceId, spaceType: item.spaceType, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+googleChatAdapter.capabilities.credentialBackedSync = true;
+googleChatAdapter.list = async account => (await googleChatWorkSignalClient.fetchDelta(account, null)).records;
+googleChatAdapter.fetchDelta = (account, cursor) => googleChatWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('google_chat', googleChatAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

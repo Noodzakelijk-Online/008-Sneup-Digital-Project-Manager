@@ -102,6 +102,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/dropboxWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
+    jest.dontMock('../src/services/googleChatWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1168,7 +1169,8 @@ describe('connector registry', () => {
     expect(byId.zoom.auth.scopes).toEqual(['meeting:read']);
     expect(byId.zoom.auth.scopes).not.toEqual(expect.arrayContaining(['meeting:write', 'recording:read', 'user:read']));
     expect(byId.miro.auth.scopes).toEqual(['boards:read']);
-    expect(byId.google_chat.auth.scopes).toEqual(['https://www.googleapis.com/auth/chat.messages.readonly']);
+    expect(byId.google_chat.auth.scopes).toEqual(['https://www.googleapis.com/auth/chat.spaces.readonly']);
+    expect(byId.google_chat.auth.scopes).not.toEqual(expect.arrayContaining(['https://www.googleapis.com/auth/chat.messages.readonly']));
   });
 
   test('makes provider scope risk explicit and requires acknowledgement before credentials or OAuth leave Sneup', () => {
@@ -2276,6 +2278,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('teams').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Google Chat adapter delegates bounded named-space metadata reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'space:AAAA1234' }] });
+    jest.doMock('../src/services/googleChatWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'google_chat' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('google_chat').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4729,6 +4742,42 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_TEAMS_MAX_TEAMS; process.env.SNEUP_TEAMS_MAX_TEAMS = '1';
     const capped = new TeamsWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { value: [{ id: '12345678-1234-1234-1234-123456789abc' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/joinedTeams?$skiptoken=next' } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ connectorId: 'teams' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_TEAMS_MAX_TEAMS; else process.env.SNEUP_TEAMS_MAX_TEAMS = previous; }
+  });
+
+  test('Google Chat sync reads bounded named spaces without messages, members, group chats, direct messages, descriptions, URLs, or provider writes', async () => {
+    jest.dontMock('../src/services/googleChatWorkSignalClient');
+    jest.resetModules();
+    const { GoogleChatWorkSignalClient } = require('../src/services/googleChatWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { spaces: [{ name: 'spaces/AAAA1234', displayName: `Launch ${privateEmail}`, spaceType: 'SPACE', spaceDetails: { description: 'Private delivery discussion' }, webUrl: 'https://chat.example.test/private' }], nextPageToken: 'next_page_2' } })
+      .mockResolvedValueOnce({ data: { spaces: [{ name: 'spaces/BBBB5678', displayName: 'Private direct message', spaceType: 'DIRECT_MESSAGE', singleUserBotDm: true, members: [{ name: 'users/private' }] }] } }) };
+    const client = new GoogleChatWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'google-chat-access-token' })) } });
+    const previous = { max: process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES, page: process.env.SNEUP_GOOGLE_CHAT_PAGE_SIZE };
+    process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES = '2'; process.env.SNEUP_GOOGLE_CHAT_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'google_chat' }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://chat.googleapis.com/v1/spaces', expect.objectContaining({ params: { pageSize: 1, filter: 'spaceType = "SPACE"' }, headers: expect.objectContaining({ Authorization: 'Bearer google-chat-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://chat.googleapis.com/v1/spaces', expect.objectContaining({ params: { pageSize: 1, filter: 'spaceType = "SPACE"', pageToken: 'next_page_2' } }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'google_chat_spaces', spaces: 1, pages: 2 }, nextCursor: '2026-07-10T00:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private delivery|chat\.example|spaceDetails|webUrl|DIRECT_MESSAGE|members/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES; else process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES = previous.max; if (previous.page === undefined) delete process.env.SNEUP_GOOGLE_CHAT_PAGE_SIZE; else process.env.SNEUP_GOOGLE_CHAT_PAGE_SIZE = previous.page; }
+  });
+
+  test('Google Chat sync rejects invalid cursors, malformed named spaces, and pagination caps', async () => {
+    jest.dontMock('../src/services/googleChatWorkSignalClient');
+    jest.resetModules();
+    const { GoogleChatWorkSignalClient } = require('../src/services/googleChatWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) };
+    const invalid = new GoogleChatWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector });
+    await expect(invalid.fetchDelta({ connectorId: 'google_chat' }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new GoogleChatWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { spaces: [{ name: 'https://127.0.0.1/steal', spaceType: 'SPACE' }] } }) }, accountConnectorService: accountConnector });
+    await expect(malformed.fetchDelta({ connectorId: 'google_chat' })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES; process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES = '1';
+    const capped = new GoogleChatWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { spaces: [{ name: 'spaces/AAAA1234', spaceType: 'SPACE' }], nextPageToken: 'next_page_2' } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'google_chat' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES; else process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {
