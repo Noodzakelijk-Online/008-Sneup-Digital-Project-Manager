@@ -3660,12 +3660,13 @@ function renderConnector(connector, account) {
   const authLabel = connector.auth.displayType || (connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type.replaceAll('_', ' '));
   const safety = connector.safety || {};
   const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
-  const adapterImplemented = contract?.adapterStatus === 'implemented';
-  const connectionLabel = connected ? (adapterImplemented ? 'connected' : 'linked') : configured ? 'ready' : 'setup';
-  const connectionStatusClass = connected && adapterImplemented ? 'connected' : connected || configured ? 'review' : 'high';
-  const adapterSummary = adapterImplemented
+  const syncReady = connector.syncReadiness?.accountConnectionAvailable === true;
+  const adapterImplemented = syncReady && contract?.adapterStatus === 'implemented';
+  const connectionLabel = connected ? (adapterImplemented ? 'connected' : 'linked') : syncReady ? (configured ? 'ready' : 'setup') : 'catalog';
+  const connectionStatusClass = connected && adapterImplemented ? 'connected' : connected || (syncReady && configured) ? 'review' : 'high';
+  const adapterSummary = syncReady
     ? 'Read-only sync adapter available.'
-    : 'Account link only. Work-signal sync is not available yet.';
+    : 'Account connection is not available yet.';
   const isJira = connector.id === 'jira_software' || connector.id === 'jira_service_management';
   const isConfluence = connector.id === 'confluence';
   const isAsana = connector.id === 'asana';
@@ -3733,9 +3734,9 @@ function renderConnector(connector, account) {
         ${isResourceGuru && account ? `<button class="button" data-resource-guru-account="${escapeHtml(account.id)}" type="button">${selectedResourceGuruAccountId ? 'Resource Guru account selected' : 'Select Resource Guru account'}</button>` : ''}
         ${isFigma && account ? `<button class="button" data-figma-team="${escapeHtml(account.id)}" type="button">${selectedFigmaTeamId ? 'Figma team selected' : 'Configure Figma team'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
-        ${connected && connector.auth.type !== 'oauth2'
+        ${syncReady ? (connected && connector.auth.type !== 'oauth2'
           ? `<button class="button primary" data-rotate-credential="${escapeHtml(account.id)}" type="button">Rotate credential</button>`
-          : `<button class="button ${configured ? 'primary' : ''}" data-connect="${connector.id}" type="button">${connected ? 'Reconnect' : 'Connect'}</button>`}
+          : `<button class="button ${configured ? 'primary' : ''}" data-connect="${connector.id}" type="button">${connected ? 'Reconnect' : 'Connect'}</button>`) : ''}
       </div>
     </div>
   `;

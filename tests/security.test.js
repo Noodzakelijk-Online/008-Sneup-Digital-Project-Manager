@@ -1543,6 +1543,24 @@ describe('connector registry', () => {
     expect(pageTwo.connectors[0]).not.toMatchObject(aliasResult.connectors[0]);
   });
 
+  test('exposes sync readiness and blocks catalog-only connector account links', () => {
+    const catalog = accountConnectorService.getCatalog();
+    const github = catalog.connectors.find(connector => connector.id === 'github');
+    const microsoftProject = catalog.connectors.find(connector => connector.id === 'microsoft_project');
+
+    expect(github.syncReadiness).toEqual({
+      status: 'ready',
+      accountConnectionAvailable: true,
+      readOnly: true
+    });
+    expect(microsoftProject.syncReadiness).toEqual({
+      status: 'catalog_only',
+      accountConnectionAvailable: false,
+      readOnly: true
+    });
+    expect(() => accountConnectorService.beginConnection('microsoft_project')).toThrow(/secure work-signal sync is not available yet/i);
+  });
+
   test('decrypts connector credentials only for in-process sync and redacts private account metadata', () => {
     const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
     process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';

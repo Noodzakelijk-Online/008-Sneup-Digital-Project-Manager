@@ -6,6 +6,7 @@ const AuditEvent = require('../models/AuditEvent');
 const { CATEGORIES, getCategories, getConnector, getConnectors } = require('./connectorRegistry');
 const { buildConnectorSafetyProfile, summarizeConnectorSafety } = require('./connectorSafetyProfile');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
+const workSignalAdapterService = require('./workSignalAdapterService');
 
 const STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_CATALOG_LIMIT = 300;
@@ -327,6 +328,7 @@ class AccountConnectorService {
 
   beginConnection(connectorId, options = {}) {
     const connector = this.requireConnector(connectorId);
+    this.requireAccountConnectionAvailable(connector);
     const safety = buildConnectorSafetyProfile(connector);
 
     if (connector.auth.type !== 'oauth2') {
@@ -410,6 +412,7 @@ class AccountConnectorService {
 
   async completeOAuth(connectorId, query, options = {}) {
     const connector = this.requireConnector(connectorId);
+    this.requireAccountConnectionAvailable(connector);
     if (connector.auth.type !== 'oauth2') {
       const error = new Error('OAuth connector not found');
       error.statusCode = 404;
@@ -453,6 +456,7 @@ class AccountConnectorService {
 
   async saveCredentialAccount(connectorId, body = {}, options = {}) {
     const connector = this.requireConnector(connectorId);
+    this.requireAccountConnectionAvailable(connector);
 
     if (connector.auth.type === 'oauth2') {
       const error = new Error('Use the OAuth connect endpoint for this connector');
@@ -501,6 +505,7 @@ class AccountConnectorService {
 
     const account = await this.getManagedAccount(accountId, options);
     const connector = this.requireConnector(account.connectorId);
+    this.requireAccountConnectionAvailable(connector);
     if (connector.auth.type === 'oauth2' || account.authType === 'oauth2') {
       const error = new Error('OAuth accounts must be reconnected through their provider authorization flow');
       error.statusCode = 400;
@@ -1054,6 +1059,7 @@ class AccountConnectorService {
   }
 
   sanitizeConnector(connector) {
+    const syncReadiness = this.getSyncReadiness(connector);
     return {
       id: connector.id,
       name: connector.name,
@@ -1069,6 +1075,7 @@ class AccountConnectorService {
         configured: connector.auth.type !== 'oauth2' || this.hasOAuthEnvironment(connector)
       },
       safety: buildConnectorSafetyProfile(connector),
+      syncReadiness,
       sync: connector.sync || []
     };
   }
@@ -1161,6 +1168,24 @@ class AccountConnectorService {
       throw error;
     }
     return connector;
+  }
+
+  getSyncReadiness(connector) {
+    const adapter = workSignalAdapterService.getAdapter(connector.id);
+    const accountConnectionAvailable = Boolean(adapter?.capabilities?.credentialBackedSync);
+    return {
+      status: accountConnectionAvailable ? 'ready' : 'catalog_only',
+      accountConnectionAvailable,
+      readOnly: true
+    };
+  }
+
+  requireAccountConnectionAvailable(connector) {
+    if (this.getSyncReadiness(connector).accountConnectionAvailable) return;
+
+    const error = new Error(`${connector.name} is listed in the connector catalog, but its secure work-signal sync is not available yet.`);
+    error.statusCode = 409;
+    throw error;
   }
 
   getOAuthEnvironment(connector) {
