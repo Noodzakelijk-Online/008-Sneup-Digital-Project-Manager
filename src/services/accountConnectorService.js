@@ -835,6 +835,7 @@ class AccountConnectorService {
         expiresAt
       },
       metadata: {
+        fields: this.extractOAuthMetadata(connector, tokenResponse),
         providerResponseKeys: Object.keys(tokenResponse || {}),
         sync: connector.sync || []
       },
@@ -844,6 +845,40 @@ class AccountConnectorService {
     await account.save();
     await this.recordConnectionAudit(account, options.consent?.acknowledgedBy);
     return account;
+  }
+
+  extractOAuthMetadata(connector, tokenResponse = {}) {
+    const declarations = connector.auth?.oauthResponseMetadata || [];
+    return declarations.reduce((fields, declaration) => {
+      const value = tokenResponse[declaration.responseKey];
+      if (!value && !declaration.required) return fields;
+      if (declaration.validator === 'salesforceInstanceUrl') {
+        fields[declaration.field] = this.validateSalesforceInstanceUrl(value);
+        return fields;
+      }
+      const error = new Error(`Connector ${connector.id} declared an unsupported OAuth metadata validator`);
+      error.statusCode = 500;
+      throw error;
+    }, {});
+  }
+
+  validateSalesforceInstanceUrl(value) {
+    let url;
+    try {
+      url = new URL(String(value || ''));
+    } catch (_error) {
+      const error = new Error('Salesforce OAuth did not return a valid HTTPS instance URL. Reconnect this account to continue.');
+      error.statusCode = 502;
+      throw error;
+    }
+
+    const hostname = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash || !hostname.endsWith('.salesforce.com') || !['', '/'].includes(url.pathname)) {
+      const error = new Error('Salesforce OAuth returned an unsupported instance URL. Reconnect this account to continue.');
+      error.statusCode = 502;
+      throw error;
+    }
+    return `https://${hostname}`;
   }
 
   createConsentEvidence(connector, options = {}) {

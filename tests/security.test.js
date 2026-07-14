@@ -96,6 +96,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/pipedriveWorkSignalClient');
     jest.dontMock('../src/services/hubSpotWorkSignalClient');
     jest.dontMock('../src/services/typeformWorkSignalClient');
+    jest.dontMock('../src/services/salesforceWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1235,6 +1236,24 @@ describe('connector registry', () => {
     expect(clickup.auth.scopes).toEqual([]);
   });
 
+  test('persists only connector-declared valid Salesforce OAuth tenant metadata', () => {
+    const salesforce = getConnectors().find(connector => connector.id === 'salesforce');
+
+    expect(salesforce.auth.oauthResponseMetadata).toEqual([
+      { field: 'instanceUrl', responseKey: 'instance_url', validator: 'salesforceInstanceUrl', required: true }
+    ]);
+    expect(accountConnectorService.extractOAuthMetadata(salesforce, {
+      instance_url: 'https://Acme--staging.sandbox.my.salesforce.com/'
+    })).toEqual({ instanceUrl: 'https://acme--staging.sandbox.my.salesforce.com' });
+    expect(() => accountConnectorService.extractOAuthMetadata(salesforce, {
+      instance_url: 'http://127.0.0.1:8080/'
+    })).toThrow(/unsupported instance URL/i);
+    expect(() => accountConnectorService.extractOAuthMetadata(salesforce, {})).toThrow(/valid HTTPS instance URL/i);
+    expect(accountConnectorService.extractOAuthMetadata(getConnectors().find(connector => connector.id === 'hubspot'), {
+      instance_url: 'https://untrusted.example.test', secret: 'must-not-be-retained'
+    })).toEqual({});
+  });
+
   test('supports connector search, category aliases, and pagination', () => {
     const result = accountConnectorService.getCatalog({
       category: 'software delivery',
@@ -2175,6 +2194,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('typeform').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Salesforce adapter delegates bounded opportunity reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'opportunity:006000000000001' }] });
+    jest.doMock('../src/services/salesforceWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'salesforce' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('salesforce').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4417,6 +4447,45 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_TYPEFORM_MAX_FORMS; process.env.SNEUP_TYPEFORM_MAX_FORMS = '1';
     const capped = new TypeformWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { items: [{ id: 'Abcd1234', title: 'First form' }] } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'token' })) } });
     try { await expect(capped.fetchDelta({ connectorId: 'typeform' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_TYPEFORM_MAX_FORMS; else process.env.SNEUP_TYPEFORM_MAX_FORMS = previous; }
+  });
+
+  test('Salesforce sync reads bounded allowlisted opportunity metadata from the validated OAuth tenant only', async () => {
+    jest.dontMock('../src/services/salesforceWorkSignalClient');
+    jest.resetModules();
+    const { SalesforceWorkSignalClient } = require('../src/services/salesforceWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { records: [{ Id: '006000000000001', Name: `Launch plan for ${privateEmail}`, StageName: 'Proposal', CloseDate: '2026-07-15', CreatedDate: '2026-07-10T12:00:00.000Z', LastModifiedDate: '2026-07-12T12:00:00.000Z', IsClosed: false, IsWon: false, Amount: 5000, CurrencyIsoCode: 'EUR', Owner: { Name: 'Private owner' }, Account: { Name: 'Private account' }, Custom_Secret__c: 'private' }], done: false, nextRecordsUrl: '/services/data/v60.0/query/01gABCDEF-200' } })
+      .mockResolvedValueOnce({ data: { records: [{ Id: '006000000000002', Name: 'Confirm delivery handoff', StageName: 'Closed Won', CloseDate: '2026-07-16', CreatedDate: '2026-07-11T12:00:00.000Z', LastModifiedDate: '2026-07-13T12:00:00.000Z', IsClosed: true, IsWon: true }], done: true } }) };
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'salesforce-access-token' })), validateSalesforceInstanceUrl: jest.fn(() => 'https://acme.my.salesforce.com') };
+    const client = new SalesforceWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: accountConnector });
+    const previous = process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES; process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES = '2';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'salesforce', metadata: { fields: { instanceUrl: 'https://acme.my.salesforce.com' } } }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://acme.my.salesforce.com/services/data/v60.0/query', expect.objectContaining({ params: { q: 'SELECT Id, Name, StageName, CloseDate, CreatedDate, LastModifiedDate, IsClosed, IsWon FROM Opportunity WHERE LastModifiedDate >= 2026-07-09T23:59:00Z ORDER BY LastModifiedDate ASC' }, headers: expect.objectContaining({ Authorization: 'Bearer salesforce-access-token', 'Sforce-Query-Options': 'batchSize=200' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://acme.my.salesforce.com/services/data/v60.0/query/01gABCDEF-200', expect.any(Object));
+      expect(http.get.mock.calls[1][1]).not.toHaveProperty('params');
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'salesforce_opportunity_query', opportunities: 2, pages: 2 }, nextCursor: '2026-07-13T12:00:00.000Z', hasMore: false });
+      expect(result.records[1]).toMatchObject({ status: 'done' });
+      expect(JSON.stringify(result.records)).not.toMatch(/5000|EUR|Private owner|Private account|Custom_Secret__c|private/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous === undefined) delete process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES; else process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES = previous; }
+  });
+
+  test('Salesforce sync rejects invalid cursors, tenant URLs, cursors, and collection caps', async () => {
+    jest.dontMock('../src/services/salesforceWorkSignalClient');
+    jest.resetModules();
+    const { SalesforceWorkSignalClient } = require('../src/services/salesforceWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })), validateSalesforceInstanceUrl: jest.fn(value => { if (value !== 'https://acme.my.salesforce.com') { const error = new Error('unsupported tenant'); error.statusCode = 502; throw error; } return value; }) };
+    const invalid = new SalesforceWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector });
+    await expect(invalid.fetchDelta({ metadata: { fields: { instanceUrl: 'https://acme.my.salesforce.com' } } }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    await expect(invalid.fetchDelta({ metadata: { fields: { instanceUrl: 'http://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES; process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES = '1';
+    const capped = new SalesforceWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { records: [{ Id: '006000000000001', Name: 'First opportunity' }], done: false, nextRecordsUrl: '/services/data/v60.0/query/01gABCDEF-200' } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { instanceUrl: 'https://acme.my.salesforce.com' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES; else process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES = previous; }
+    const unsafeCursor = new SalesforceWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { records: [], done: false, nextRecordsUrl: 'https://127.0.0.1/steal' } }) }, accountConnectorService: accountConnector });
+    await expect(unsafeCursor.fetchDelta({ metadata: { fields: { instanceUrl: 'https://acme.my.salesforce.com' } } })).rejects.toMatchObject({ statusCode: 502 });
   });
 
   test('projects provider signals into normalized work graph records', () => {

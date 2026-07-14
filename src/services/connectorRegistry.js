@@ -432,15 +432,16 @@ const CONNECTORS = [
     id: 'salesforce',
     name: 'Salesforce',
     category: 'crm_support',
-    description: 'Accounts, opportunities, contacts, cases, tasks, events, and executive stakeholder context.',
+    description: 'Read-only bounded opportunity metadata using Salesforce OAuth. The provider api scope is broad and requires review; Sneup only issues GET requests and excludes accounts, contacts, cases, tasks, events, owners, amounts, currencies, custom fields, and provider writes.',
     auth: oauth2({
       envPrefix: 'SALESFORCE',
       authorizationUrl: 'https://login.salesforce.com/services/oauth2/authorize',
       tokenUrl: 'https://login.salesforce.com/services/oauth2/token',
       scopes: ['api', 'refresh_token'],
+      oauthResponseMetadata: [{ field: 'instanceUrl', responseKey: 'instance_url', validator: 'salesforceInstanceUrl', required: true }],
       docsUrl: 'https://help.salesforce.com/s/articleView?id=sf.remoteaccess_oauth_web_server_flow.htm'
     }),
-    sync: ['accounts', 'opportunities', 'contacts', 'cases', 'tasks', 'events']
+    sync: ['opportunities']
   },
   {
     id: 'intercom',
