@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -46,6 +46,7 @@ const youTrackWorkSignalClient = require('./youTrackWorkSignalClient');
 const taigaWorkSignalClient = require('./taigaWorkSignalClient');
 const backlogWorkSignalClient = require('./backlogWorkSignalClient');
 const freedcampWorkSignalClient = require('./freedcampWorkSignalClient');
+const meisterTaskWorkSignalClient = require('./meisterTaskWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -814,6 +815,12 @@ freedcampAdapter.capabilities.credentialBackedSync = true;
 freedcampAdapter.list = async account => (await freedcampWorkSignalClient.fetchDelta(account, null)).records;
 freedcampAdapter.fetchDelta = (account, cursor) => freedcampWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('freedcamp', freedcampAdapter);
+
+const meisterTaskAdapter = buildAdapter('meistertask', 'MeisterTask project, section, and task metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'MeisterTask work item'), description: '', status: statusFromText(item.status), priority: 'unknown', owners: [], labels: compact(['meistertask', item.sourceType, item.project?.name, item.section?.name, item.status]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'MeisterTask metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, sectionId: item.sectionId, taskId: item.taskId, project: item.project, section: item.section, status: item.status, assigneeId: item.assigneeId, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+meisterTaskAdapter.capabilities.credentialBackedSync = true;
+meisterTaskAdapter.list = async account => (await meisterTaskWorkSignalClient.fetchDelta(account, null)).records;
+meisterTaskAdapter.fetchDelta = (account, cursor) => meisterTaskWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('meistertask', meisterTaskAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

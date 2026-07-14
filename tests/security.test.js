@@ -79,6 +79,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/taigaWorkSignalClient');
     jest.dontMock('../src/services/backlogWorkSignalClient');
     jest.dontMock('../src/services/freedcampWorkSignalClient');
+    jest.dontMock('../src/services/meisterTaskWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1970,6 +1971,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('freedcamp').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('MeisterTask adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'task:18' }] });
+    jest.doMock('../src/services/meisterTaskWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'meistertask' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('meistertask').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3669,6 +3681,33 @@ describe('work signal normalization', () => {
     try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_FREEDCAMP_MAX_PROJECTS; else process.env.SNEUP_FREEDCAMP_MAX_PROJECTS = previous; }
     const ambiguous = new FreedcampWorkSignalClient({ http: { get: jest.fn().mockResolvedValueOnce({ data: { data: { projects: [] } } }).mockResolvedValueOnce({ data: { data: { tasks: [] } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'freedcamp-key' })) } });
     await expect(ambiguous.fetchDelta({})).rejects.toMatchObject({ statusCode: 502 });
+  });
+
+  test('MeisterTask sync reads bounded metadata with bearer credentials and no rich content or provider writes', async () => {
+    jest.dontMock('../src/services/meisterTaskWorkSignalClient');
+    jest.resetModules();
+    const { MeisterTaskWorkSignalClient } = require('../src/services/meisterTaskWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: [{ id: 9, name: 'Sneup release', notes: 'Private project notes', status: 1, created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-11T12:00:00.000Z' }] })
+      .mockResolvedValueOnce({ data: [{ id: 11, project_id: 9, name: 'In progress', description: 'Private section description', status: 1, sequence: 1, created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-11T12:00:00.000Z' }] })
+      .mockResolvedValueOnce({ data: [{ id: 18, project_id: 9, section_id: 11, name: 'Ship MeisterTask connector', notes: 'Private task notes', token: 'private-token', status: 2, assigned_to_id: 7, tracked_time: 3600, due: '2026-07-15T12:00:00.000Z', created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-12T12:00:00.000Z', comments: ['Private comment'], attachments: [{ name: 'secret.pdf' }], labels: ['private'] }] }) };
+    const client = new MeisterTaskWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'meister-token' })) } });
+    const result = await client.fetchDelta({}, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://www.meistertask.com/api/projects', expect.objectContaining({ params: { status: 'active', items: 100, page: 1, sort: 'id' }, headers: expect.objectContaining({ Authorization: 'Bearer meister-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private project notes|Private section description|Private task notes|private-token|Private comment|secret\.pdf|private|3600/);
+    expect(result).toMatchObject({ metadata: { source: 'meistertask_api', projects: 1, sections: 1, tasks: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('MeisterTask sync fails closed when a collection reaches its configured cap or is malformed', async () => {
+    jest.dontMock('../src/services/meisterTaskWorkSignalClient');
+    jest.resetModules();
+    const { MeisterTaskWorkSignalClient } = require('../src/services/meisterTaskWorkSignalClient');
+    const previous = process.env.SNEUP_MEISTERTASK_MAX_PROJECTS; process.env.SNEUP_MEISTERTASK_MAX_PROJECTS = '1';
+    const capped = new MeisterTaskWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ id: 1, name: 'One' }] }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'meister-token' })) } });
+    try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_MEISTERTASK_MAX_PROJECTS; else process.env.SNEUP_MEISTERTASK_MAX_PROJECTS = previous; }
+    const malformed = new MeisterTaskWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { projects: [] } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'meister-token' })) } });
+    await expect(malformed.fetchDelta({})).rejects.toMatchObject({ statusCode: 502 });
   });
 
   test('projects provider signals into normalized work graph records', () => {
