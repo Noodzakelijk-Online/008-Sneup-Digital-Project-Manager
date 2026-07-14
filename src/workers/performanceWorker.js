@@ -3,7 +3,7 @@ const logger = require('../utils/logger');
 const performanceTracker = require('../services/performanceTracker');
 const Board = require('../models/Board');
 const jobObservabilityService = require('../services/jobObservabilityService');
-const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId } = require('../services/workspaceScopeService');
+const { listActiveWorkspaceIds } = require('../services/workspaceScopeService');
 
 class PerformanceWorker {
   constructor() {
@@ -18,11 +18,7 @@ class PerformanceWorker {
     this.jobs.dailyPerformance = schedule.scheduleJob(
       process.env.DAILY_PERFORMANCE_CRON || '0 0 * * *',
       async () => {
-        await jobObservabilityService.trackJob({
-          jobName: 'performance.daily',
-          jobType: 'performance',
-          triggerType: 'scheduled'
-        }, () => this.calculateAllPerformance('daily'));
+        await this.runForActiveWorkspaces('performance.daily', 'daily');
       }
     );
 
@@ -30,11 +26,7 @@ class PerformanceWorker {
     this.jobs.weeklyPerformance = schedule.scheduleJob(
       process.env.WEEKLY_PERFORMANCE_CRON || '0 1 * * 1',
       async () => {
-        await jobObservabilityService.trackJob({
-          jobName: 'performance.weekly',
-          jobType: 'performance',
-          triggerType: 'scheduled'
-        }, () => this.calculateAllPerformance('weekly'));
+        await this.runForActiveWorkspaces('performance.weekly', 'weekly');
       }
     );
 
@@ -42,24 +34,27 @@ class PerformanceWorker {
     this.jobs.monthlyPerformance = schedule.scheduleJob(
       process.env.MONTHLY_PERFORMANCE_CRON || '0 2 1 * *',
       async () => {
-        await jobObservabilityService.trackJob({
-          jobName: 'performance.monthly',
-          jobType: 'performance',
-          triggerType: 'scheduled'
-        }, () => this.calculateAllPerformance('monthly'));
+        await this.runForActiveWorkspaces('performance.monthly', 'monthly');
       }
     );
 
     logger.info('Performance worker initialized');
   }
 
+  async runForActiveWorkspaces(jobName, period) {
+    const workspaceIds = await listActiveWorkspaceIds();
+    for (const workspaceId of workspaceIds) {
+      await jobObservabilityService.trackJob({ jobName, jobType: 'performance', triggerType: 'scheduled', workspaceId }, () => this.calculateAllPerformance(period, { workspaceId }));
+    }
+  }
+
   // Calculate performance for all boards
-  async calculateAllPerformance(period) {
+  async calculateAllPerformance(period, options = {}) {
     try {
       logger.info(`Calculating ${period} performance for all boards...`);
 
-      const workspaceId = getDefaultWorkspaceObjectId();
-      const boards = await Board.find(defaultWorkspaceQuery({ closed: false }));
+      const workspaceId = options.workspaceId;
+      const boards = await Board.find({ workspaceId, closed: false });
       let successCount = 0;
       let failureCount = 0;
 
