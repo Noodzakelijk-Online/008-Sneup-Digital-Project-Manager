@@ -852,6 +852,41 @@ h1 {
   gap: 12px;
 }
 
+.workflow-routing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-routing-row {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-routing-row legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workflow-routing-row label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.workflow-fixed-owner {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}
+
 .setup-flow {
   display: grid;
   gap: 16px;
@@ -908,6 +943,10 @@ h1 {
 
   .metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .workflow-routing-grid {
+    grid-template-columns: 1fr;
   }
 
   .grid,

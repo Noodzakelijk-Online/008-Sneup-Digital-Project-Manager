@@ -303,15 +303,16 @@ const enhancements = [
     priority: 'P1',
     area: 'operations',
     title: 'Make scheduled follow-up transitions durable and auditable',
-    evidence: 'The scheduled worker now atomically moves overdue workspace-scoped follow-up plans from scheduled to due and writes an audit event. Legacy intervention follow-up and escalation candidate scans are workspace-scoped and only record their queued state after a successful approval-gated candidate path.',
+    evidence: 'The scheduled worker atomically moves overdue workspace-scoped follow-up plans from scheduled to due and writes an audit event. Legacy intervention follow-up and escalation candidate scans are workspace-scoped and only record a queued state after a successful approval-gated candidate path. Decision queue routing uses bounded workspace defaults and atomically escalates overdue VA or team decisions to Robert without contacting a provider.',
     impact: 'Gives operators a durable lifecycle trail while preventing one workspace from processing another workspace\'s queued work or a transient failure from silently suppressing a retry.',
     effort: 'S',
     status: 'done',
-    nextStep: 'Add configurable, workspace-scoped escalation timing policies with bounded defaults.',
+    nextStep: 'Add bounded, workspace-scoped follow-up timing policies.',
     acceptanceCriteria: [
       'Overdue scheduled follow-up plans transition to due once and include audit evidence.',
       'Scheduled intervention follow-up and escalation scans stay within the requested workspace.',
-      'A failed candidate path leaves the original intervention eligible for a later safe retry.'
+      'A failed candidate path leaves the original intervention eligible for a later safe retry.',
+      'Overdue internal VA and team decisions move to Robert exactly once with audit evidence and no provider write.'
     ]
   },
   {

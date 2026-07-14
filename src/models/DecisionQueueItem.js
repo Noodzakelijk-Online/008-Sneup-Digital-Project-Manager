@@ -60,6 +60,10 @@ const decisionQueueItemSchema = new mongoose.Schema({
   delegatedTo: String,
   delegatedBy: String,
   delegatedAt: Date,
+  escalatedAt: Date,
+  escalatedBy: String,
+  escalatedFromOwnerType: String,
+  escalationReason: String,
   resolvedAt: Date,
   resolvedBy: String,
   resolutionNote: String
@@ -70,6 +74,7 @@ const decisionQueueItemSchema = new mongoose.Schema({
 decisionQueueItemSchema.index({ ownerType: 1, status: 1, riskLevel: -1, createdAt: 1 });
 decisionQueueItemSchema.index({ boardId: 1, status: 1, createdAt: -1 });
 decisionQueueItemSchema.index({ status: 1, snoozedUntil: 1 });
+decisionQueueItemSchema.index({ workspaceId: 1, status: 1, ownerType: 1, dueAt: 1, escalatedAt: 1 });
 decisionQueueItemSchema.index({ workspaceId: 1, ownerType: 1, status: 1, riskLevel: -1, createdAt: 1 });
 decisionQueueItemSchema.index({ workspaceId: 1, boardId: 1, status: 1, createdAt: -1 });
 

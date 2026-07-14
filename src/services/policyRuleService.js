@@ -9,9 +9,16 @@ const OWNER_TYPES = ['robert', 'va', 'team', 'system'];
 const OWNER_STRICTNESS = Object.freeze({ system: 0, va: 1, team: 1, robert: 2 });
 const MAX_REASON_LENGTH = 500;
 const DECISION_QUEUE_SNOOZE_ACTION = 'decision_queue_snooze';
+const DECISION_QUEUE_ROUTING_ACTION = 'decision_queue_routing';
 const DEFAULT_SNOOZE_HOURS = 24;
 const MIN_SNOOZE_HOURS = 1;
 const MAX_SNOOZE_HOURS = 168;
+const DEFAULT_QUEUE_ROUTING = Object.freeze({
+  low: Object.freeze({ ownerType: 'va', escalationHours: 24 }),
+  medium: Object.freeze({ ownerType: 'team', escalationHours: 24 }),
+  high: Object.freeze({ ownerType: 'robert', escalationHours: 6 }),
+  critical: Object.freeze({ ownerType: 'robert', escalationHours: 2 })
+});
 
 const clampText = (value, maximum = MAX_REASON_LENGTH) => String(value || '').trim().slice(0, maximum);
 const riskRank = (riskLevel) => RISK_LEVELS.indexOf(riskLevel);
@@ -19,6 +26,8 @@ const ownerRank = (ownerType) => OWNER_STRICTNESS[ownerType] ?? -1;
 const actionLabel = (actionType) => String(actionType || '').replaceAll('_', ' ');
 const getPolicyRuleModel = () => require('../models/PolicyRule');
 const isDecisionQueueSnoozeAction = actionType => actionType === DECISION_QUEUE_SNOOZE_ACTION;
+const isDecisionQueueRoutingAction = actionType => actionType === DECISION_QUEUE_ROUTING_ACTION;
+const isDecisionQueueWorkflowAction = actionType => isDecisionQueueSnoozeAction(actionType) || isDecisionQueueRoutingAction(actionType);
 const parseSnoozeHours = value => {
   const parsed = typeof value === 'string' && !value.trim() ? Number.NaN : Number(value);
   return Number.isInteger(parsed) && parsed >= MIN_SNOOZE_HOURS && parsed <= MAX_SNOOZE_HOURS ? parsed : null;
@@ -47,7 +56,7 @@ class PolicyRuleService {
   }
 
   assertActionType(actionType) {
-    if (!interventionPolicy.getWriteActionTypes().includes(actionType) && !isDecisionQueueSnoozeAction(actionType)) {
+    if (!interventionPolicy.getWriteActionTypes().includes(actionType) && !isDecisionQueueWorkflowAction(actionType)) {
       const error = new Error('Action type is not eligible for a Trello safety policy');
       error.statusCode = 400;
       throw error;
@@ -155,6 +164,75 @@ class PolicyRuleService {
     };
   }
 
+  decisionQueueRoutingBaseline() {
+    return {
+      actionType: DECISION_QUEUE_ROUTING_ACTION,
+      label: 'Decision queue routing',
+      policyKind: 'workflow',
+      workflowType: 'decision_queue_routing',
+      enabled: true,
+      configured: false,
+      riskLevel: 'low',
+      baselineRiskLevel: 'low',
+      ownerType: 'robert',
+      baselineOwnerType: 'robert',
+      requiresApproval: false,
+      approvalReason: 'Routing and escalation windows only organize internal decision queues; they never prepare or perform a provider write.',
+      routingByRisk: DEFAULT_QUEUE_ROUTING,
+      baselineRoutingByRisk: DEFAULT_QUEUE_ROUTING,
+      policyRuleId: null,
+      updatedAt: null,
+      updatedBy: null,
+      reason: ''
+    };
+  }
+
+  normalizeDecisionQueueRouting(candidate = {}) {
+    return Object.fromEntries(RISK_LEVELS.map((riskLevel) => {
+      const baseline = DEFAULT_QUEUE_ROUTING[riskLevel];
+      const entry = candidate?.[riskLevel] || {};
+      const requestedOwner = OWNER_TYPES.includes(entry.ownerType) ? entry.ownerType : baseline.ownerType;
+      const ownerType = riskLevel === 'high' || riskLevel === 'critical'
+        ? 'robert'
+        : ownerRank(requestedOwner) >= ownerRank(baseline.ownerType) && requestedOwner !== 'system'
+          ? requestedOwner
+          : baseline.ownerType;
+      return [riskLevel, {
+        ownerType,
+        escalationHours: parseSnoozeHours(entry.escalationHours) || baseline.escalationHours
+      }];
+    }));
+  }
+
+  mergeDecisionQueueRoutingPolicy(rule) {
+    const baseline = this.decisionQueueRoutingBaseline();
+    if (!rule) return baseline;
+    return {
+      ...baseline,
+      configured: true,
+      routingByRisk: this.normalizeDecisionQueueRouting(rule.conditions?.routingByRisk),
+      policyRuleId: rule._id ? String(rule._id) : null,
+      updatedAt: rule.updatedAt || null,
+      updatedBy: rule.updatedBy || 'system',
+      reason: rule.reason || ''
+    };
+  }
+
+  resolveDecisionQueueRouting({ riskLevel, requestedOwner, policy } = {}) {
+    const resolvedRisk = RISK_LEVELS.includes(riskLevel) ? riskLevel : 'medium';
+    const effectivePolicy = policy || this.decisionQueueRoutingBaseline();
+    const routing = effectivePolicy.routingByRisk?.[resolvedRisk] || DEFAULT_QUEUE_ROUTING[resolvedRisk];
+    const requested = OWNER_TYPES.includes(requestedOwner) ? requestedOwner : null;
+    const ownerType = resolvedRisk === 'high' || resolvedRisk === 'critical' || requested === 'robert'
+      ? 'robert'
+      : routing.ownerType;
+    return {
+      riskLevel: resolvedRisk,
+      ownerType,
+      escalationHours: routing.escalationHours
+    };
+  }
+
   async listEffectivePolicies(options = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
@@ -166,7 +244,11 @@ class PolicyRuleService {
       const base = interventionPolicy.classifyAction(actionType);
       return this.serializePolicy(actionType, this.mergePolicy(base, rulesByAction.get(actionType)));
     });
-    return [...writePolicies, this.mergeDecisionQueueSnoozePolicy(rulesByAction.get(DECISION_QUEUE_SNOOZE_ACTION))];
+    return [
+      ...writePolicies,
+      this.mergeDecisionQueueSnoozePolicy(rulesByAction.get(DECISION_QUEUE_SNOOZE_ACTION)),
+      this.mergeDecisionQueueRoutingPolicy(rulesByAction.get(DECISION_QUEUE_ROUTING_ACTION))
+    ];
   }
 
   async listPolicyHistory(options = {}) {
@@ -176,7 +258,13 @@ class PolicyRuleService {
     return AuditEvent.find({
       workspaceId,
       entityType: 'policy_rule',
-      action: { $in: ['trello_action_policy_updated', 'decision_queue_snooze_policy_updated'] }
+      action: {
+        $in: [
+          'trello_action_policy_updated',
+          'decision_queue_snooze_policy_updated',
+          'decision_queue_routing_policy_updated'
+        ]
+      }
     })
       .sort({ createdAt: -1 })
       .limit(limit);
@@ -203,11 +291,22 @@ class PolicyRuleService {
     return this.mergeDecisionQueueSnoozePolicy(rule);
   }
 
+  async getDecisionQueueRoutingPolicy(options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const PolicyRule = getPolicyRuleModel();
+    const rule = await PolicyRule.findOne({ workspaceId, actionType: DECISION_QUEUE_ROUTING_ACTION });
+    return this.mergeDecisionQueueRoutingPolicy(rule);
+  }
+
   async updateActionPolicy(actionType, body = {}, options = {}) {
     this.requireDatabase();
     this.assertActionType(actionType);
     if (isDecisionQueueSnoozeAction(actionType)) {
       return this.updateDecisionQueueSnoozePolicy(body, options);
+    }
+    if (isDecisionQueueRoutingAction(actionType)) {
+      return this.updateDecisionQueueRoutingPolicy(body, options);
     }
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const base = interventionPolicy.classifyAction(actionType);
@@ -315,6 +414,89 @@ class PolicyRuleService {
     return this.serializePolicy(actionType, effectivePolicy);
   }
 
+  async updateDecisionQueueRoutingPolicy(body = {}, options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const actor = options.actor || 'sneup-operator';
+    const PolicyRule = getPolicyRuleModel();
+    const existing = await PolicyRule.findOne({ workspaceId, actionType: DECISION_QUEUE_ROUTING_ACTION });
+    const beforePolicy = this.mergeDecisionQueueRoutingPolicy(existing);
+    const suppliedRouting = body.routingByRisk;
+    if (suppliedRouting !== undefined && (!suppliedRouting || typeof suppliedRouting !== 'object' || Array.isArray(suppliedRouting))) {
+      const error = new Error('routingByRisk must be an object keyed by risk level');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const routingByRisk = {};
+    for (const riskLevel of RISK_LEVELS) {
+      const previous = beforePolicy.routingByRisk[riskLevel];
+      const requested = suppliedRouting?.[riskLevel] || {};
+      const ownerType = requested.ownerType === undefined ? previous.ownerType : requested.ownerType;
+      const escalationHours = requested.escalationHours === undefined
+        ? previous.escalationHours
+        : parseSnoozeHours(requested.escalationHours);
+
+      if (!['va', 'team', 'robert'].includes(ownerType)) {
+        const error = new Error(`${riskLevel} ownerType must be va, team, or robert`);
+        error.statusCode = 400;
+        throw error;
+      }
+      if ((riskLevel === 'high' || riskLevel === 'critical') && ownerType !== 'robert') {
+        const error = new Error(`${riskLevel} decision queue items must remain Robert-owned`);
+        error.statusCode = 400;
+        throw error;
+      }
+      if (!escalationHours) {
+        const error = new Error(`${riskLevel} escalationHours must be a whole number between ${MIN_SNOOZE_HOURS} and ${MAX_SNOOZE_HOURS}`);
+        error.statusCode = 400;
+        throw error;
+      }
+      routingByRisk[riskLevel] = { ownerType, escalationHours };
+    }
+
+    const rule = await PolicyRule.findOneAndUpdate(
+      { workspaceId, actionType: DECISION_QUEUE_ROUTING_ACTION },
+      {
+        $set: {
+          name: 'Decision queue routing workflow policy',
+          riskLevel: 'low',
+          requiresApproval: false,
+          ownerType: 'robert',
+          enabled: true,
+          pauseExpiresAt: null,
+          reason: body.reason === undefined ? existing?.reason || '' : clampText(body.reason),
+          updatedBy: actor,
+          conditions: {
+            ...(existing?.conditions || {}),
+            routingByRisk
+          }
+        },
+        $setOnInsert: { workspaceId, actionType: DECISION_QUEUE_ROUTING_ACTION }
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    const policy = this.mergeDecisionQueueRoutingPolicy(rule);
+    try {
+      await AuditEvent.create({
+        workspaceId,
+        entityType: 'policy_rule',
+        entityId: rule._id,
+        action: 'decision_queue_routing_policy_updated',
+        actor,
+        source: 'api',
+        riskLevel: 'low',
+        beforeState: beforePolicy,
+        afterState: policy
+      });
+    } catch (error) {
+      logger.error('Decision queue routing policy audit write failed:', error);
+    }
+
+    return policy;
+  }
+
   async updateDecisionQueueSnoozePolicy(body = {}, options = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
@@ -380,6 +562,8 @@ module.exports.RISK_LEVELS = RISK_LEVELS;
 module.exports.OWNER_TYPES = OWNER_TYPES;
 module.exports.OWNER_STRICTNESS = OWNER_STRICTNESS;
 module.exports.DECISION_QUEUE_SNOOZE_ACTION = DECISION_QUEUE_SNOOZE_ACTION;
+module.exports.DECISION_QUEUE_ROUTING_ACTION = DECISION_QUEUE_ROUTING_ACTION;
 module.exports.DEFAULT_SNOOZE_HOURS = DEFAULT_SNOOZE_HOURS;
 module.exports.MIN_SNOOZE_HOURS = MIN_SNOOZE_HOURS;
 module.exports.MAX_SNOOZE_HOURS = MAX_SNOOZE_HOURS;
+module.exports.DEFAULT_QUEUE_ROUTING = DEFAULT_QUEUE_ROUTING;

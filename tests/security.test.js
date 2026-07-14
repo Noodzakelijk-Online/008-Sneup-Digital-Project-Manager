@@ -6932,7 +6932,14 @@ describe('work graph drilldowns', () => {
         ownerType: 'robert',
         approvalReason: 'Approval required',
         enabled: true
-      })
+      }),
+      getDecisionQueueRoutingPolicy: jest.fn().mockResolvedValue({
+        routingByRisk: { high: { ownerType: 'robert', escalationHours: 6 } }
+      }),
+      resolveDecisionQueueRouting: jest.fn(() => ({
+        ownerType: 'robert',
+        escalationHours: 6
+      }))
     }));
 
     const operationsLedgerService = require('../src/services/operationsLedgerService');
@@ -7298,6 +7305,113 @@ describe('operations ledger intervention policy', () => {
     expect(() => resolveSnoozedUntil({ snoozedUntil: '2026-07-14T07:59:59.000Z', defaultSnoozeHours: 24, now })).toThrow('in the future');
   });
 
+  test('decision queue routing keeps high-risk work with Robert and bounds internal escalation windows', () => {
+    const { PolicyRuleService } = require('../src/services/policyRuleService');
+    const service = new PolicyRuleService();
+    const configured = service.mergeDecisionQueueRoutingPolicy({
+      _id: 'routing-policy',
+      conditions: {
+        routingByRisk: {
+          low: { ownerType: 'team', escalationHours: 48 },
+          medium: { ownerType: 'va', escalationHours: 36 },
+          high: { ownerType: 'team', escalationHours: 12 },
+          critical: { ownerType: 'va', escalationHours: 1 }
+        }
+      }
+    });
+
+    expect(configured).toMatchObject({
+      actionType: 'decision_queue_routing',
+      policyKind: 'workflow',
+      configured: true,
+      routingByRisk: {
+        low: { ownerType: 'team', escalationHours: 48 },
+        medium: { ownerType: 'va', escalationHours: 36 },
+        high: { ownerType: 'robert', escalationHours: 12 },
+        critical: { ownerType: 'robert', escalationHours: 1 }
+      }
+    });
+    expect(service.resolveDecisionQueueRouting({
+      riskLevel: 'low',
+      requestedOwner: 'team',
+      policy: configured
+    })).toEqual({ riskLevel: 'low', ownerType: 'team', escalationHours: 48 });
+    expect(service.resolveDecisionQueueRouting({
+      riskLevel: 'high',
+      requestedOwner: 'va',
+      policy: configured
+    })).toEqual({ riskLevel: 'high', ownerType: 'robert', escalationHours: 12 });
+  });
+
+  test('overdue internal VA and team decisions escalate atomically to Robert without a provider write', async () => {
+    jest.resetModules();
+    const queuedItem = {
+      _id: 'decision-1',
+      workspaceId: 'workspace-1',
+      recommendationId: 'recommendation-1',
+      ownerType: 'va',
+      riskLevel: 'medium',
+      toObject: () => ({ _id: 'decision-1', ownerType: 'va' })
+    };
+    const escalatedItem = {
+      ...queuedItem,
+      ownerType: 'robert',
+      toObject: () => ({ _id: 'decision-1', ownerType: 'robert', escalatedFromOwnerType: 'va' })
+    };
+    const findChain = { limit: jest.fn().mockResolvedValue([queuedItem]) };
+    const findOneAndUpdate = jest.fn().mockResolvedValue(escalatedItem);
+    const updateRecommendation = jest.fn().mockResolvedValue({ _id: 'recommendation-1' });
+    const createAudit = jest.fn().mockResolvedValue({ _id: 'audit-1' });
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+    jest.doMock('../src/models/DecisionQueueItem', () => ({
+      find: jest.fn(() => findChain),
+      findOneAndUpdate
+    }));
+    jest.doMock('../src/models/Recommendation', () => ({ findOneAndUpdate: updateRecommendation }));
+    jest.doMock('../src/models/AuditEvent', () => ({ create: createAudit }));
+    jest.doMock('../src/models/Approval', () => ({}));
+    jest.doMock('../src/models/TrelloActionAttempt', () => ({}));
+    jest.doMock('../src/models/FollowUpPlan', () => ({}));
+    jest.doMock('../src/models/WorkerResponse', () => ({}));
+    jest.doMock('../src/models/Intervention', () => ({}));
+    jest.doMock('../src/models/CardFinding', () => ({}));
+    jest.doMock('../src/models/BoardHealthSnapshot', () => ({}));
+    jest.doMock('../src/models/Board', () => ({}));
+    jest.doMock('../src/models/Card', () => ({}));
+    jest.doMock('../src/models/Member', () => ({}));
+    jest.doMock('../src/models/WorkItem', () => ({}));
+    jest.doMock('../src/services/trelloClient', () => ({}));
+    jest.doMock('../src/services/workGraphService', () => ({}));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const escalated = await operationsLedgerService.processDueDecisionQueueEscalations({
+      workspaceId: 'workspace-1',
+      now: new Date('2026-07-14T12:00:00.000Z')
+    });
+
+    expect(escalated).toEqual([escalatedItem]);
+    expect(findOneAndUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      _id: 'decision-1',
+      ownerType: { $in: ['va', 'team'] },
+      escalatedAt: { $exists: false }
+    }), expect.objectContaining({
+      $set: expect.objectContaining({
+        ownerType: 'robert',
+        escalatedFromOwnerType: 'va'
+      })
+    }), { new: true });
+    expect(updateRecommendation).toHaveBeenCalledWith({ _id: 'recommendation-1', workspaceId: 'workspace-1' }, { ownerType: 'robert' });
+    expect(createAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'decision_queue_item_escalated',
+      actor: 'sneup',
+      source: 'worker'
+    }));
+  });
+
   test('lists only bounded workspace policy update evidence', async () => {
     jest.resetModules();
     const chain = {
@@ -7317,7 +7431,13 @@ describe('operations ledger intervention policy', () => {
     expect(AuditEvent.find).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       entityType: 'policy_rule',
-      action: { $in: ['trello_action_policy_updated', 'decision_queue_snooze_policy_updated'] }
+      action: {
+        $in: [
+          'trello_action_policy_updated',
+          'decision_queue_snooze_policy_updated',
+          'decision_queue_routing_policy_updated'
+        ]
+      }
     });
     expect(chain.sort).toHaveBeenCalledWith({ createdAt: -1 });
     expect(chain.limit).toHaveBeenCalledWith(100);

@@ -107,6 +107,12 @@ class OperationsLedgerService {
     if (existing) {
       return existing;
     }
+    const queueRoutingPolicy = await policyRuleService.getDecisionQueueRoutingPolicy({ workspaceId });
+    const queueRouting = policyRuleService.resolveDecisionQueueRouting({
+      riskLevel: resolvedPolicy.riskLevel,
+      requestedOwner: resolvedPolicy.ownerType,
+      policy: queueRoutingPolicy
+    });
     const actionPayload = this.buildActionPayload(savedIntervention, card, member);
     const recommendation = await Recommendation.create({
       workspaceId,
@@ -124,14 +130,14 @@ class OperationsLedgerService {
       confidence: this.confidenceForIntervention(savedIntervention),
       requiresApproval: resolvedPolicy.requiresApproval,
       approvalReason: resolvedPolicy.approvalReason,
-      ownerType: resolvedPolicy.ownerType,
+      ownerType: queueRouting.ownerType,
       sourceEvidence: this.buildSourceEvidence(savedIntervention, card, member)
     });
 
     await DecisionQueueItem.create({
       workspaceId,
       recommendationId: recommendation._id,
-      ownerType: resolvedPolicy.ownerType,
+      ownerType: queueRouting.ownerType,
       boardId: savedIntervention.boardId,
       cardId: savedIntervention.cardId,
       title: recommendation.title,
@@ -141,7 +147,7 @@ class OperationsLedgerService {
       riskLevel: recommendation.riskLevel,
       reason: recommendation.approvalReason,
       sourceEvidence: recommendation.sourceEvidence,
-      dueAt: this.defaultDecisionDueAt(recommendation.riskLevel)
+      dueAt: this.defaultDecisionDueAt(recommendation.riskLevel, queueRouting.escalationHours)
     });
 
     savedIntervention.status = 'awaiting_approval';
@@ -191,6 +197,13 @@ class OperationsLedgerService {
       return existing;
     }
 
+    const queueRoutingPolicy = await policyRuleService.getDecisionQueueRoutingPolicy({ workspaceId });
+    const queueRouting = policyRuleService.resolveDecisionQueueRouting({
+      riskLevel: policy.riskLevel,
+      requestedOwner: actionSpec.ownerType || savedFinding.waitingOn || policy.ownerType,
+      policy: queueRoutingPolicy
+    });
+
     const actionPayload = {
       findingId: savedFinding._id,
       boardId: savedFinding.boardId,
@@ -228,7 +241,7 @@ class OperationsLedgerService {
       confidence: actionSpec.confidence || this.confidenceForFinding(savedFinding),
       requiresApproval: policy.requiresApproval,
       approvalReason: policy.approvalReason,
-      ownerType: actionSpec.ownerType || savedFinding.waitingOn || policy.ownerType,
+      ownerType: queueRouting.ownerType,
       sourceEvidence: [
         {
           type: 'analytics',
@@ -247,7 +260,7 @@ class OperationsLedgerService {
     await DecisionQueueItem.create({
       workspaceId,
       recommendationId: recommendation._id,
-      ownerType: recommendation.ownerType,
+      ownerType: queueRouting.ownerType,
       boardId: recommendation.boardId,
       cardId: recommendation.cardId,
       title: recommendation.title,
@@ -257,7 +270,7 @@ class OperationsLedgerService {
       riskLevel: recommendation.riskLevel,
       reason: recommendation.approvalReason,
       sourceEvidence: recommendation.sourceEvidence,
-      dueAt: this.defaultDecisionDueAt(recommendation.riskLevel)
+      dueAt: this.defaultDecisionDueAt(recommendation.riskLevel, queueRouting.escalationHours)
     });
 
     await this.recordAudit({
@@ -313,6 +326,13 @@ class OperationsLedgerService {
       };
     }
 
+    const queueRoutingPolicy = await policyRuleService.getDecisionQueueRoutingPolicy({ workspaceId });
+    const queueRouting = policyRuleService.resolveDecisionQueueRouting({
+      riskLevel,
+      requestedOwner: ownerType,
+      policy: queueRoutingPolicy
+    });
+
     const recommendation = await Recommendation.create({
       workspaceId,
       boardId,
@@ -328,14 +348,14 @@ class OperationsLedgerService {
       confidence: actionSpec.confidence,
       requiresApproval,
       approvalReason: actionSpec.approvalReason || policy.approvalReason,
-      ownerType,
+      ownerType: queueRouting.ownerType,
       sourceEvidence: this.buildAutopilotSourceEvidence(normalized, card, member)
     });
 
     const decisionQueueItem = await DecisionQueueItem.create({
       workspaceId,
       recommendationId: recommendation._id,
-      ownerType,
+      ownerType: queueRouting.ownerType,
       boardId,
       cardId,
       title: recommendation.title,
@@ -345,7 +365,7 @@ class OperationsLedgerService {
       riskLevel,
       reason: recommendation.approvalReason,
       sourceEvidence: recommendation.sourceEvidence,
-      dueAt: this.defaultDecisionDueAt(riskLevel)
+      dueAt: this.defaultDecisionDueAt(riskLevel, queueRouting.escalationHours)
     });
 
     await this.recordAudit({
@@ -418,6 +438,12 @@ class OperationsLedgerService {
       workspaceId,
       severity: candidate.riskLevel
     });
+    const queueRoutingPolicy = await policyRuleService.getDecisionQueueRoutingPolicy({ workspaceId });
+    const queueRouting = policyRuleService.resolveDecisionQueueRouting({
+      riskLevel: candidate.riskLevel || policy.riskLevel,
+      requestedOwner: candidate.ownerType || policy.ownerType,
+      policy: queueRoutingPolicy
+    });
     const recommendation = await Recommendation.create({
       workspaceId,
       findingType: candidate.findingType,
@@ -430,14 +456,14 @@ class OperationsLedgerService {
       confidence: candidate.confidence,
       requiresApproval: candidate.requiresApproval,
       approvalReason: candidate.approvalReason || policy.approvalReason,
-      ownerType: candidate.ownerType || policy.ownerType,
+      ownerType: queueRouting.ownerType,
       sourceEvidence: candidate.sourceEvidence
     });
 
     const decisionQueueItem = await DecisionQueueItem.create({
       workspaceId,
       recommendationId: recommendation._id,
-      ownerType: recommendation.ownerType,
+      ownerType: queueRouting.ownerType,
       title: recommendation.title,
       question: this.buildDecisionQuestion(recommendation),
       recommendedAnswer: 'yes',
@@ -445,7 +471,7 @@ class OperationsLedgerService {
       riskLevel: recommendation.riskLevel,
       reason: recommendation.approvalReason,
       sourceEvidence: recommendation.sourceEvidence,
-      dueAt: this.defaultDecisionDueAt(recommendation.riskLevel)
+      dueAt: this.defaultDecisionDueAt(recommendation.riskLevel, queueRouting.escalationHours)
     });
 
     await this.recordAudit({
@@ -1198,6 +1224,62 @@ class OperationsLedgerService {
 
     return item;
   }
+
+  async processDueDecisionQueueEscalations(options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const now = options.now instanceof Date ? options.now : new Date();
+    const dueItems = await DecisionQueueItem.find({
+      workspaceId,
+      status: 'open',
+      ownerType: { $in: ['va', 'team'] },
+      dueAt: { $lte: now },
+      escalatedAt: { $exists: false }
+    }).limit(Math.min(Math.max(Number.parseInt(options.limit, 10) || 100, 1), 250));
+    const escalatedItems = [];
+
+    for (const queuedItem of dueItems) {
+      const beforeState = queuedItem.toObject();
+      const item = await DecisionQueueItem.findOneAndUpdate({
+        _id: queuedItem._id,
+        workspaceId,
+        status: 'open',
+        ownerType: { $in: ['va', 'team'] },
+        escalatedAt: { $exists: false }
+      }, {
+        $set: {
+          ownerType: 'robert',
+          escalatedAt: now,
+          escalatedBy: 'sneup',
+          escalatedFromOwnerType: queuedItem.ownerType,
+          escalationReason: 'Configured decision queue review deadline passed',
+          resolutionNote: 'Escalated to Robert after configured queue review deadline'
+        }
+      }, { new: true });
+      if (!item) continue;
+
+      if (item.recommendationId) {
+        await Recommendation.findOneAndUpdate(this.workspaceQuery({ workspaceId }, { _id: item.recommendationId }), {
+          ownerType: 'robert'
+        });
+      }
+      await this.recordAudit({
+        entityType: 'decision_queue_item',
+        entityId: item._id,
+        action: 'decision_queue_item_escalated',
+        actor: 'sneup',
+        source: 'worker',
+        riskLevel: item.riskLevel,
+        recommendationId: item.recommendationId,
+        beforeState,
+        afterState: item.toObject()
+      });
+      escalatedItems.push(item);
+    }
+
+    return escalatedItems;
+  }
+
   async listTrelloActions(filters = {}) {
     this.requireDatabase();
     const query = this.workspaceQuery(filters);
@@ -2150,8 +2232,12 @@ class OperationsLedgerService {
     return `${recommendation.recommendedAction} Approve: Yes/No.`;
   }
 
-  defaultDecisionDueAt(riskLevel) {
-    const hours = riskLevel === 'critical' ? 2 : riskLevel === 'high' ? 6 : 24;
+  defaultDecisionDueAt(riskLevel, escalationHours) {
+    const baselineHours = riskLevel === 'critical' ? 2 : riskLevel === 'high' ? 6 : 24;
+    const requestedHours = Number(escalationHours);
+    const hours = Number.isInteger(requestedHours) && requestedHours >= 1 && requestedHours <= 168
+      ? requestedHours
+      : baselineHours;
     return new Date(Date.now() + hours * HOURS);
   }
 

@@ -2372,6 +2372,7 @@ function renderWorkspaceInvitation(invitation) {
 function renderPolicyRule(policy) {
   const canManage = state.securityContext?.permissions?.includes('policy-rules:manage');
   const isWorkflowPolicy = policy.policyKind === 'workflow';
+  const isRoutingPolicy = policy.workflowType === 'decision_queue_routing';
   const stateLabel = policy.enabled ? 'active' : 'paused';
   const stateClass = policy.enabled ? 'healthy' : 'critical';
   const riskClass = policy.riskLevel === 'critical' ? 'critical' : policy.riskLevel === 'high' ? 'high' : 'review';
@@ -2380,6 +2381,14 @@ function renderPolicyRule(policy) {
     : !policy.enabled && policy.pauseExpiresAt
       ? `<span>review by ${escapeHtml(formatDate(policy.pauseExpiresAt))}</span>`
       : '';
+  const routing = policy.routingByRisk || {};
+  const routingSummary = ['low', 'medium', 'high', 'critical']
+    .map((risk) => {
+      const entry = routing[risk];
+      return entry ? `${risk}: ${entry.ownerType} / ${entry.escalationHours}h` : null;
+    })
+    .filter(Boolean)
+    .join(' | ');
   return `
     <div class="item">
       <div class="item-title">
@@ -2387,7 +2396,9 @@ function renderPolicyRule(policy) {
         <span class="pill ${stateClass}">${escapeHtml(stateLabel)}</span>
       </div>
       <div class="meta">
-        ${isWorkflowPolicy
+        ${isRoutingPolicy
+          ? `<span>${escapeHtml(routingSummary || 'internal queue routing')}</span><span>overdue VA/team work goes to Robert</span>`
+          : isWorkflowPolicy
           ? `<span>${escapeHtml(String(policy.defaultSnoozeHours || 24))}-hour default</span><span>internal queue only</span>`
           : `<span class="pill ${riskClass}">${escapeHtml(policy.riskLevel)} risk</span><span>${escapeHtml(policy.ownerType)} decides</span><span>approval required</span>`}
         <span>${policy.configured ? 'workspace rule set' : 'baseline rule'}</span>
@@ -2439,6 +2450,71 @@ function bindPolicyRuleActions() {
 function openPolicyRuleEditor(actionType) {
   const policy = (state.policyRules || []).find(item => item.actionType === actionType);
   if (!policy) return;
+
+  if (policy.workflowType === 'decision_queue_routing') {
+    const routing = policy.routingByRisk || {};
+    const risks = ['low', 'medium', 'high', 'critical'];
+    const riskLabels = { low: 'Low-risk queue', medium: 'Medium-risk queue', high: 'High-risk queue', critical: 'Critical queue' };
+    const rows = risks.map((risk) => {
+      const entry = routing[risk] || {};
+      const ownerControl = ['high', 'critical'].includes(risk)
+        ? '<span class="workflow-fixed-owner">Robert only</span>'
+        : `<select name="${risk}OwnerType">
+            ${['va', 'team', 'robert'].map(owner => `<option value="${owner}" ${owner === entry.ownerType ? 'selected' : ''}>${owner}</option>`).join('')}
+          </select>`;
+      return `
+        <fieldset class="workflow-routing-row">
+          <legend>${escapeHtml(riskLabels[risk])}</legend>
+          <label>Decision owner${ownerControl}</label>
+          <label>Escalate to Robert after (hours)
+            <input name="${risk}EscalationHours" type="number" min="1" max="168" step="1" value="${escapeHtml(String(entry.escalationHours || 24))}" required>
+          </label>
+        </fieldset>
+      `;
+    }).join('');
+    els.modalTitle.textContent = policy.label;
+    els.modalBody.innerHTML = `
+      <form id="policyRuleForm" class="notice-stack">
+        <div class="notice">This policy only routes internal decision queue items. When a VA or team item reaches its review deadline, Sneup records the escalation and moves it to Robert. It never prepares or performs a provider write.</div>
+        <div class="workflow-routing-grid">${rows}</div>
+        <label>Reason<textarea name="reason" rows="3" maxlength="500" placeholder="Why this workspace needs these queue defaults">${escapeHtml(policy.reason || '')}</textarea></label>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelPolicyRule">Cancel</button>
+          <button class="button primary" type="submit">Save queue defaults</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelPolicyRule').addEventListener('click', closeModal);
+    document.getElementById('policyRuleForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const submitButton = form.querySelector('button[type="submit"]');
+      const values = new FormData(form);
+      submitButton.disabled = true;
+      submitButton.textContent = 'Saving...';
+      try {
+        await fetchApi(`/api/policy-rules/${encodeURIComponent(actionType)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            routingByRisk: Object.fromEntries(risks.map((risk) => [risk, {
+              ownerType: ['high', 'critical'].includes(risk) ? 'robert' : values.get(`${risk}OwnerType`),
+              escalationHours: Number(values.get(`${risk}EscalationHours`))
+            }])),
+            reason: values.get('reason')
+          })
+        });
+        closeModal();
+        await loadWorkspaceAdmin();
+      } catch (error) {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Save queue defaults';
+        openNotice('Queue defaults blocked', error.message);
+      }
+    });
+    return;
+  }
 
   if (policy.policyKind === 'workflow') {
     els.modalTitle.textContent = policy.label;

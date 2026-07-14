@@ -9,6 +9,11 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 - P2: 6 findings that harden scale, quality, and workflow reach.
 - P3: 1 reporting enhancement with fast user-visible value.
 
+## Latest updates
+
+- ENH-002: Low- and medium-risk decision queue routing is now workspace-configurable, high/critical work remains Robert-owned, and an overdue VA/team item is atomically escalated to Robert with audit evidence. All routing remains internal and cannot create a provider write.
+- ENH-019: Decision queue review windows are bounded from 1 to 168 hours per risk queue, replacing the prior fixed timing default for new queue items.
+
 ## Findings
 
 | ID | Priority | Area | Finding | Next step |
@@ -21,7 +26,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 | ENH-006 | P1 | Desktop | Installer first-run setup is delivered; release polish remains. | Configure icon, publisher signing, and update feed. |
 | ENH-007 | P1 | Operations | Background jobs now have observability and controls. | Done: JobRun/JobControl records, stale/failed/paused dashboard health, and allowlisted pause/resume/manual trigger endpoints. |
 | ENH-018 | P1 | Autonomy | Scheduled intervention scans now reuse an equivalent active or recently executed intervention for 24 hours, preventing duplicate approval items and repeat provider-write candidates for the same board/card/member signal. | Add configurable per-signal cooldowns with bounded policy overrides. |
-| ENH-019 | P1 | Operations | Overdue scheduled follow-up plans now transition atomically from scheduled to due with workspace-scoped audit evidence. Legacy follow-up and escalation scans are workspace-scoped and only record a queued state after their approval-gated candidate path succeeds. | Add bounded, workspace-scoped escalation timing policies. |
+| ENH-019 | P1 | Operations | Overdue scheduled follow-up plans now transition atomically from scheduled to due with workspace-scoped audit evidence. Legacy follow-up and escalation scans are workspace-scoped and only record a queued state after their approval-gated candidate path succeeds. Decision-queue routing now has bounded workspace defaults and atomically escalates overdue VA/team decisions to Robert without contacting a provider. | Add bounded, workspace-scoped follow-up timing policies. |
 | ENH-020 | P2 | Resource | The command center loads only the active view after the initial security context and now records bounded in-memory response samples for known live view APIs. Audited operators can inspect p50/p95/maximum timings without retaining request bodies, identifiers, query strings, or credentials. | Add bounded threshold alerts only after collecting representative live workspace baselines. |
 | ENH-008 | P2 | Dashboard | Inline dashboard assets keep CSP weaker than needed. | Split HTML, CSS, and JS, then remove inline script allowance. |
 | ENH-009 | P2 | AI quality | `npm run evaluate:recommendations` now evaluates overdue blockers, overload, stakeholder commitments, VA-ready work, and ambiguous requests for evidence, Yes/No framing, policy-aligned risk/ownership, exact provider-write payloads, and forbidden autonomous execution. The Enhancements view displays the current score. | Add human-reviewed, de-identified production recommendation examples to the scenario corpus. |

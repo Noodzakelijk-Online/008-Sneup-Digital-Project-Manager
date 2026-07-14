@@ -108,11 +108,13 @@ class InterventionWorker {
   async processEscalations() {
     try {
       logger.info('Processing escalations...');
+      const workspaceId = getDefaultWorkspaceObjectId();
+      const escalatedDecisionItems = await operationsLedgerService.processDueDecisionQueueEscalations({ workspaceId });
       const queuedInterventions = await interventionEngine.processEscalations({
-        workspaceId: getDefaultWorkspaceObjectId()
+        workspaceId
       });
       return {
-        processedCount: queuedInterventions.length,
+        processedCount: escalatedDecisionItems.length + queuedInterventions.length,
         successCount: 1,
         failureCount: 0
       };
