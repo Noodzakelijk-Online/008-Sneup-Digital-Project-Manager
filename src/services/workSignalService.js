@@ -203,7 +203,8 @@ class WorkSignalService {
     await account.save();
 
     await workGraphService.upsertFromSignal(signal, {
-      actorId: options.actorId || 'sync-worker'
+      actorId: options.actorId || 'sync-worker',
+      deferDependencyFreshness: options.deferDependencyFreshness === true
     });
 
     return this.sanitizeSignal(signal);

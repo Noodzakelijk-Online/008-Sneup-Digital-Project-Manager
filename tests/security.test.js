@@ -9031,6 +9031,75 @@ describe('job observability', () => {
     expect(sleep.mock.calls.at(-1)[0]).toBe(500);
   });
 
+  test('batches connector dependency freshness per provider instead of per synced record', async () => {
+    jest.resetModules();
+    const markStaleDependencies = jest.fn().mockResolvedValue({ modifiedCount: 3 });
+    const upsertProviderRecord = jest.fn().mockResolvedValue({ id: 'signal-1' });
+    const account = {
+      _id: 'account-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'github',
+      metadata: {},
+      save: jest.fn().mockResolvedValue(null)
+    };
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/models/ConnectorAccount', () => ({}));
+    jest.doMock('../src/services/jobObservabilityService', () => ({ trackJob: jest.fn() }));
+    jest.doMock('../src/services/providerSyncPolicyService', () => ({
+      run: jest.fn(async (provider, callback) => ({
+        result: await callback(),
+        retryCount: 0,
+        rateLimitWaitMs: 0,
+        attemptCount: 1
+      }))
+    }));
+    jest.doMock('../src/services/workGraphService', () => ({ markStaleDependencies }));
+    jest.doMock('../src/services/workSignalAdapterService', () => ({
+      getFirstWaveConnectorIds: jest.fn(() => ['github']),
+      fetchDelta: jest.fn().mockResolvedValue({
+        records: [{ id: 'issue-1' }, { id: 'issue-2' }, { id: 'issue-3' }],
+        nextCursor: 'cursor-1',
+        hasMore: false,
+        metadata: { source: 'github_api' }
+      })
+    }));
+    jest.doMock('../src/services/workSignalService', () => ({ upsertProviderRecord }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-1'),
+      normalizeWorkspaceObjectId: jest.fn(value => value || 'workspace-1')
+    }));
+
+    try {
+      const connectorSyncService = require('../src/services/connectorSyncService');
+      const deferred = await connectorSyncService.syncAccount(account, { deferDependencyFreshness: true });
+      expect(upsertProviderRecord).toHaveBeenCalledTimes(3);
+      expect(upsertProviderRecord.mock.calls.every(([, , options]) => options.deferDependencyFreshness === true)).toBe(true);
+      expect(markStaleDependencies).not.toHaveBeenCalled();
+      expect(deferred.dependencyFreshness).toBeNull();
+
+      const freshness = await connectorSyncService.finalizeDependencyFreshness('workspace-1', ['github', 'github']);
+      expect(markStaleDependencies).toHaveBeenCalledTimes(1);
+      expect(markStaleDependencies).toHaveBeenCalledWith('workspace-1', { sourceProvider: 'github' });
+      expect(freshness).toEqual({
+        providerCount: 1,
+        markedStale: 3,
+        failureCount: 0,
+        byProvider: { github: { markedStale: 3 } }
+      });
+    } finally {
+      jest.dontMock('mongoose');
+      jest.dontMock('../src/models/ConnectorAccount');
+      jest.dontMock('../src/services/jobObservabilityService');
+      jest.dontMock('../src/services/providerSyncPolicyService');
+      jest.dontMock('../src/services/workGraphService');
+      jest.dontMock('../src/services/workSignalAdapterService');
+      jest.dontMock('../src/services/workSignalService');
+      jest.dontMock('../src/services/workspaceScopeService');
+      jest.resetModules();
+    }
+  });
+
   test('builds job health with stale and failed classifications', () => {
     const jobObservabilityService = require('../src/services/jobObservabilityService');
     const now = new Date('2026-06-29T08:00:00Z');

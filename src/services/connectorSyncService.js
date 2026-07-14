@@ -3,6 +3,7 @@ const schedule = require('node-schedule');
 const ConnectorAccount = require('../models/ConnectorAccount');
 const jobObservabilityService = require('./jobObservabilityService');
 const providerSyncPolicyService = require('./providerSyncPolicyService');
+const workGraphService = require('./workGraphService');
 const workSignalAdapterService = require('./workSignalAdapterService');
 const workSignalService = require('./workSignalService');
 const logger = require('../utils/logger');
@@ -57,14 +58,19 @@ class ConnectorSyncService {
     let retryCount = 0;
     let rateLimitWaitMs = 0;
     const providerStats = {};
+    const successfulProviders = new Set();
 
     for (const account of accounts) {
       try {
-        const result = await this.syncAccount(account, options);
+        const result = await this.syncAccount(account, {
+          ...options,
+          deferDependencyFreshness: true
+        });
         successCount += 1;
         signalCount += result.signalCount;
         retryCount += result.retryCount || 0;
         rateLimitWaitMs += result.rateLimitWaitMs || 0;
+        successfulProviders.add(result.connectorId);
         this.recordProviderStats(providerStats, result.connectorId, result);
       } catch (error) {
         failureCount += 1;
@@ -83,6 +89,8 @@ class ConnectorSyncService {
       }
     }
 
+    const dependencyFreshness = await this.finalizeDependencyFreshness(workspaceId, successfulProviders);
+
     return {
       processedCount: accounts.length,
       successCount,
@@ -92,7 +100,8 @@ class ConnectorSyncService {
         adapterCount: connectorIds.length,
         retryCount,
         rateLimitWaitMs,
-        providerStats
+        providerStats,
+        dependencyFreshness
       }
     };
   }
@@ -124,10 +133,15 @@ class ConnectorSyncService {
     for (const record of delta.records || []) {
       await workSignalService.upsertProviderRecord(account._id, record, {
         workspaceId: account.workspaceId,
-        actorId: options.actor || 'connector-sync'
+        actorId: options.actor || 'connector-sync',
+        deferDependencyFreshness: options.deferDependencyFreshness === true
       });
       signalCount += 1;
     }
+
+    const dependencyFreshness = options.deferDependencyFreshness === true
+      ? null
+      : await this.finalizeDependencyFreshness(account.workspaceId, [account.connectorId]);
 
     account.status = 'connected';
     account.lastSyncAt = new Date();
@@ -157,6 +171,7 @@ class ConnectorSyncService {
         items: delta.metadata?.items || 0,
         pages: delta.metadata?.pages || 0,
         dataSources: delta.metadata?.dataSources || 0,
+        dependencyFreshness,
         finishedAt: new Date()
       }
     };
@@ -169,7 +184,35 @@ class ConnectorSyncService {
       nextCursor: delta.nextCursor || cursor,
       retryCount: syncResult.retryCount,
       rateLimitWaitMs: syncResult.rateLimitWaitMs,
-      attemptCount: syncResult.attemptCount
+      attemptCount: syncResult.attemptCount,
+      dependencyFreshness
+    };
+  }
+
+  async finalizeDependencyFreshness(workspaceId, providers = []) {
+    const sourceProviders = [...new Set([...providers].map(provider => String(provider || '').trim()).filter(Boolean))].sort();
+    const byProvider = {};
+    let markedStale = 0;
+    let failureCount = 0;
+
+    for (const sourceProvider of sourceProviders) {
+      try {
+        const result = await workGraphService.markStaleDependencies(workspaceId, { sourceProvider });
+        const count = Number(result?.modifiedCount ?? result?.nModified ?? 0);
+        byProvider[sourceProvider] = { markedStale: count };
+        markedStale += count;
+      } catch (error) {
+        failureCount += 1;
+        byProvider[sourceProvider] = { markedStale: 0, error: this.safeErrorMessage(error) };
+        logger.error(`Failed to finalize dependency freshness for ${sourceProvider}: ${this.safeErrorMessage(error)}`);
+      }
+    }
+
+    return {
+      providerCount: sourceProviders.length,
+      markedStale,
+      failureCount,
+      byProvider
     };
   }
 

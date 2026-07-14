@@ -1172,6 +1172,10 @@ function renderJobHealthItem(job) {
   const pauseResumeLabel = job.paused ? 'Resume' : 'Pause';
   const connectorRetries = Number(job.metadata?.retryCount) || 0;
   const connectorPacingMs = Number(job.metadata?.rateLimitWaitMs) || 0;
+  const dependencyFreshness = job.metadata?.dependencyFreshness;
+  const freshnessProviders = Number(dependencyFreshness?.providerCount) || 0;
+  const staleDependencies = Number(dependencyFreshness?.markedStale) || 0;
+  const freshnessFailures = Number(dependencyFreshness?.failureCount) || 0;
   return `
     <div class="item">
       <div class="item-title">
@@ -1185,6 +1189,7 @@ function renderJobHealthItem(job) {
         <span>${job.processedCount || 0} processed</span>
       </div>
       ${connectorRetries || connectorPacingMs ? `<div class="meta"><span>${connectorRetries} provider retries</span><span>${Math.round(connectorPacingMs / 1000)}s provider pacing</span></div>` : ''}
+      ${freshnessProviders || staleDependencies || freshnessFailures ? `<div class="meta"><span>Graph freshness: ${freshnessProviders} providers checked</span><span>${staleDependencies} stale edges marked</span>${freshnessFailures ? `<span>${freshnessFailures} freshness checks failed</span>` : ''}</div>` : ''}
       ${job.pausedReason ? `<div class="meta">${escapeHtml(job.pausedReason)}</div>` : ''}
       ${job.lastError ? `<div class="meta">${escapeHtml(job.lastError)}</div>` : ''}
       <div class="item-actions">

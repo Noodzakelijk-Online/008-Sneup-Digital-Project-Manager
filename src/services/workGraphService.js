@@ -135,7 +135,12 @@ class WorkGraphService {
     await this.upsertEvent(projection, item);
     await this.upsertDependencies(projection, item, now);
     await this.resolvePendingDependenciesForItem(projection, item, now);
-    await this.markStaleDependencies(projection.workspaceId, { now });
+    if (options.deferDependencyFreshness !== true) {
+      await this.markStaleDependencies(projection.workspaceId, {
+        now,
+        sourceProvider: projection.sourceProvider
+      });
+    }
 
     return this.sanitizeItem(item);
   }
@@ -376,8 +381,9 @@ class WorkGraphService {
     const now = options.now || new Date();
     const cutoff = new Date(now.getTime() - this.dependencyStaleAfterMs(options));
     const staleReason = 'Provider dependency link has not been observed during recent syncs.';
-
-    return WorkDependency.updateMany({
+    const requestedProviders = options.sourceProviders || options.sourceProvider;
+    const sourceProviders = [...new Set(asArray(requestedProviders).map(provider => String(provider).trim()).filter(Boolean))];
+    const query = {
       workspaceId,
       freshnessStatus: { $ne: 'stale' },
       $or: [
@@ -385,7 +391,11 @@ class WorkGraphService {
         { lastSeenAt: { $exists: false }, updatedAt: { $lt: cutoff } },
         { 'metadata.lastSeenAt': { $lt: cutoff } }
       ]
-    }, {
+    };
+    if (sourceProviders.length === 1) query.sourceProvider = sourceProviders[0];
+    if (sourceProviders.length > 1) query.sourceProvider = { $in: sourceProviders };
+
+    return WorkDependency.updateMany(query, {
       $set: {
         freshnessStatus: 'stale',
         reviewStatus: 'unreviewed',
