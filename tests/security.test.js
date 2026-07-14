@@ -110,6 +110,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/discordWorkSignalClient');
     jest.dontMock('../src/services/mattermostWorkSignalClient');
     jest.dontMock('../src/services/workfrontWorkSignalClient');
+    jest.dontMock('../src/services/serviceNowWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -1203,6 +1204,8 @@ describe('connector registry', () => {
     expect(byId.mattermost.sync).toEqual(['teams']);
     expect(byId.workfront.auth.fields.map(field => field.name)).toEqual(['baseUrl', 'token']);
     expect(byId.workfront.sync).toEqual(['projects']);
+    expect(byId.servicenow.auth.fields.map(field => field.name)).toEqual(['baseUrl', 'token']);
+    expect(byId.servicenow.sync).toEqual(['active_incidents']);
     expect(byId.rally.auth.fields.map(field => field.name)).toEqual(['apiKey']);
     expect(byId.rally.sync).toEqual(['user_stories', 'defects']);
   });
@@ -2432,6 +2435,11 @@ describe('work signal normalization', () => {
   test('Workfront adapter delegates bounded project metadata reads to the credential-backed client', async () => {
     jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'project:abc123' }] }); jest.doMock('../src/services/workfrontWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'workfront' };
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('workfront').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('ServiceNow adapter delegates bounded active incident metadata reads to the credential-backed client', async () => {
+    jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'incident:abcdefabcdefabcdefabcdefabcdefab' }] }); jest.doMock('../src/services/serviceNowWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'servicenow' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('servicenow').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -5244,6 +5252,39 @@ describe('work signal normalization', () => {
     const malformed = new WorkfrontWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [{ ID: 'https://127.0.0.1/steal', name: 'Private' }] } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.my.workfront.com' } } })).rejects.toMatchObject({ statusCode: 502 });
     const previous = { max: process.env.SNEUP_WORKFRONT_MAX_PROJECTS, page: process.env.SNEUP_WORKFRONT_PAGE_SIZE }; process.env.SNEUP_WORKFRONT_MAX_PROJECTS = '1'; process.env.SNEUP_WORKFRONT_PAGE_SIZE = '1'; const capped = new WorkfrontWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [{ ID: 'abc123', name: 'First' }] } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.my.workfront.com' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous.max === undefined) delete process.env.SNEUP_WORKFRONT_MAX_PROJECTS; else process.env.SNEUP_WORKFRONT_MAX_PROJECTS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_WORKFRONT_PAGE_SIZE; else process.env.SNEUP_WORKFRONT_PAGE_SIZE = previous.page; }
+  });
+
+  test('ServiceNow sync pages bounded active incident metadata without people, notes, attachments, CMDB data, links, or provider writes', async () => {
+    jest.dontMock('../src/services/serviceNowWorkSignalClient');
+    jest.resetModules();
+    const { ServiceNowWorkSignalClient } = require('../src/services/serviceNowWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { result: [{ sys_id: 'abcdefabcdefabcdefabcdefabcdefab', number: 'INC0012345', short_description: `Deploy risk ${privateEmail}`, state: '2', priority: '1', opened_at: '2026-07-10T00:00:00Z', due_date: '2026-07-20T00:00:00Z', sys_updated_on: '2026-07-13T00:00:00Z', description: 'Private body', caller_id: { value: 'private-user' }, assigned_to: { value: 'private-owner' }, work_notes: 'private notes', comments: 'private comments', attachment: ['private-file'], cmdb_ci: { value: 'private-ci' }, link: 'https://private.example.test' }] } })
+      .mockResolvedValueOnce({ data: { result: [] } }) };
+    const client = new ServiceNowWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'servicenow-access-token' })) } });
+    const previous = { max: process.env.SNEUP_SERVICENOW_MAX_INCIDENTS, page: process.env.SNEUP_SERVICENOW_PAGE_SIZE }; process.env.SNEUP_SERVICENOW_MAX_INCIDENTS = '2'; process.env.SNEUP_SERVICENOW_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'servicenow', metadata: { fields: { baseUrl: 'https://tenant.service-now.com' } } }, '2026-07-12T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://tenant.service-now.com/api/now/table/incident', expect.objectContaining({ params: { sysparm_query: 'active=true^ORDERBYsys_updated_on', sysparm_fields: 'sys_id,number,short_description,state,priority,opened_at,due_date,sys_updated_on', sysparm_limit: 1, sysparm_offset: 0, sysparm_display_value: 'false', sysparm_exclude_reference_link: 'true' }, headers: expect.objectContaining({ Authorization: 'Bearer servicenow-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://tenant.service-now.com/api/now/table/incident', expect.objectContaining({ params: expect.objectContaining({ sysparm_offset: 1, sysparm_limit: 1 }) }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'servicenow_active_incident_metadata', incidents: 1, pages: 2 }, nextCursor: '2026-07-13T00:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private body|private-user|private-owner|private notes|private comments|private-file|private-ci|private\.example/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_SERVICENOW_MAX_INCIDENTS; else process.env.SNEUP_SERVICENOW_MAX_INCIDENTS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_SERVICENOW_PAGE_SIZE; else process.env.SNEUP_SERVICENOW_PAGE_SIZE = previous.page; }
+  });
+
+  test('ServiceNow sync rejects invalid cursors, unsafe instance URLs, malformed incident identifiers, and collection caps', async () => {
+    jest.dontMock('../src/services/serviceNowWorkSignalClient');
+    jest.resetModules();
+    const { ServiceNowWorkSignalClient } = require('../src/services/serviceNowWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ token: 'token' })) };
+    const invalid = new ServiceNowWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.service-now.com' } } }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    await expect(invalid.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.service-now.com.evil.test' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new ServiceNowWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { result: [{ sys_id: 'https://127.0.0.1/steal', number: 'INC0012345', short_description: 'Private', state: '2', priority: '1' }] } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.service-now.com' } } })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = { max: process.env.SNEUP_SERVICENOW_MAX_INCIDENTS, page: process.env.SNEUP_SERVICENOW_PAGE_SIZE }; process.env.SNEUP_SERVICENOW_MAX_INCIDENTS = '1'; process.env.SNEUP_SERVICENOW_PAGE_SIZE = '1'; const capped = new ServiceNowWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { result: [{ sys_id: 'abcdefabcdefabcdefabcdefabcdefab', number: 'INC0012345', short_description: 'First', state: '2', priority: '1' }] } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.service-now.com' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous.max === undefined) delete process.env.SNEUP_SERVICENOW_MAX_INCIDENTS; else process.env.SNEUP_SERVICENOW_MAX_INCIDENTS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_SERVICENOW_PAGE_SIZE; else process.env.SNEUP_SERVICENOW_PAGE_SIZE = previous.page; }
   });
 
   test('Discord sync reads one bounded server metadata collection without channels, people, permissions, invites, icons, messages, or provider writes', async () => {

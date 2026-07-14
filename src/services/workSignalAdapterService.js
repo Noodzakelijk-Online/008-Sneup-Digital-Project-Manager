@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront',
+  'azure_devops', 'workfront', 'servicenow',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost'
@@ -79,6 +79,7 @@ const webexWorkSignalClient = require('./webexWorkSignalClient');
 const discordWorkSignalClient = require('./discordWorkSignalClient');
 const mattermostWorkSignalClient = require('./mattermostWorkSignalClient');
 const workfrontWorkSignalClient = require('./workfrontWorkSignalClient');
+const serviceNowWorkSignalClient = require('./serviceNowWorkSignalClient');
 const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
@@ -1081,6 +1082,27 @@ workfrontAdapter.capabilities.credentialBackedSync = true;
 workfrontAdapter.list = async account => (await workfrontWorkSignalClient.fetchDelta(account, null)).records;
 workfrontAdapter.fetchDelta = (account, cursor) => workfrontWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('workfront', workfrontAdapter);
+
+const serviceNowAdapter = buildAdapter('servicenow', 'ServiceNow active incident metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'incident'),
+  title: titleFromText(item.name, 'ServiceNow incident'),
+  description: '',
+  status: item.status || 'open',
+  priority: item.priority || 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['servicenow', item.sourceType]),
+  dueAt: item.dueAt,
+  providerCreatedAt: item.openedAt,
+  providerUpdatedAt: item.updatedAt,
+  evidenceRefs: baseEvidence(account, item, 'ServiceNow active incident metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, incidentId: item.incidentId, number: item.number, status: item.status, priority: item.priority, openedAt: item.openedAt, dueAt: item.dueAt, updatedAt: item.updatedAt }
+}));
+serviceNowAdapter.capabilities.credentialBackedSync = true;
+serviceNowAdapter.list = async account => (await serviceNowWorkSignalClient.fetchDelta(account, null)).records;
+serviceNowAdapter.fetchDelta = (account, cursor) => serviceNowWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('servicenow', serviceNowAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
