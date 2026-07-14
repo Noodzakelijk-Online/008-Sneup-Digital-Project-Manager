@@ -349,6 +349,22 @@ const enhancements = [
       'API token, session token, invitation token, connector encryption, and OAuth state each use an independent configured secret.',
       'Demo mode remains usable without production secrets.'
     ]
+  },
+  {
+    id: 'ENH-022',
+    priority: 'P0',
+    area: 'security',
+    title: 'Sanitize runtime logs before they leave the application boundary',
+    evidence: 'The shared Winston boundary now redacts secrets, authorization headers, cookies, credential-bearing query parameters, request payloads, retained work content, and raw Error request configuration. Worker chat processing records only opaque IDs and channel metadata, never a message excerpt or username.',
+    impact: 'Prevents debug and failure telemetry from becoming a second copy of provider credentials or private worker/project content.',
+    effort: 'S',
+    status: 'done',
+    nextStep: 'Review production log retention and transport access controls before introducing external log aggregation.',
+    acceptanceCriteria: [
+      'Provider credentials and request configuration are redacted before Winston serializes them.',
+      'Chat message content is not written to application logs.',
+      'Diagnostic error name, status, and code remain available without raw request content.'
+    ]
   }
 ];
 

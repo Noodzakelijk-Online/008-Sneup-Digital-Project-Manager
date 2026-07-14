@@ -119,6 +119,8 @@ For a live production workspace, set independent random values of at least 32 ch
 
 Before a live release, run `npm run check:release-security` with the deployment environment loaded. It confirms, without printing their values, that the three token peppers plus `CONNECTOR_ENCRYPTION_KEY` and `CONNECTOR_STATE_SECRET` are present, non-placeholder, at least 32 characters, and distinct by purpose. The command fails for demo or non-production environments so a release pipeline cannot accidentally treat a local configuration as deployment evidence.
 
+Runtime logs redact credentials, authorization headers, cookies, credential-bearing query parameters, provider request configuration, and retained work content before Winston serializes an event. Chat processing logs opaque IDs and routing metadata only, never a worker message excerpt or username.
+
 Terminal workspace invitations are retained as lifecycle evidence only. The daily `identity.invitation_retention` job redacts the invite email, display name, token prefix, token hash, and delivery failure code after `SNEUP_INVITE_RETENTION_DAYS` (default `90`, bounded from `7` to `3650`) while preserving status, role, dates, and aggregate workspace audit evidence. Tune the bounded batch with `SNEUP_INVITE_RETENTION_BATCH_SIZE` (default `100`, maximum `250`) and the scheduled run with `SNEUP_INVITE_RETENTION_CRON`.
 
 The Windows installer uses the bundled Sneup icon. Release signing and automatic updates remain release-infrastructure tasks: configure a publisher certificate and update feed in the release environment before distributing a trusted production build.

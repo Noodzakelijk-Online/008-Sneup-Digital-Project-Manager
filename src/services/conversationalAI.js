@@ -51,7 +51,12 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
   // Process a message from a worker
   async processMessage(memberId, message, channel = 'trello_comment', cardId = null, options = {}) {
     try {
-      logger.info(`Processing message from member ${memberId}: ${message.substring(0, 50)}...`);
+      logger.info('Processing worker chat message', {
+        event: 'worker_chat_message_received',
+        memberId: String(memberId),
+        channel,
+        hasCardContext: Boolean(cardId)
+      });
       const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
 
       const member = await Member.findOne({ _id: memberId, workspaceId }).populate('boards');
@@ -85,7 +90,12 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
       // Execute any actions if needed
       await this.executeActions(intent, member, response, cardId, { workspaceId });
 
-      logger.info(`Generated response for ${member.username}`);
+      logger.info('Generated worker chat response', {
+        event: 'worker_chat_response_generated',
+        memberId: String(member._id),
+        channel,
+        hasCardContext: Boolean(cardId)
+      });
 
       return {
         response,
@@ -451,7 +461,11 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
             const card = await Card.findOne({ _id: cardId, workspaceId });
             if (card) {
               // This would be handled by intervention engine
-              logger.info(`Card ${cardId} reported as blocked by ${member.username}`);
+              logger.info('Worker reported a blocker in chat', {
+                event: 'worker_chat_blocker_reported',
+                memberId: String(member._id),
+                cardId: String(cardId)
+              });
             }
           }
           break;

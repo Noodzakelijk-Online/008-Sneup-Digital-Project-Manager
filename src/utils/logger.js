@@ -1,6 +1,7 @@
 const winston = require('winston');
 const path = require('path');
 const fs = require('fs');
+const { sanitizeLogInfo } = require('./logSanitizer');
 const LOGGER_INSTANCE = Symbol.for('sneup.loggerInstance');
 
 // Desktop builds provide a writable per-user location; server deployments keep local logs.
@@ -10,10 +11,18 @@ if (!fs.existsSync(logsDir)) {
 }
 
 // Define log format
+const sanitizeFormat = winston.format((info) => {
+  const sanitized = sanitizeLogInfo(info);
+  for (const key of Object.keys(info)) delete info[key];
+  Object.assign(info, sanitized);
+  return info;
+});
+
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.errors({ stack: true }),
   winston.format.splat(),
+  sanitizeFormat(),
   winston.format.json()
 );
 
@@ -21,6 +30,7 @@ const logFormat = winston.format.combine(
 const consoleFormat = winston.format.combine(
   winston.format.colorize(),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  sanitizeFormat(),
   winston.format.printf(({ timestamp, level, message, ...meta }) => {
     let msg = `${timestamp} [${level}]: ${message}`;
     if (Object.keys(meta).length > 0) {
