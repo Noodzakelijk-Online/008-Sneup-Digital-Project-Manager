@@ -7,6 +7,20 @@ const parseDate = (value) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const calendarEvent = (event = {}, calendar = {}) => ({
+  id: event.id,
+  summary: event.summary,
+  status: event.status,
+  start: event.start && { dateTime: event.start.dateTime, date: event.start.date, timeZone: event.start.timeZone },
+  end: event.end && { dateTime: event.end.dateTime, date: event.end.date, timeZone: event.end.timeZone },
+  organizer: event.organizer && { email: event.organizer.email, displayName: event.organizer.displayName },
+  creator: event.creator && { email: event.creator.email, displayName: event.creator.displayName },
+  created: event.created,
+  updated: event.updated,
+  htmlLink: event.htmlLink,
+  calendar: { id: calendar.id, name: calendar.summary }
+});
+
 class GoogleWorkspaceWorkSignalClient {
   constructor(options = {}) {
     this.http = options.http || axios;
@@ -38,7 +52,13 @@ class GoogleWorkspaceWorkSignalClient {
   }
 
   options(token, config, params = {}) {
-    return { params, headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, timeout: config.timeout };
+    return {
+      params,
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+      timeout: config.timeout,
+      maxRedirects: 0,
+      proxy: false
+    };
   }
 
   async fetchDelta(account, cursor) {
@@ -47,7 +67,10 @@ class GoogleWorkspaceWorkSignalClient {
     const cursorDate = cursor ? parseDate(cursor) : null;
     const since = cursorDate ? new Date(cursorDate.getTime() - config.lookbackMs) : null;
     const [calendarResponse, driveResponse] = await Promise.all([
-      this.http.get(`${config.calendarUrl}/users/me/calendarList`, this.options(token, config, { maxResults: config.maxCalendars })),
+      this.http.get(`${config.calendarUrl}/users/me/calendarList`, this.options(token, config, {
+        maxResults: config.maxCalendars,
+        fields: 'items(id,summary),nextPageToken'
+      })),
       this.http.get(`${config.driveUrl}/files`, this.options(token, config, {
         pageSize: config.maxFiles,
         orderBy: 'modifiedTime desc',
@@ -66,6 +89,7 @@ class GoogleWorkspaceWorkSignalClient {
         maxResults: config.maxEventsPerCalendar,
         singleEvents: true,
         orderBy: 'updated',
+        fields: 'items(id,summary,status,start,end,organizer(email,displayName),creator(email,displayName),created,updated,htmlLink),nextPageToken',
         ...(since ? { updatedMin: since.toISOString() } : { timeMin: this.now().toISOString() })
       }));
       const page = Array.isArray(response.data?.items) ? response.data.items : [];
@@ -74,7 +98,7 @@ class GoogleWorkspaceWorkSignalClient {
         error.statusCode = 413;
         throw error;
       }
-      events.push(...page.map(event => ({ ...event, calendar: { id: calendar.id, name: calendar.summary } })));
+      events.push(...page.map(event => calendarEvent(event, calendar)));
     }
     const files = Array.isArray(driveResponse.data?.files) ? driveResponse.data.files : [];
     if (files.length >= config.maxFiles && driveResponse.data?.nextPageToken) {

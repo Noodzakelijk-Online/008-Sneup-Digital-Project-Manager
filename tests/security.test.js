@@ -2979,7 +2979,7 @@ describe('work signal normalization', () => {
       get: jest.fn()
         .mockResolvedValueOnce({ data: { items: [{ id: 'primary', summary: 'Primary' }] } })
         .mockResolvedValueOnce({ data: { files: [{ id: 'file-1', name: 'Launch brief', mimeType: 'application/pdf', modifiedTime: '2026-07-08T12:00:00.000Z' }] } })
-        .mockResolvedValueOnce({ data: { items: [{ id: 'event-1', summary: 'Launch review', updated: '2026-07-08T13:00:00.000Z', start: { dateTime: '2026-07-09T09:00:00Z' } }] } })
+        .mockResolvedValueOnce({ data: { items: [{ id: 'event-1', summary: 'Launch review', updated: '2026-07-08T13:00:00.000Z', start: { dateTime: '2026-07-09T09:00:00Z' }, description: 'Private client notes', attendees: [{ email: 'private@example.test' }], location: 'Private room', conferenceData: { entryPoints: [{ uri: 'https://private.example.test' }] } }] } })
     };
     const client = new GoogleWorkspaceWorkSignalClient({
       http,
@@ -2996,11 +2996,15 @@ describe('work signal normalization', () => {
     ]));
     expect(http.get.mock.calls.map(call => call[0]).join(' ')).not.toMatch(/download|export|alt=media|gmail/i);
     expect(http.get.mock.calls[1][1].params.fields).toContain('mimeType');
+    const calendarRequest = http.get.mock.calls.find(call => call[0].endsWith('/calendars/primary/events'))[1];
+    expect(calendarRequest).toMatchObject({ maxRedirects: 0, proxy: false });
+    expect(calendarRequest.params.fields).not.toMatch(/description|attendees|location|conferenceData/i);
     expect(result).toMatchObject({
       nextCursor: '2026-07-08T13:00:00.000Z',
       metadata: { source: 'google_workspace_api', calendars: 1, files: 1 }
     });
     expect(result.records).toHaveLength(2);
+    expect(JSON.stringify(result.records)).not.toMatch(/Private client notes|private@example\.test|Private room|private\.example\.test/);
   });
 
   test('Google Workspace normalization separates Calendar and Drive identifier namespaces', () => {
