@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -66,6 +66,7 @@ const testRailWorkSignalClient = require('./testRailWorkSignalClient');
 const browserStackWorkSignalClient = require('./browserStackWorkSignalClient');
 const oneDriveWorkSignalClient = require('./oneDriveWorkSignalClient');
 const surveyMonkeyWorkSignalClient = require('./surveyMonkeyWorkSignalClient');
+const googleDriveWorkSignalClient = require('./googleDriveWorkSignalClient');
 const datadogWorkSignalClient = require('./datadogWorkSignalClient');
 const zendeskWorkSignalClient = require('./zendeskWorkSignalClient');
 const freshdeskWorkSignalClient = require('./freshdeskWorkSignalClient');
@@ -1283,6 +1284,27 @@ surveyMonkeyAdapter.capabilities.credentialBackedSync = true;
 surveyMonkeyAdapter.list = async account => (await surveyMonkeyWorkSignalClient.fetchDelta(account, null)).records;
 surveyMonkeyAdapter.fetchDelta = (account, cursor) => surveyMonkeyWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('survey_monkey', surveyMonkeyAdapter);
+
+const googleDriveAdapter = buildAdapter('google_drive', 'Google Drive user item metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'file'),
+  title: titleFromText(item.name, 'Google Drive item'),
+  description: '',
+  status: item.status || 'open',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['google_drive', item.sourceType]),
+  dueAt: undefined,
+  providerCreatedAt: item.createdAt,
+  providerUpdatedAt: item.updatedAt,
+  evidenceRefs: baseEvidence(account, item, 'Google Drive user item metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, itemId: item.itemId, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+googleDriveAdapter.capabilities.credentialBackedSync = true;
+googleDriveAdapter.list = async account => (await googleDriveWorkSignalClient.fetchDelta(account, null)).records;
+googleDriveAdapter.fetchDelta = (account, cursor) => googleDriveWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('google_drive', googleDriveAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

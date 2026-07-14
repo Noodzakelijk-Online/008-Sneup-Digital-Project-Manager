@@ -99,6 +99,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/browserStackWorkSignalClient');
     jest.dontMock('../src/services/oneDriveWorkSignalClient');
     jest.dontMock('../src/services/surveyMonkeyWorkSignalClient');
+    jest.dontMock('../src/services/googleDriveWorkSignalClient');
     jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
@@ -1386,6 +1387,8 @@ describe('connector registry', () => {
     expect(byId.google_workspace.auth.scopes).toContain('https://www.googleapis.com/auth/calendar.readonly');
     expect(byId.google_workspace.auth.scopes).not.toContain('https://www.googleapis.com/auth/calendar');
     expect(byId.google_workspace.auth.scopes).not.toEqual(expect.arrayContaining(['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.metadata']));
+    expect(byId.google_drive.auth.scopes).toEqual(['https://www.googleapis.com/auth/drive.metadata.readonly']);
+    expect(byId.google_drive.auth.scopes).not.toEqual(expect.arrayContaining(['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/drive.metadata']));
     expect(byId.gmail.auth.scopes).toEqual(['https://www.googleapis.com/auth/gmail.metadata']);
     expect(byId.gmail.auth.scopes).not.toEqual(expect.arrayContaining(['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/gmail.send']));
     expect(byId.gmail.sync).toEqual(['inbox_threads']);
@@ -2625,6 +2628,21 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, 'opaque-cursor');
     expect(workSignalAdapterService.getAdapter('survey_monkey').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
     expect(workSignalService.normalizeProviderRecord(account, { id: 'survey:survey-1', sourceType: 'survey', surveyId: 'survey-1', name: 'Customer feedback', status: 'open' })).toMatchObject({ sourceType: 'survey', status: 'open' });
+  });
+
+  test('Google Drive adapter delegates bounded user-item reads and preserves file state through normalization', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'file:file-1' }] });
+    jest.doMock('../src/services/googleDriveWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const workSignalService = require('../src/services/workSignalService');
+    const account = { connectorId: 'google_drive', _id: new mongoose.Types.ObjectId() };
+
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('google_drive').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+    expect(workSignalService.normalizeProviderRecord(account, { id: 'file:file-1', sourceType: 'file', itemId: 'file-1', name: 'Launch brief', status: 'open' })).toMatchObject({ sourceType: 'file', status: 'open' });
   });
 
   test('Datadog adapter delegates live delta reads to the credential-backed client', async () => {
@@ -5271,6 +5289,31 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_SURVEYMONKEY_MAX_SURVEYS; process.env.SNEUP_SURVEYMONKEY_MAX_SURVEYS = '1';
     const capped = new SurveyMonkeyWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: { data: [{ id: 'survey-1', title: 'One' }], total: 2, links: { next: 'https://api.surveymonkey.com/v3/surveys?page=2' } } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'surveymonkey-token' })) } });
     try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_SURVEYMONKEY_MAX_SURVEYS; else process.env.SNEUP_SURVEYMONKEY_MAX_SURVEYS = previous; }
+  });
+
+  test('Google Drive sync reads bounded user metadata without content, URLs, permissions, owners, shared drives, or provider writes', async () => {
+    jest.dontMock('../src/services/googleDriveWorkSignalClient');
+    jest.resetModules();
+    const { GoogleDriveWorkSignalClient } = require('../src/services/googleDriveWorkSignalClient');
+    const http = { get: jest.fn(() => Promise.resolve({ data: { files: [{ id: 'file-1', name: 'Launch private@email.test https://private.example/brief', mimeType: 'application/pdf', createdTime: '2026-07-10T10:00:00.000Z', modifiedTime: '2026-07-12T12:00:00.000Z', webViewLink: 'https://private.example/brief', owners: [{ emailAddress: 'private@email.test' }], permissions: [{ id: 'private' }], driveId: 'shared-drive', content: 'private content' }, { id: 'folder-1', name: 'Launch folder', mimeType: 'application/vnd.google-apps.folder', modifiedTime: '2026-07-11T12:00:00.000Z' }] } })) };
+    const client = new GoogleDriveWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'google-drive-token' })) } });
+    const result = await client.fetchDelta({}, '2026-07-10T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://www.googleapis.com/drive/v3/files', expect.objectContaining({ params: { pageSize: 100, orderBy: 'modifiedTime desc', q: 'trashed = false', corpora: 'user', spaces: 'drive', includeItemsFromAllDrives: false, fields: 'files(id,name,mimeType,createdTime,modifiedTime,trashed),nextPageToken,incompleteSearch' }, headers: expect.objectContaining({ Authorization: 'Bearer google-drive-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/private@email\.test|private\.example|shared-drive|private content|google-drive-token/);
+    expect(result).toMatchObject({ metadata: { source: 'google_drive_api', items: 2 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:file-1', sourceType: 'file', status: 'open' }), expect.objectContaining({ id: 'folder:folder-1', sourceType: 'folder', status: 'open' })]));
+  });
+
+  test('Google Drive sync rejects missing credentials and fails closed at incomplete pagination', async () => {
+    jest.dontMock('../src/services/googleDriveWorkSignalClient');
+    jest.resetModules();
+    const { GoogleDriveWorkSignalClient } = require('../src/services/googleDriveWorkSignalClient');
+    const invalid = new GoogleDriveWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({})) } });
+    await expect(invalid.fetchDelta({})).rejects.toMatchObject({ statusCode: 503 });
+    const capped = new GoogleDriveWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: { files: [{ id: 'file-1', name: 'One' }], nextPageToken: 'private-next-token' } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'google-drive-token' })) } });
+    await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 });
   });
 
   test('Datadog sync reads bounded monitor and active incident metadata without queries, messages, tags, or provider writes', async () => {
