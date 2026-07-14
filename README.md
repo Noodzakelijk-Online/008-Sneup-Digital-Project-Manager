@@ -210,6 +210,8 @@ YouTrack uses a permanent token and a public HTTPS base URL. It makes only pagin
 
 Taiga uses a bearer access token and a public HTTPS base URL. It reads only the signed-in member's bounded project, user-story, and task metadata with `GET`, filters deltas locally with a short lookback, excludes descriptions, comments, attachments, custom attributes, and provider writes, and fails visibly at configured collection caps.
 
+Backlog uses a project-member API key and a public `*.backlog.com` or `*.backlogtool.com` space URL. It reads bounded active-project and issue metadata with `GET`, checks provider counts before paging, excludes descriptions, comments, attachments, and custom fields, and never makes provider writes.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations
