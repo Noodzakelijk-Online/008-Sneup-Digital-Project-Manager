@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -73,6 +73,7 @@ const googleChatWorkSignalClient = require('./googleChatWorkSignalClient');
 const figmaWorkSignalClient = require('./figmaWorkSignalClient');
 const confluenceWorkSignalClient = require('./confluenceWorkSignalClient');
 const boxWorkSignalClient = require('./boxWorkSignalClient');
+const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1003,6 +1004,12 @@ boxAdapter.capabilities.credentialBackedSync = true;
 boxAdapter.list = async account => (await boxWorkSignalClient.fetchDelta(account, null)).records;
 boxAdapter.fetchDelta = (account, cursor) => boxWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('box', boxAdapter);
+
+const rallyAdapter = buildAdapter('rally', 'Rally user-story and defect metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'user_story'), title: titleFromText(item.name, 'Rally work item'), description: '', status: statusFromText(item.status), priority: priorityFromText(item.priority), url: undefined, owners: [], labels: compact(['rally', item.sourceType, item.formattedId]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Rally work-item metadata'), raw: { id: item.id, sourceType: item.sourceType, objectId: item.objectId, formattedId: item.formattedId, status: item.status, priority: item.priority, planEstimate: item.planEstimate, blocked: item.blocked, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+rallyAdapter.capabilities.credentialBackedSync = true;
+rallyAdapter.list = async account => (await rallyWorkSignalClient.fetchDelta(account, null)).records;
+rallyAdapter.fetchDelta = (account, cursor) => rallyWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('rally', rallyAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

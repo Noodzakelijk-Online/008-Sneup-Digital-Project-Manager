@@ -107,15 +107,14 @@ const CONNECTORS = [
     id: 'rally',
     name: 'Rally',
     category: 'software_delivery',
-    description: 'Backlog items, features, defects, tasks, sprints, release plans, and dependencies for agile portfolios.',
+    description: 'Read-only current user-story and defect metadata from Rally SaaS. Sneup excludes descriptions, blocked reasons, users, attachments, custom fields, comments, URLs, and provider writes.',
     auth: apiKey({
-      docsUrl: 'https://help.rallydev.com/rally-api',
+      docsUrl: 'https://techdocs.broadcom.com/us/en/ca-enterprise-software/valueops/rally/rally-help/administration/it-administration/how-users-authenticate/rally-authentication-features/api-keys.html',
       fields: [
-        { name: 'baseUrl', label: 'Rally base URL', required: true },
         { name: 'apiKey', label: 'API key', secret: true, required: true }
       ]
     }),
-    sync: ['projects', 'workspaces', 'iterations', 'user_stories', 'defects', 'users']
+    sync: ['user_stories', 'defects']
   },
   {
     id: 'redmine',

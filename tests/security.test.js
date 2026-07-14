@@ -101,6 +101,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/miroWorkSignalClient');
     jest.dontMock('../src/services/dropboxWorkSignalClient');
     jest.dontMock('../src/services/boxWorkSignalClient');
+    jest.dontMock('../src/services/rallyWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -1180,6 +1181,8 @@ describe('connector registry', () => {
     expect(byId.confluence.auth.scopes).not.toEqual(expect.arrayContaining(['write:page:confluence', 'write:space:confluence', 'read:comment:confluence', 'read:attachment:confluence']));
     expect(byId.box.auth.scopes).toEqual(['root_readonly']);
     expect(byId.box.auth.scopes).not.toEqual(expect.arrayContaining(['root_readwrite', 'manage_webhook', 'manage_groups']));
+    expect(byId.rally.auth.fields.map(field => field.name)).toEqual(['apiKey']);
+    expect(byId.rally.sync).toEqual(['user_stories', 'defects']);
   });
 
   test('makes provider scope risk explicit and requires acknowledgement before credentials or OAuth leave Sneup', () => {
@@ -2342,6 +2345,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('box').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Rally adapter delegates bounded current work-item metadata reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'user_story:1234' }] });
+    jest.doMock('../src/services/rallyWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'rally' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('rally').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -4814,6 +4828,36 @@ describe('work signal normalization', () => {
     const malformed = new BoxWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { entries: [{ id: 'https://127.0.0.1/steal', type: 'file' }] } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ connectorId: 'box' })).rejects.toMatchObject({ statusCode: 502 });
     const previous = process.env.SNEUP_BOX_MAX_ENTRIES; process.env.SNEUP_BOX_MAX_ENTRIES = '1'; const capped = new BoxWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { entries: [{ id: '1234', type: 'file', name: 'First' }], next_marker: 'marker_2' } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ connectorId: 'box' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_BOX_MAX_ENTRIES; else process.env.SNEUP_BOX_MAX_ENTRIES = previous; }
+  });
+
+  test('Rally sync reads bounded user-story and defect metadata without descriptions, users, custom fields, URLs, or provider writes', async () => {
+    jest.dontMock('../src/services/rallyWorkSignalClient');
+    jest.resetModules();
+    const { RallyWorkSignalClient } = require('../src/services/rallyWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn(async url => {
+      if (url.endsWith('/hierarchicalrequirement')) return { data: { QueryResult: { Results: [{ ObjectID: '1234', FormattedID: 'US1234', Name: `Ship ${privateEmail}`, ScheduleState: 'In-Progress', Priority: 'High', PlanEstimate: 3, Blocked: false, CreationDate: '2026-07-10T00:00:00Z', LastUpdateDate: '2026-07-12T00:00:00Z', Description: 'private', BlockedReason: 'private', Owner: { _refObjectName: 'Private operator' }, c_Secret: 'private', _ref: 'https://rally1.rallydev.com/private' }], TotalResultCount: 1 } } };
+      return { data: { QueryResult: { Results: [{ ObjectID: '5678', FormattedID: 'DE5678', Name: 'Fix release blocker', State: 'Open', Priority: 'High', PlanEstimate: 1, Blocked: true, CreationDate: '2026-07-11T00:00:00Z', LastUpdateDate: '2026-07-13T00:00:00Z', Discussion: 'private', Owner: { _refObjectName: 'Private operator' } }], TotalResultCount: 1 } } };
+    }) };
+    const client = new RallyWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'rally-key' })) } });
+    const previous = { stories: process.env.SNEUP_RALLY_MAX_USER_STORIES, defects: process.env.SNEUP_RALLY_MAX_DEFECTS, page: process.env.SNEUP_RALLY_PAGE_SIZE };
+    process.env.SNEUP_RALLY_MAX_USER_STORIES = '2'; process.env.SNEUP_RALLY_MAX_DEFECTS = '2'; process.env.SNEUP_RALLY_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'rally' }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenCalledWith('https://rally1.rallydev.com/slm/webservice/v2.0/hierarchicalrequirement', expect.objectContaining({ params: { fetch: 'ObjectID,FormattedID,Name,ScheduleState,Priority,PlanEstimate,Blocked,CreationDate,LastUpdateDate', pagesize: 1, start: 1, order: 'LastUpdateDate DESC' }, headers: expect.objectContaining({ zsessionid: '_rally-key' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenCalledWith('https://rally1.rallydev.com/slm/webservice/v2.0/defect', expect.objectContaining({ params: { fetch: 'ObjectID,FormattedID,Name,State,Priority,PlanEstimate,Blocked,CreationDate,LastUpdateDate', pagesize: 1, start: 1, order: 'LastUpdateDate DESC' }, headers: expect.objectContaining({ zsessionid: '_rally-key' }), maxRedirects: 0, proxy: false }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'rally_wsapi', userStories: 1, defects: 1, pages: 2 }, nextCursor: '2026-07-13T00:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/private|Discussion|BlockedReason|Description|Owner|c_Secret|rallydev\.com/); expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.stories === undefined) delete process.env.SNEUP_RALLY_MAX_USER_STORIES; else process.env.SNEUP_RALLY_MAX_USER_STORIES = previous.stories; if (previous.defects === undefined) delete process.env.SNEUP_RALLY_MAX_DEFECTS; else process.env.SNEUP_RALLY_MAX_DEFECTS = previous.defects; if (previous.page === undefined) delete process.env.SNEUP_RALLY_PAGE_SIZE; else process.env.SNEUP_RALLY_PAGE_SIZE = previous.page; }
+  });
+
+  test('Rally sync rejects invalid cursors, malformed work items, and collection caps', async () => {
+    jest.dontMock('../src/services/rallyWorkSignalClient'); jest.resetModules(); const { RallyWorkSignalClient } = require('../src/services/rallyWorkSignalClient'); const accountConnector = { getAccountCredentials: jest.fn(() => ({ apiKey: '_key' })) };
+    const invalid = new RallyWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ connectorId: 'rally' }, 'bad-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new RallyWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { QueryResult: { Results: [{ ObjectID: 'https://127.0.0.1/steal' }], TotalResultCount: 1 } } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ connectorId: 'rally' })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_RALLY_MAX_USER_STORIES; process.env.SNEUP_RALLY_MAX_USER_STORIES = '1'; const capped = new RallyWorkSignalClient({ http: { get: jest.fn(url => Promise.resolve(url.endsWith('/hierarchicalrequirement') ? { data: { QueryResult: { Results: [{ ObjectID: '1234', FormattedID: 'US1234', Name: 'First' }], TotalResultCount: 2 } } } : { data: { QueryResult: { Results: [], TotalResultCount: 0 } } })) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'rally' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_RALLY_MAX_USER_STORIES; else process.env.SNEUP_RALLY_MAX_USER_STORIES = previous; }
   });
 
   test('Calendly sync reads bounded event-type metadata without profile, links, availability, invitees, or provider writes', async () => {
