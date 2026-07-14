@@ -101,6 +101,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/miroWorkSignalClient');
     jest.dontMock('../src/services/dropboxWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
+    jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2264,6 +2265,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('calendly').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Microsoft Teams adapter delegates bounded team and channel metadata reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'team:12345678-1234-1234-1234-123456789abc' }] });
+    jest.doMock('../src/services/teamsWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'teams' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('teams').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4680,6 +4692,43 @@ describe('work signal normalization', () => {
       expect(JSON.stringify(result.records)).not.toMatch(/calendly\.com|zoom|profile|location|Private operator/);
       expect(result.records[0].name).not.toContain(privateEmail);
     } finally { if (previous.max === undefined) delete process.env.SNEUP_CALENDLY_MAX_EVENT_TYPES; else process.env.SNEUP_CALENDLY_MAX_EVENT_TYPES = previous.max; if (previous.page === undefined) delete process.env.SNEUP_CALENDLY_PAGE_SIZE; else process.env.SNEUP_CALENDLY_PAGE_SIZE = previous.page; }
+  });
+
+  test('Microsoft Teams sync reads bounded joined-team and channel metadata without messages, files, profiles, or provider writes', async () => {
+    jest.dontMock('../src/services/teamsWorkSignalClient');
+    jest.resetModules();
+    const { TeamsWorkSignalClient } = require('../src/services/teamsWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const team = '12345678-1234-1234-1234-123456789abc';
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { value: [{ id: team, displayName: `Delivery ${privateEmail}`, description: 'Private team description', webUrl: 'https://teams.example.test/private' }] } })
+      .mockResolvedValueOnce({ data: { value: [{ id: '19:delivery@thread.tacv2', displayName: `Launch ${privateEmail}`, membershipType: 'standard', createdDateTime: '2026-07-12T12:00:00Z', description: 'Private channel description', email: privateEmail, webUrl: 'https://teams.example.test/private/channel' }] } }) };
+    const client = new TeamsWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'teams-access-token' })) } });
+    const previous = { teams: process.env.SNEUP_TEAMS_MAX_TEAMS, channels: process.env.SNEUP_TEAMS_MAX_CHANNELS_PER_TEAM, total: process.env.SNEUP_TEAMS_MAX_TOTAL_CHANNELS };
+    process.env.SNEUP_TEAMS_MAX_TEAMS = '1'; process.env.SNEUP_TEAMS_MAX_CHANNELS_PER_TEAM = '1'; process.env.SNEUP_TEAMS_MAX_TOTAL_CHANNELS = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'teams' }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://graph.microsoft.com/v1.0/me/joinedTeams', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer teams-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, `https://graph.microsoft.com/v1.0/teams/${team}/channels`, expect.objectContaining({ params: { '$top': 1, '$select': 'id,displayName,membershipType,createdDateTime,isArchived' } }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'microsoft_teams_metadata', teams: 1, channels: 1 }, nextCursor: '2026-07-10T00:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private team|Private channel|teams\.example|webUrl|description|email/);
+      expect(result.records[1].name).not.toContain(privateEmail);
+    } finally { if (previous.teams === undefined) delete process.env.SNEUP_TEAMS_MAX_TEAMS; else process.env.SNEUP_TEAMS_MAX_TEAMS = previous.teams; if (previous.channels === undefined) delete process.env.SNEUP_TEAMS_MAX_CHANNELS_PER_TEAM; else process.env.SNEUP_TEAMS_MAX_CHANNELS_PER_TEAM = previous.channels; if (previous.total === undefined) delete process.env.SNEUP_TEAMS_MAX_TOTAL_CHANNELS; else process.env.SNEUP_TEAMS_MAX_TOTAL_CHANNELS = previous.total; }
+  });
+
+  test('Microsoft Teams sync rejects invalid cursors, malformed identifiers, and collection caps', async () => {
+    jest.dontMock('../src/services/teamsWorkSignalClient');
+    jest.resetModules();
+    const { TeamsWorkSignalClient } = require('../src/services/teamsWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) };
+    const invalid = new TeamsWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector });
+    await expect(invalid.fetchDelta({ connectorId: 'teams' }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new TeamsWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { value: [{ id: 'https://127.0.0.1/steal' }] } }) }, accountConnectorService: accountConnector });
+    await expect(malformed.fetchDelta({ connectorId: 'teams' })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_TEAMS_MAX_TEAMS; process.env.SNEUP_TEAMS_MAX_TEAMS = '1';
+    const capped = new TeamsWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { value: [{ id: '12345678-1234-1234-1234-123456789abc' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/joinedTeams?$skiptoken=next' } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'teams' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_TEAMS_MAX_TEAMS; else process.env.SNEUP_TEAMS_MAX_TEAMS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

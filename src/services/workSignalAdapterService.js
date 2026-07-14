@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -68,6 +68,7 @@ const zoomWorkSignalClient = require('./zoomWorkSignalClient');
 const miroWorkSignalClient = require('./miroWorkSignalClient');
 const dropboxWorkSignalClient = require('./dropboxWorkSignalClient');
 const calendlyWorkSignalClient = require('./calendlyWorkSignalClient');
+const teamsWorkSignalClient = require('./teamsWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -968,6 +969,12 @@ calendlyAdapter.capabilities.credentialBackedSync = true;
 calendlyAdapter.list = async account => (await calendlyWorkSignalClient.fetchDelta(account, null)).records;
 calendlyAdapter.fetchDelta = (account, cursor) => calendlyWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('calendly', calendlyAdapter);
+
+const teamsAdapter = buildAdapter('teams', 'Microsoft Teams joined-team and channel metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'channel'), title: item.sourceType === 'team' ? titleFromText(item.name, 'Microsoft Team') : titleFromText(item.teamName ? `${item.teamName}: ${item.name}` : item.name, 'Microsoft Teams channel'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['teams', item.sourceType, item.membershipType, item.teamId ? `team:${item.teamId}` : undefined]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Microsoft Teams metadata'), raw: { id: item.id, sourceType: item.sourceType, teamId: item.teamId, channelId: item.channelId, membershipType: item.membershipType, status: item.status, createdAt: item.createdAt } }));
+teamsAdapter.capabilities.credentialBackedSync = true;
+teamsAdapter.list = async account => (await teamsWorkSignalClient.fetchDelta(account, null)).records;
+teamsAdapter.fetchDelta = (account, cursor) => teamsWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('teams', teamsAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
