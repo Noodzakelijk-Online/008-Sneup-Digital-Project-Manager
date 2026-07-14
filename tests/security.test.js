@@ -90,6 +90,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/pagerDutyWorkSignalClient');
     jest.dontMock('../src/services/statuspageWorkSignalClient');
     jest.dontMock('../src/services/genericRestApiWorkSignalClient');
+    jest.dontMock('../src/services/n8nWorkSignalClient');
     jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
@@ -1857,7 +1858,8 @@ describe('work signal normalization', () => {
       'notion',
       'monday',
       'clickup',
-      'azure_devops'
+      'azure_devops',
+      'n8n'
     ]));
     expect(workSignalAdapterService.listAdapters().length).toBeGreaterThanOrEqual(13);
     expect(normalized).toMatchObject({
@@ -2359,6 +2361,20 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('rest_api_generic').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('n8n adapter delegates reads and preserves workflow and execution types through normalization', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'workflow:workflow-1' }] });
+    jest.doMock('../src/services/n8nWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const workSignalService = require('../src/services/workSignalService');
+    const account = { connectorId: 'n8n', _id: new mongoose.Types.ObjectId() };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('n8n').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+    expect(workSignalService.normalizeProviderRecord(account, { id: 'workflow:workflow-1', sourceType: 'workflow', workflowId: 'workflow-1', name: 'Release workflow', active: true })).toMatchObject({ sourceType: 'workflow', status: 'in_progress' });
+    expect(workSignalService.normalizeProviderRecord(account, { id: 'execution:execution-1', sourceType: 'execution', executionId: 'execution-1', workflowId: 'workflow-1', name: 'Workflow execution', status: 'error' })).toMatchObject({ sourceType: 'execution', status: 'blocked' });
   });
 
   test('Datadog adapter delegates live delta reads to the credential-backed client', async () => {
@@ -4616,6 +4632,34 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_GENERIC_REST_MAX_RECORDS; process.env.SNEUP_GENERIC_REST_MAX_RECORDS = '1';
     const capped = new GenericRestApiWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: [{ id: 'task-1', name: 'One' }, { id: 'task-2', name: 'Two' }] })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'generic-token' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
     try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://api.example.test', endpointPath: '/v1/tasks' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_GENERIC_REST_MAX_RECORDS; else process.env.SNEUP_GENERIC_REST_MAX_RECORDS = previous; }
+  });
+
+  test('n8n sync reads only bounded active-workflow and execution metadata without provider writes', async () => {
+    jest.dontMock('../src/services/n8nWorkSignalClient');
+    jest.resetModules();
+    const { N8nWorkSignalClient } = require('../src/services/n8nWorkSignalClient');
+    const workflowsResponse = { data: { data: [{ id: 'workflow-1', name: 'Billing private@email.test https://private.example/run', active: true, nodes: [{ credentials: { apiKey: 'private-key' } }], settings: { secret: true }, createdAt: '2026-07-10T10:00:00.000Z', updatedAt: '2026-07-12T12:00:00.000Z' }] } };
+    const executionsResponse = { data: { data: [{ id: 'execution-1', workflowId: 'workflow-1', status: 'error', finished: true, startedAt: '2026-07-12T11:00:00.000Z', stoppedAt: '2026-07-12T12:00:00.000Z', data: { resultData: { error: { message: 'Private execution error' } } } }, { id: 'execution-2', workflowId: 'workflow-not-active', status: 'success', data: { private: true } }] } };
+    const http = { get: jest.fn(url => Promise.resolve(url.endsWith('/workflows') ? workflowsResponse : executionsResponse)) };
+    const client = new N8nWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'n8n-key' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
+    const result = await client.fetchDelta({ metadata: { fields: { baseUrl: 'https://automation.example.test' } } }, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://automation.example.test/api/v1/workflows', expect.objectContaining({ params: { active: true, limit: 251 }, headers: expect.objectContaining({ 'X-N8N-API-KEY': 'n8n-key' }), maxRedirects: 0, proxy: false }));
+    expect(http.get).toHaveBeenCalledWith('https://automation.example.test/api/v1/executions', expect.objectContaining({ params: { includeData: false, limit: 501 }, headers: expect.objectContaining({ 'X-N8N-API-KEY': 'n8n-key' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/private@email\.test|private\.example|private-key|Private execution error|workflow-not-active/);
+    expect(result).toMatchObject({ metadata: { source: 'n8n_api', workflows: 1, executions: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'workflow:workflow-1', sourceType: 'workflow' }), expect.objectContaining({ id: 'execution:execution-1', sourceType: 'execution', status: 'error' })]));
+  });
+
+  test('n8n sync rejects private-network instances and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/n8nWorkSignalClient');
+    jest.resetModules();
+    const { N8nWorkSignalClient } = require('../src/services/n8nWorkSignalClient');
+    const invalid = new N8nWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'n8n-key' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { baseUrl: 'https://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_N8N_MAX_WORKFLOWS; process.env.SNEUP_N8N_MAX_WORKFLOWS = '1';
+    const capped = new N8nWorkSignalClient({ http: { get: jest.fn(url => Promise.resolve({ data: { data: url.endsWith('/workflows') ? [{ id: 'workflow-1', name: 'One', active: true }, { id: 'workflow-2', name: 'Two', active: true }] : [] } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'n8n-key' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://automation.example.test' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_N8N_MAX_WORKFLOWS; else process.env.SNEUP_N8N_MAX_WORKFLOWS = previous; }
   });
 
   test('Datadog sync reads bounded monitor and active incident metadata without queries, messages, tags, or provider writes', async () => {

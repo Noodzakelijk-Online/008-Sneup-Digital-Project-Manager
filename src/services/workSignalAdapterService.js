@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'n8n'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -57,6 +57,7 @@ const sentryWorkSignalClient = require('./sentryWorkSignalClient');
 const pagerDutyWorkSignalClient = require('./pagerDutyWorkSignalClient');
 const statuspageWorkSignalClient = require('./statuspageWorkSignalClient');
 const genericRestApiWorkSignalClient = require('./genericRestApiWorkSignalClient');
+const n8nWorkSignalClient = require('./n8nWorkSignalClient');
 const datadogWorkSignalClient = require('./datadogWorkSignalClient');
 const zendeskWorkSignalClient = require('./zendeskWorkSignalClient');
 const freshdeskWorkSignalClient = require('./freshdeskWorkSignalClient');
@@ -919,6 +920,12 @@ genericRestApiAdapter.capabilities.credentialBackedSync = true;
 genericRestApiAdapter.list = async account => (await genericRestApiWorkSignalClient.fetchDelta(account, null)).records;
 genericRestApiAdapter.fetchDelta = (account, cursor) => genericRestApiWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('rest_api_generic', genericRestApiAdapter);
+
+const n8nAdapter = buildAdapter('n8n', 'n8n bounded active workflow and execution metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'execution'), title: titleFromText(item.name, item.sourceType === 'workflow' ? 'n8n workflow' : 'n8n workflow execution'), description: '', status: item.sourceType === 'workflow' ? (item.active ? 'in_progress' : 'archived') : item.status === 'success' ? 'done' : ['error', 'crashed'].includes(item.status) ? 'blocked' : item.status === 'running' ? 'in_progress' : item.status === 'waiting' ? 'waiting' : 'unknown', priority: item.sourceType === 'execution' && ['error', 'crashed'].includes(item.status) ? 'high' : 'unknown', owners: [], labels: compact(['n8n', item.sourceType, item.status, item.workflowId ? `workflow:${item.workflowId}` : undefined]), dueAt: undefined, providerCreatedAt: pick(item.createdAt, item.startedAt), providerUpdatedAt: pick(item.stoppedAt, item.updatedAt, item.startedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'n8n metadata'), raw: { id: item.id, sourceType: item.sourceType, workflowId: item.workflowId, executionId: item.executionId, active: item.active, status: item.status, finished: item.finished, createdAt: item.createdAt, updatedAt: item.updatedAt, startedAt: item.startedAt, stoppedAt: item.stoppedAt } }));
+n8nAdapter.capabilities.credentialBackedSync = true;
+n8nAdapter.list = async account => (await n8nWorkSignalClient.fetchDelta(account, null)).records;
+n8nAdapter.fetchDelta = (account, cursor) => n8nWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('n8n', n8nAdapter);
 
 const datadogAdapter = buildAdapter('datadog', 'Datadog monitor and active incident metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'incident'), title: item.sourceType === 'monitor' ? titleFromText(item.name, 'Datadog monitor') : titleFromText(item.name, 'Datadog incident'), description: '', status: item.status || 'unknown', priority: item.severity === 'SEV-1' ? 'critical' : item.severity === 'SEV-2' ? 'high' : item.status === 'Alert' ? 'high' : item.status === 'Warn' ? 'normal' : 'unknown', owners: [], labels: compact(['datadog', item.sourceType, item.monitorType, item.severity, item.status]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.resolvedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Datadog incident metadata'), raw: { id: item.id, sourceType: item.sourceType, monitorId: item.monitorId, incidentId: item.incidentId, monitorType: item.monitorType, status: item.status, severity: item.severity, createdAt: item.createdAt, updatedAt: item.updatedAt, resolvedAt: item.resolvedAt } }));
 datadogAdapter.capabilities.credentialBackedSync = true;

@@ -44,6 +44,8 @@ const TYPE_ALIASES = {
   event: 'event',
   meeting: 'event',
   time_entry: 'time_entry',
+  workflow: 'workflow',
+  execution: 'execution',
   risk: 'risk',
   decision: 'decision'
 };

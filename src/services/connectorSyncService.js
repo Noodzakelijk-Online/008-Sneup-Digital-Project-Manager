@@ -150,6 +150,8 @@ class ConnectorSyncService {
         projects: delta.metadata?.projects || 0,
         channels: delta.metadata?.channels || 0,
         issues: delta.metadata?.issues || 0,
+        workflows: delta.metadata?.workflows || 0,
+        executions: delta.metadata?.executions || 0,
         mergeRequests: delta.metadata?.mergeRequests || 0,
         items: delta.metadata?.items || 0,
         pages: delta.metadata?.pages || 0,
