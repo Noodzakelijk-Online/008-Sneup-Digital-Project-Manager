@@ -8,6 +8,8 @@ const SIGNAL_TYPES = [
   'issue',
   'pull_request',
   'document',
+  'file',
+  'folder',
   'event',
   'time_entry',
   'allocation',

@@ -97,6 +97,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/makeWorkSignalClient');
     jest.dontMock('../src/services/testRailWorkSignalClient');
     jest.dontMock('../src/services/browserStackWorkSignalClient');
+    jest.dontMock('../src/services/oneDriveWorkSignalClient');
     jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
@@ -1370,9 +1371,12 @@ describe('connector registry', () => {
 
   test('does not request Microsoft 365 write scopes for read-only connector ingestion', () => {
     const microsoft = getConnectors().find(connector => connector.id === 'microsoft_365');
+    const oneDrive = getConnectors().find(connector => connector.id === 'onedrive');
 
     expect(microsoft.auth.scopes).toEqual(expect.arrayContaining(['Calendars.Read', 'Tasks.Read', 'Files.Read']));
     expect(microsoft.auth.scopes).not.toEqual(expect.arrayContaining(['Mail.Read', 'Calendars.ReadWrite', 'Tasks.ReadWrite', 'Files.Read.All', 'Sites.Read.All']));
+    expect(oneDrive.auth.scopes).toEqual(['offline_access', 'Files.Read']);
+    expect(oneDrive.auth.scopes).not.toEqual(expect.arrayContaining(['Files.ReadWrite', 'Files.Read.All', 'Sites.Read.All']));
   });
 
   test('uses documented read-only scopes for Google Calendar, Zoom, Miro, and Google Chat', () => {
@@ -2590,6 +2594,21 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('browserstack').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
     expect(workSignalService.normalizeProviderRecord(account, { id: 'build:abc12345', sourceType: 'execution', buildId: 'abc12345', name: 'Release build', status: 'blocked', priority: 'high' })).toMatchObject({ sourceType: 'execution', status: 'blocked', priority: 'high' });
+  });
+
+  test('OneDrive adapter delegates bounded root-item reads and preserves file state through normalization', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'file:item-1' }] });
+    jest.doMock('../src/services/oneDriveWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const workSignalService = require('../src/services/workSignalService');
+    const account = { connectorId: 'onedrive', _id: new mongoose.Types.ObjectId() };
+
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('onedrive').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+    expect(workSignalService.normalizeProviderRecord(account, { id: 'file:item-1', sourceType: 'file', itemId: 'item-1', name: 'Release brief', status: 'open' })).toMatchObject({ sourceType: 'file', status: 'open' });
   });
 
   test('Datadog adapter delegates live delta reads to the credential-backed client', async () => {
@@ -5184,6 +5203,32 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_BROWSERSTACK_MAX_BUILDS; process.env.SNEUP_BROWSERSTACK_MAX_BUILDS = '1';
     const capped = new BrowserStackWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: [{ automation_build: { name: 'One', hashed_id: 'abc12345', status: 'done' } }] })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ username: 'qa@example.com', accessKey: 'browserstack-key' })) } });
     try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_BROWSERSTACK_MAX_BUILDS; else process.env.SNEUP_BROWSERSTACK_MAX_BUILDS = previous; }
+  });
+
+  test('OneDrive sync reads bounded root metadata without file content, web URLs, permissions, or provider writes', async () => {
+    jest.dontMock('../src/services/oneDriveWorkSignalClient');
+    jest.resetModules();
+    const { OneDriveWorkSignalClient } = require('../src/services/oneDriveWorkSignalClient');
+    const http = { get: jest.fn(() => Promise.resolve({ data: { value: [{ id: 'file-1', name: 'Release private@email.test https://private.example/brief', createdDateTime: '2026-07-10T10:00:00.000Z', lastModifiedDateTime: '2026-07-12T12:00:00.000Z', file: { mimeType: 'application/pdf', hashes: { quickXorHash: 'private-hash' } }, webUrl: 'https://private.example/brief', permissions: [{ id: 'private' }], content: 'private contents' }, { id: 'folder-1', name: 'Launch folder', folder: { childCount: 4 }, lastModifiedDateTime: '2026-07-11T12:00:00.000Z' }] } })) };
+    const client = new OneDriveWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'onedrive-token' })) } });
+    const result = await client.fetchDelta({}, '2026-07-10T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://graph.microsoft.com/v1.0/me/drive/root/children', expect.objectContaining({ params: { '$top': 100, '$orderby': 'lastModifiedDateTime desc', '$select': 'id,name,folder,package,createdDateTime,lastModifiedDateTime,deleted' }, headers: expect.objectContaining({ Authorization: 'Bearer onedrive-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/private@email\.test|private\.example|private-hash|private contents|onedrive-token/);
+    expect(result).toMatchObject({ metadata: { source: 'onedrive_graph_api', rootItems: 2 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'file:file-1', sourceType: 'file', status: 'open' }), expect.objectContaining({ id: 'folder:folder-1', sourceType: 'folder', status: 'open' })]));
+  });
+
+  test('OneDrive sync rejects missing credentials and fails closed at the root-item cap', async () => {
+    jest.dontMock('../src/services/oneDriveWorkSignalClient');
+    jest.resetModules();
+    const { OneDriveWorkSignalClient } = require('../src/services/oneDriveWorkSignalClient');
+    const invalid = new OneDriveWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({})) } });
+    await expect(invalid.fetchDelta({})).rejects.toMatchObject({ statusCode: 503 });
+    const previous = process.env.SNEUP_ONEDRIVE_MAX_ITEMS; process.env.SNEUP_ONEDRIVE_MAX_ITEMS = '1';
+    const capped = new OneDriveWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: { value: [{ id: 'item-1', name: 'One' }], '@odata.nextLink': 'https://graph.microsoft.com/next' } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'onedrive-token' })) } });
+    try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_ONEDRIVE_MAX_ITEMS; else process.env.SNEUP_ONEDRIVE_MAX_ITEMS = previous; }
   });
 
   test('Datadog sync reads bounded monitor and active incident metadata without queries, messages, tags, or provider writes', async () => {
