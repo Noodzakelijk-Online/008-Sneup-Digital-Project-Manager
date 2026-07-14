@@ -2373,6 +2373,7 @@ function renderPolicyRule(policy) {
   const canManage = state.securityContext?.permissions?.includes('policy-rules:manage');
   const isWorkflowPolicy = policy.policyKind === 'workflow';
   const isRoutingPolicy = policy.workflowType === 'decision_queue_routing';
+  const isCooldownPolicy = policy.workflowType === 'scheduled_intervention_cooldown';
   const stateLabel = policy.enabled ? 'active' : 'paused';
   const stateClass = policy.enabled ? 'healthy' : 'critical';
   const riskClass = policy.riskLevel === 'critical' ? 'critical' : policy.riskLevel === 'high' ? 'high' : 'review';
@@ -2389,6 +2390,10 @@ function renderPolicyRule(policy) {
     })
     .filter(Boolean)
     .join(' | ');
+  const cooldowns = Object.values(policy.cooldownHoursByTrigger || {}).map(Number).filter(Number.isFinite);
+  const cooldownSummary = cooldowns.length > 0
+    ? `${cooldowns.length} signals, ${Math.min(...cooldowns)}-${Math.max(...cooldowns)}h suppression`
+    : 'scheduled duplicate suppression';
   return `
     <div class="item">
       <div class="item-title">
@@ -2396,7 +2401,9 @@ function renderPolicyRule(policy) {
         <span class="pill ${stateClass}">${escapeHtml(stateLabel)}</span>
       </div>
       <div class="meta">
-        ${isRoutingPolicy
+        ${isCooldownPolicy
+          ? `<span>${escapeHtml(cooldownSummary)}</span><span>scheduled signals only</span>`
+          : isRoutingPolicy
           ? `<span>${escapeHtml(routingSummary || 'internal queue routing')}</span><span>overdue VA/team work goes to Robert</span>`
           : isWorkflowPolicy
           ? `<span>${escapeHtml(String(policy.defaultSnoozeHours || 24))}-hour default</span><span>internal queue only</span>`
@@ -2450,6 +2457,70 @@ function bindPolicyRuleActions() {
 function openPolicyRuleEditor(actionType) {
   const policy = (state.policyRules || []).find(item => item.actionType === actionType);
   if (!policy) return;
+
+  if (policy.workflowType === 'scheduled_intervention_cooldown') {
+    const cooldowns = policy.cooldownHoursByTrigger || {};
+    const labels = {
+      card_stuck: 'Stuck card',
+      no_activity: 'No activity',
+      overdue: 'Overdue card',
+      member_overloaded: 'Member overloaded',
+      blocking_others: 'Blocking other work',
+      no_response_to_followup: 'No response to follow-up',
+      performance_milestone: 'Performance milestone'
+    };
+    const triggers = Object.keys(labels);
+    const rows = triggers.map((trigger) => `
+      <fieldset class="workflow-routing-row">
+        <legend>${escapeHtml(labels[trigger])}</legend>
+        <label>Suppress equivalent scheduled recommendations for (hours)
+          <input name="${trigger}CooldownHours" type="number" min="24" max="168" step="1" value="${escapeHtml(String(cooldowns[trigger] || 24))}" required>
+        </label>
+      </fieldset>
+    `).join('');
+    els.modalTitle.textContent = policy.label;
+    els.modalBody.innerHTML = `
+      <form id="policyRuleForm" class="notice-stack">
+        <div class="notice">This policy only suppresses duplicate scheduled intervention candidates. It can lengthen the 24-hour baseline up to 7 days, never shortens it, and never prepares or performs a provider write. Manual requests are not suppressed.</div>
+        <div class="workflow-routing-grid">${rows}</div>
+        <label>Reason<textarea name="reason" rows="3" maxlength="500" placeholder="Why this workspace needs longer signal cooldowns">${escapeHtml(policy.reason || '')}</textarea></label>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelPolicyRule">Cancel</button>
+          <button class="button primary" type="submit">Save cooldown defaults</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelPolicyRule').addEventListener('click', closeModal);
+    document.getElementById('policyRuleForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const submitButton = form.querySelector('button[type="submit"]');
+      const values = new FormData(form);
+      submitButton.disabled = true;
+      submitButton.textContent = 'Saving...';
+      try {
+        await fetchApi(`/api/policy-rules/${encodeURIComponent(actionType)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cooldownHoursByTrigger: Object.fromEntries(triggers.map(trigger => [
+              trigger,
+              Number(values.get(`${trigger}CooldownHours`))
+            ])),
+            reason: values.get('reason')
+          })
+        });
+        closeModal();
+        await loadWorkspaceAdmin();
+      } catch (error) {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Save cooldown defaults';
+        openNotice('Cooldown defaults blocked', error.message);
+      }
+    });
+    return;
+  }
 
   if (policy.workflowType === 'decision_queue_routing') {
     const routing = policy.routingByRisk || {};

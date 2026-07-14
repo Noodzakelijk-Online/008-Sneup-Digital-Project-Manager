@@ -287,13 +287,14 @@ const enhancements = [
     priority: 'P1',
     area: 'autonomy',
     title: 'Suppress repeated scheduled intervention candidates',
-    evidence: 'Scheduled board scans reuse an equivalent pending, approval-gated, executing, or recently executed intervention for 24 hours before they can create another recommendation or Trello write candidate. Manual requests remain separate.',
+    evidence: 'Scheduled board, follow-up, and escalation scans reuse an equivalent pending, approval-gated, executing, or recently executed intervention using one workspace-scoped policy lookup per scan. Each scheduled signal can retain the 24-hour baseline or extend it to 168 hours; manual requests remain separate, and cooldowns never prepare or perform a provider write.',
     impact: 'Prevents recurring signals from filling Robert\'s approval queue or repeatedly proposing the same worker communication.',
     effort: 'S',
     status: 'done',
-    nextStep: 'Add bounded per-signal cooldown configuration that can only lengthen the default.',
+    nextStep: 'Add filterable cooldown-policy history and retention controls after collecting live operator evidence.',
     acceptanceCriteria: [
-      'Equivalent scheduled card and team signals reuse their active or recent intervention.',
+      'Equivalent scheduled card, follow-up, escalation, and team signals reuse their active or recent intervention with one policy read per scan.',
+      'Each scheduled signal can only retain or extend the 24-hour cooldown baseline, up to 168 hours.',
       'The suppression window never executes a provider write or relaxes approval requirements.',
       'Manual requests remain distinct from scheduled signal suppression.'
     ]

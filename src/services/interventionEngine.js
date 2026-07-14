@@ -9,7 +9,6 @@ const interventionPolicy = require('./interventionPolicy');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const INTERVENTION_COOLDOWN_HOURS = 24;
 const ACTIVE_INTERVENTION_STATUSES = ['pending', 'awaiting_approval', 'executing', 'executed'];
 
 class InterventionEngine {
@@ -66,16 +65,18 @@ class InterventionEngine {
       }
 
       const cards = await Card.find({ boardId, workspaceId, closed: false });
+      const cooldownPolicy = await policyRuleService.getScheduledInterventionCooldownPolicy({ workspaceId });
+      const scanOptions = { cooldownPolicy };
       const interventions = [];
 
       // Check each card for intervention triggers
       for (const card of cards) {
-        const cardInterventions = await this.checkCardForInterventions(card, board);
+        const cardInterventions = await this.checkCardForInterventions(card, board, scanOptions);
         interventions.push(...cardInterventions);
       }
 
       // Check team-level interventions
-      const teamInterventions = await this.checkTeamInterventions(board);
+      const teamInterventions = await this.checkTeamInterventions(board, scanOptions);
       interventions.push(...teamInterventions);
 
       // Execute interventions
@@ -92,7 +93,7 @@ class InterventionEngine {
   }
 
   // Check individual card for intervention needs
-  async checkCardForInterventions(card, board) {
+  async checkCardForInterventions(card, board, options = {}) {
     const interventions = [];
 
     // Check if card is stuck
@@ -107,7 +108,7 @@ class InterventionEngine {
         severity: 'high',
         action: 'Request status update on stuck card',
         message: this.generateStuckCardMessage(card)
-      }));
+      }, options));
     }
 
     // Check if card has no activity
@@ -122,7 +123,7 @@ class InterventionEngine {
         severity: 'medium',
         action: 'Request activity update',
         message: this.generateNoActivityMessage(card)
-      }));
+      }, options));
     }
 
     // Check if card is overdue
@@ -137,7 +138,7 @@ class InterventionEngine {
         severity: 'high',
         action: 'Alert about overdue card',
         message: this.generateOverdueMessage(card)
-      }));
+      }, options));
     }
 
     // Check if card is blocking others
@@ -153,14 +154,14 @@ class InterventionEngine {
         severity: 'critical',
         action: 'Alert about blocking other cards',
         message: this.generateBlockingMessage(card, blockingCount)
-      }));
+      }, options));
     }
 
     return interventions;
   }
 
   // Check team-level interventions
-  async checkTeamInterventions(board) {
+  async checkTeamInterventions(board, options = {}) {
     const interventions = [];
     const members = await Member.find({ boards: board._id, workspaceId: board.workspaceId });
 
@@ -183,7 +184,7 @@ class InterventionEngine {
           action: 'Rebalance workload',
           message: this.generateOverloadedMessage(member, teamAverage),
           metadata: { teamAverage, memberCards: assignedCardCount }
-        }));
+        }, options));
       }
     }
 
@@ -304,11 +305,17 @@ class InterventionEngine {
   }
 
   // Helper: Create intervention
-  async createIntervention(data) {
+  async createIntervention(data, options = {}) {
     const workspaceId = normalizeWorkspaceObjectId(data.workspaceId || getDefaultWorkspaceObjectId());
     const isScheduledSignal = data.trigger !== 'manual_request';
     if (isScheduledSignal) {
-      const cooldownStart = new Date(Date.now() - INTERVENTION_COOLDOWN_HOURS * 60 * 60 * 1000);
+      const cooldownPolicy = options.cooldownPolicy
+        || await policyRuleService.getScheduledInterventionCooldownPolicy({ workspaceId });
+      const cooldownHours = policyRuleService.resolveScheduledInterventionCooldown({
+        trigger: data.trigger,
+        policy: cooldownPolicy
+      });
+      const cooldownStart = new Date(Date.now() - cooldownHours * 60 * 60 * 1000);
       const existing = await Intervention.findOne({
         workspaceId,
         boardId: data.boardId,
@@ -320,7 +327,7 @@ class InterventionEngine {
         createdAt: { $gte: cooldownStart }
       }).sort({ createdAt: -1 });
       if (existing) {
-        logger.info(`Reusing recent ${data.type} intervention ${existing._id} for ${data.trigger}`);
+        logger.info(`Reusing ${cooldownHours}-hour cooldown ${data.type} intervention ${existing._id} for ${data.trigger}`);
         return existing;
       }
     }
@@ -359,6 +366,7 @@ class InterventionEngine {
   async processFollowUps(options = {}) {
     try {
       const workspaceId = options.workspaceId ? normalizeWorkspaceObjectId(options.workspaceId) : undefined;
+      const cooldownPolicy = await policyRuleService.getScheduledInterventionCooldownPolicy({ workspaceId });
       const needingFollowUp = await Intervention.getNeedingFollowUp({ workspaceId });
       const queuedFollowUps = [];
 
@@ -375,7 +383,7 @@ class InterventionEngine {
           action: 'Follow up on previous intervention',
           message: `Following up on my previous message. Please respond by noon or I'll escalate to your team lead.`,
           metadata: { originalInterventionId: intervention._id }
-        });
+        }, { cooldownPolicy });
 
         const followUpResult = await this.executeIntervention(followUp);
         if (followUpResult?.error) continue;
@@ -397,6 +405,7 @@ class InterventionEngine {
   async processEscalations(options = {}) {
     try {
       const workspaceId = options.workspaceId ? normalizeWorkspaceObjectId(options.workspaceId) : undefined;
+      const cooldownPolicy = await policyRuleService.getScheduledInterventionCooldownPolicy({ workspaceId });
       const needingEscalation = await Intervention.getNeedingEscalation({ workspaceId });
       const queuedEscalations = [];
 
@@ -413,7 +422,7 @@ class InterventionEngine {
           action: 'Escalate to team lead',
           message: `Card has been stuck for extended period with no response to multiple follow-ups.`,
           metadata: { originalInterventionId: intervention._id }
-        });
+        }, { cooldownPolicy });
 
         const escalationResult = await this.executeIntervention(escalation);
         if (escalationResult?.error) continue;

@@ -10,9 +10,20 @@ const OWNER_STRICTNESS = Object.freeze({ system: 0, va: 1, team: 1, robert: 2 })
 const MAX_REASON_LENGTH = 500;
 const DECISION_QUEUE_SNOOZE_ACTION = 'decision_queue_snooze';
 const DECISION_QUEUE_ROUTING_ACTION = 'decision_queue_routing';
+const SCHEDULED_INTERVENTION_COOLDOWN_ACTION = 'scheduled_intervention_cooldown';
 const DEFAULT_SNOOZE_HOURS = 24;
 const MIN_SNOOZE_HOURS = 1;
 const MAX_SNOOZE_HOURS = 168;
+const DEFAULT_INTERVENTION_COOLDOWN_HOURS = 24;
+const SCHEDULED_INTERVENTION_TRIGGERS = Object.freeze([
+  'card_stuck',
+  'no_activity',
+  'overdue',
+  'member_overloaded',
+  'blocking_others',
+  'no_response_to_followup',
+  'performance_milestone'
+]);
 const DEFAULT_QUEUE_ROUTING = Object.freeze({
   low: Object.freeze({ ownerType: 'va', escalationHours: 24 }),
   medium: Object.freeze({ ownerType: 'team', escalationHours: 24 }),
@@ -27,10 +38,17 @@ const actionLabel = (actionType) => String(actionType || '').replaceAll('_', ' '
 const getPolicyRuleModel = () => require('../models/PolicyRule');
 const isDecisionQueueSnoozeAction = actionType => actionType === DECISION_QUEUE_SNOOZE_ACTION;
 const isDecisionQueueRoutingAction = actionType => actionType === DECISION_QUEUE_ROUTING_ACTION;
-const isDecisionQueueWorkflowAction = actionType => isDecisionQueueSnoozeAction(actionType) || isDecisionQueueRoutingAction(actionType);
+const isScheduledInterventionCooldownAction = actionType => actionType === SCHEDULED_INTERVENTION_COOLDOWN_ACTION;
+const isWorkflowAction = actionType => isDecisionQueueSnoozeAction(actionType)
+  || isDecisionQueueRoutingAction(actionType)
+  || isScheduledInterventionCooldownAction(actionType);
 const parseSnoozeHours = value => {
   const parsed = typeof value === 'string' && !value.trim() ? Number.NaN : Number(value);
   return Number.isInteger(parsed) && parsed >= MIN_SNOOZE_HOURS && parsed <= MAX_SNOOZE_HOURS ? parsed : null;
+};
+const parseScheduledCooldownHours = value => {
+  const parsed = typeof value === 'string' && !value.trim() ? Number.NaN : Number(value);
+  return Number.isInteger(parsed) && parsed >= DEFAULT_INTERVENTION_COOLDOWN_HOURS && parsed <= MAX_SNOOZE_HOURS ? parsed : null;
 };
 const toValidDate = (value) => {
   if (!value) return null;
@@ -56,7 +74,7 @@ class PolicyRuleService {
   }
 
   assertActionType(actionType) {
-    if (!interventionPolicy.getWriteActionTypes().includes(actionType) && !isDecisionQueueWorkflowAction(actionType)) {
+    if (!interventionPolicy.getWriteActionTypes().includes(actionType) && !isWorkflowAction(actionType)) {
       const error = new Error('Action type is not eligible for a Trello safety policy');
       error.statusCode = 400;
       throw error;
@@ -233,6 +251,59 @@ class PolicyRuleService {
     };
   }
 
+  scheduledInterventionCooldownBaseline() {
+    const cooldownHoursByTrigger = Object.fromEntries(
+      SCHEDULED_INTERVENTION_TRIGGERS.map(trigger => [trigger, DEFAULT_INTERVENTION_COOLDOWN_HOURS])
+    );
+    return {
+      actionType: SCHEDULED_INTERVENTION_COOLDOWN_ACTION,
+      label: 'Scheduled intervention cooldowns',
+      policyKind: 'workflow',
+      workflowType: 'scheduled_intervention_cooldown',
+      enabled: true,
+      configured: false,
+      riskLevel: 'low',
+      baselineRiskLevel: 'low',
+      ownerType: 'robert',
+      baselineOwnerType: 'robert',
+      requiresApproval: false,
+      approvalReason: 'Cooldowns only suppress duplicate internal recommendations; they never execute, approve, or prepare a provider write.',
+      cooldownHoursByTrigger,
+      baselineCooldownHoursByTrigger: cooldownHoursByTrigger,
+      policyRuleId: null,
+      updatedAt: null,
+      updatedBy: null,
+      reason: ''
+    };
+  }
+
+  normalizeScheduledInterventionCooldowns(candidate = {}) {
+    return Object.fromEntries(SCHEDULED_INTERVENTION_TRIGGERS.map((trigger) => [
+      trigger,
+      parseScheduledCooldownHours(candidate?.[trigger]) || DEFAULT_INTERVENTION_COOLDOWN_HOURS
+    ]));
+  }
+
+  mergeScheduledInterventionCooldownPolicy(rule) {
+    const baseline = this.scheduledInterventionCooldownBaseline();
+    if (!rule) return baseline;
+    return {
+      ...baseline,
+      configured: true,
+      cooldownHoursByTrigger: this.normalizeScheduledInterventionCooldowns(rule.conditions?.cooldownHoursByTrigger),
+      policyRuleId: rule._id ? String(rule._id) : null,
+      updatedAt: rule.updatedAt || null,
+      updatedBy: rule.updatedBy || 'system',
+      reason: rule.reason || ''
+    };
+  }
+
+  resolveScheduledInterventionCooldown({ trigger, policy } = {}) {
+    const effectivePolicy = policy || this.scheduledInterventionCooldownBaseline();
+    return parseScheduledCooldownHours(effectivePolicy.cooldownHoursByTrigger?.[trigger])
+      || DEFAULT_INTERVENTION_COOLDOWN_HOURS;
+  }
+
   async listEffectivePolicies(options = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
@@ -247,7 +318,8 @@ class PolicyRuleService {
     return [
       ...writePolicies,
       this.mergeDecisionQueueSnoozePolicy(rulesByAction.get(DECISION_QUEUE_SNOOZE_ACTION)),
-      this.mergeDecisionQueueRoutingPolicy(rulesByAction.get(DECISION_QUEUE_ROUTING_ACTION))
+      this.mergeDecisionQueueRoutingPolicy(rulesByAction.get(DECISION_QUEUE_ROUTING_ACTION)),
+      this.mergeScheduledInterventionCooldownPolicy(rulesByAction.get(SCHEDULED_INTERVENTION_COOLDOWN_ACTION))
     ];
   }
 
@@ -262,7 +334,8 @@ class PolicyRuleService {
         $in: [
           'trello_action_policy_updated',
           'decision_queue_snooze_policy_updated',
-          'decision_queue_routing_policy_updated'
+          'decision_queue_routing_policy_updated',
+          'scheduled_intervention_cooldown_policy_updated'
         ]
       }
     })
@@ -299,6 +372,14 @@ class PolicyRuleService {
     return this.mergeDecisionQueueRoutingPolicy(rule);
   }
 
+  async getScheduledInterventionCooldownPolicy(options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const PolicyRule = getPolicyRuleModel();
+    const rule = await PolicyRule.findOne({ workspaceId, actionType: SCHEDULED_INTERVENTION_COOLDOWN_ACTION });
+    return this.mergeScheduledInterventionCooldownPolicy(rule);
+  }
+
   async updateActionPolicy(actionType, body = {}, options = {}) {
     this.requireDatabase();
     this.assertActionType(actionType);
@@ -307,6 +388,9 @@ class PolicyRuleService {
     }
     if (isDecisionQueueRoutingAction(actionType)) {
       return this.updateDecisionQueueRoutingPolicy(body, options);
+    }
+    if (isScheduledInterventionCooldownAction(actionType)) {
+      return this.updateScheduledInterventionCooldownPolicy(body, options);
     }
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const base = interventionPolicy.classifyAction(actionType);
@@ -497,6 +581,76 @@ class PolicyRuleService {
     return policy;
   }
 
+  async updateScheduledInterventionCooldownPolicy(body = {}, options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const actor = options.actor || 'sneup-operator';
+    const PolicyRule = getPolicyRuleModel();
+    const existing = await PolicyRule.findOne({ workspaceId, actionType: SCHEDULED_INTERVENTION_COOLDOWN_ACTION });
+    const beforePolicy = this.mergeScheduledInterventionCooldownPolicy(existing);
+    const suppliedCooldowns = body.cooldownHoursByTrigger;
+    if (suppliedCooldowns !== undefined && (!suppliedCooldowns || typeof suppliedCooldowns !== 'object' || Array.isArray(suppliedCooldowns))) {
+      const error = new Error('cooldownHoursByTrigger must be an object keyed by scheduled intervention trigger');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const cooldownHoursByTrigger = {};
+    for (const trigger of SCHEDULED_INTERVENTION_TRIGGERS) {
+      const previous = beforePolicy.cooldownHoursByTrigger[trigger];
+      const requestedHours = suppliedCooldowns?.[trigger] === undefined
+        ? previous
+        : parseScheduledCooldownHours(suppliedCooldowns[trigger]);
+      if (!requestedHours) {
+        const error = new Error(`${trigger} cooldown must be a whole number between ${DEFAULT_INTERVENTION_COOLDOWN_HOURS} and ${MAX_SNOOZE_HOURS} hours`);
+        error.statusCode = 400;
+        throw error;
+      }
+      cooldownHoursByTrigger[trigger] = requestedHours;
+    }
+
+    const rule = await PolicyRule.findOneAndUpdate(
+      { workspaceId, actionType: SCHEDULED_INTERVENTION_COOLDOWN_ACTION },
+      {
+        $set: {
+          name: 'Scheduled intervention cooldown workflow policy',
+          riskLevel: 'low',
+          requiresApproval: false,
+          ownerType: 'robert',
+          enabled: true,
+          pauseExpiresAt: null,
+          reason: body.reason === undefined ? existing?.reason || '' : clampText(body.reason),
+          updatedBy: actor,
+          conditions: {
+            ...(existing?.conditions || {}),
+            cooldownHoursByTrigger
+          }
+        },
+        $setOnInsert: { workspaceId, actionType: SCHEDULED_INTERVENTION_COOLDOWN_ACTION }
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    const policy = this.mergeScheduledInterventionCooldownPolicy(rule);
+    try {
+      await AuditEvent.create({
+        workspaceId,
+        entityType: 'policy_rule',
+        entityId: rule._id,
+        action: 'scheduled_intervention_cooldown_policy_updated',
+        actor,
+        source: 'api',
+        riskLevel: 'low',
+        beforeState: beforePolicy,
+        afterState: policy
+      });
+    } catch (error) {
+      logger.error('Scheduled intervention cooldown policy audit write failed:', error);
+    }
+
+    return policy;
+  }
+
   async updateDecisionQueueSnoozePolicy(body = {}, options = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
@@ -563,7 +717,10 @@ module.exports.OWNER_TYPES = OWNER_TYPES;
 module.exports.OWNER_STRICTNESS = OWNER_STRICTNESS;
 module.exports.DECISION_QUEUE_SNOOZE_ACTION = DECISION_QUEUE_SNOOZE_ACTION;
 module.exports.DECISION_QUEUE_ROUTING_ACTION = DECISION_QUEUE_ROUTING_ACTION;
+module.exports.SCHEDULED_INTERVENTION_COOLDOWN_ACTION = SCHEDULED_INTERVENTION_COOLDOWN_ACTION;
 module.exports.DEFAULT_SNOOZE_HOURS = DEFAULT_SNOOZE_HOURS;
 module.exports.MIN_SNOOZE_HOURS = MIN_SNOOZE_HOURS;
 module.exports.MAX_SNOOZE_HOURS = MAX_SNOOZE_HOURS;
 module.exports.DEFAULT_QUEUE_ROUTING = DEFAULT_QUEUE_ROUTING;
+module.exports.DEFAULT_INTERVENTION_COOLDOWN_HOURS = DEFAULT_INTERVENTION_COOLDOWN_HOURS;
+module.exports.SCHEDULED_INTERVENTION_TRIGGERS = SCHEDULED_INTERVENTION_TRIGGERS;

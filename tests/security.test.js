@@ -7305,6 +7305,42 @@ describe('operations ledger intervention policy', () => {
     expect(() => resolveSnoozedUntil({ snoozedUntil: '2026-07-14T07:59:59.000Z', defaultSnoozeHours: 24, now })).toThrow('in the future');
   });
 
+  test('scheduled intervention cooldowns are per-signal and cannot shorten the 24-hour baseline', () => {
+    const { PolicyRuleService, DEFAULT_INTERVENTION_COOLDOWN_HOURS } = require('../src/services/policyRuleService');
+    const service = new PolicyRuleService();
+    const configured = service.mergeScheduledInterventionCooldownPolicy({
+      _id: 'cooldown-policy',
+      conditions: {
+        cooldownHoursByTrigger: {
+          no_activity: 72,
+          overdue: 24,
+          card_stuck: 12,
+          blocking_others: 169
+        }
+      }
+    });
+
+    expect(configured).toMatchObject({
+      actionType: 'scheduled_intervention_cooldown',
+      policyKind: 'workflow',
+      configured: true,
+      cooldownHoursByTrigger: expect.objectContaining({
+        no_activity: 72,
+        overdue: 24,
+        card_stuck: DEFAULT_INTERVENTION_COOLDOWN_HOURS,
+        blocking_others: DEFAULT_INTERVENTION_COOLDOWN_HOURS
+      })
+    });
+    expect(service.resolveScheduledInterventionCooldown({
+      trigger: 'no_activity',
+      policy: configured
+    })).toBe(72);
+    expect(service.resolveScheduledInterventionCooldown({
+      trigger: 'manual_request',
+      policy: configured
+    })).toBe(DEFAULT_INTERVENTION_COOLDOWN_HOURS);
+  });
+
   test('decision queue routing keeps high-risk work with Robert and bounds internal escalation windows', () => {
     const { PolicyRuleService } = require('../src/services/policyRuleService');
     const service = new PolicyRuleService();
@@ -7435,7 +7471,8 @@ describe('operations ledger intervention policy', () => {
         $in: [
           'trello_action_policy_updated',
           'decision_queue_snooze_policy_updated',
-          'decision_queue_routing_policy_updated'
+          'decision_queue_routing_policy_updated',
+          'scheduled_intervention_cooldown_policy_updated'
         ]
       }
     });
@@ -7543,6 +7580,12 @@ describe('operations ledger intervention policy', () => {
       getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-1'),
       normalizeWorkspaceObjectId: jest.fn((value) => value || 'workspace-1')
     }));
+    jest.doMock('../src/services/policyRuleService', () => ({
+      getScheduledInterventionCooldownPolicy: jest.fn().mockResolvedValue({
+        cooldownHoursByTrigger: { no_activity: 72 }
+      }),
+      resolveScheduledInterventionCooldown: jest.fn(() => 72)
+    }));
 
     const interventionEngine = require('../src/services/interventionEngine');
     const result = await interventionEngine.createIntervention({
@@ -7567,6 +7610,10 @@ describe('operations ledger intervention policy', () => {
       status: { $in: ['pending', 'awaiting_approval', 'executing', 'executed'] },
       createdAt: { $gte: expect.any(Date) }
     }));
+    const query = findOne.mock.calls[0][0];
+    const elapsedHours = (Date.now() - query.createdAt.$gte.getTime()) / (60 * 60 * 1000);
+    expect(elapsedHours).toBeGreaterThanOrEqual(71.99);
+    expect(elapsedHours).toBeLessThanOrEqual(72.01);
     expect(findOneChain.sort).toHaveBeenCalledWith({ createdAt: -1 });
   });
 });
