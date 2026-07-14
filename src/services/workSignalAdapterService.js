@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -40,6 +40,7 @@ const harvestWorkSignalClient = require('./harvestWorkSignalClient');
 const codaWorkSignalClient = require('./codaWorkSignalClient');
 const teamworkWorkSignalClient = require('./teamworkWorkSignalClient');
 const basecampWorkSignalClient = require('./basecampWorkSignalClient');
+const redmineWorkSignalClient = require('./redmineWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -720,6 +721,46 @@ basecampAdapter.capabilities.credentialBackedSync = true;
 basecampAdapter.list = async account => (await basecampWorkSignalClient.fetchDelta(account, null)).records;
 basecampAdapter.fetchDelta = (account, cursor) => basecampWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('basecamp', basecampAdapter);
+
+const redmineStatus = (item) => {
+  const status = String(item.status || '').toLowerCase();
+  if (/(closed|resolved|rejected)/.test(status)) return 'done';
+  if (/(blocked|waiting)/.test(status)) return 'blocked';
+  if (/(assigned|progress|started|active)/.test(status)) return 'in_progress';
+  return statusFromText(status);
+};
+const redminePriority = (value) => {
+  const priority = String(value || '').toLowerCase();
+  if (/(immediate|urgent|critical)/.test(priority)) return 'critical';
+  if (/high/.test(priority)) return 'high';
+  if (/low/.test(priority)) return 'low';
+  return 'normal';
+};
+const redmineAdapter = buildAdapter('redmine', 'Redmine project and issue metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'issue'),
+  title: titleFromText(item.name, 'Redmine work item'),
+  description: '',
+  status: redmineStatus(item),
+  priority: redminePriority(item.priority),
+  url: pick(item.url),
+  owners: userNames(item.owners),
+  labels: compact(['redmine', item.sourceType, item.project?.name, item.tracker, item.status]),
+  dueAt: pick(item.dueAt),
+  providerCreatedAt: pick(item.createdAt),
+  providerUpdatedAt: pick(item.updatedAt, item.createdAt),
+  evidenceRefs: baseEvidence(account, item, 'Redmine metadata'),
+  raw: {
+    id: item.id, sourceType: item.sourceType, projectId: item.projectId, issueId: item.issueId,
+    identifier: item.identifier, project: item.project, tracker: item.tracker, status: item.status, priority: item.priority,
+    owners: item.owners, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt, url: item.url,
+    dependencies: item.dependencies, blockedBy: item.blockedBy, blocks: item.blocks, related: item.related, duplicates: item.duplicates
+  }
+}));
+redmineAdapter.capabilities.credentialBackedSync = true;
+redmineAdapter.list = async account => (await redmineWorkSignalClient.fetchDelta(account, null)).records;
+redmineAdapter.fetchDelta = (account, cursor) => redmineWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('redmine', redmineAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

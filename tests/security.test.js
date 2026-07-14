@@ -73,6 +73,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/codaWorkSignalClient');
     jest.dontMock('../src/services/teamworkWorkSignalClient');
     jest.dontMock('../src/services/basecampWorkSignalClient');
+    jest.dontMock('../src/services/redmineWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1894,6 +1895,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('basecamp').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Redmine adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'issue:1' }] });
+    jest.doMock('../src/services/redmineWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'redmine' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('redmine').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3286,6 +3299,90 @@ describe('work signal normalization', () => {
       externalId: 'todo:18', sourceType: 'todo', title: 'Ship Basecamp connector', description: '', status: 'open', priority: 'normal', labels: ['basecamp', 'todo', 'project:9', 'todo_list:7', 'open']
     });
     expect(JSON.stringify(normalized.raw)).not.toMatch(/Private detail|Private comment/);
+  });
+
+  test('Redmine sync reads bounded project and issue metadata without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/redmineWorkSignalClient');
+    jest.resetModules();
+    const { RedmineWorkSignalClient } = require('../src/services/redmineWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { total_count: 1, projects: [{
+          id: 9, name: 'Sneup release', identifier: 'sneup', status: 1, created_on: '2026-07-10T10:00:00.000Z', updated_on: '2026-07-11T10:00:00.000Z',
+          description: 'Private project description', custom_fields: [{ value: 'Private project field' }]
+        }] } })
+        .mockResolvedValueOnce({ data: { total_count: 1, issues: [{
+          id: 18, subject: 'Ship Redmine connector', project: { id: 9, name: 'Sneup release' }, tracker: { name: 'Task' },
+          status: { name: 'In Progress' }, priority: { name: 'High' }, assigned_to: { name: 'Robert' }, due_date: '2026-07-15',
+          created_on: '2026-07-10T10:00:00.000Z', updated_on: '2026-07-12T12:00:00.000Z',
+          relations: [{ relation_type: 'blocks', issue_id: 18, issue_to_id: 19 }],
+          description: 'Private issue description', journals: [{ notes: 'Private journal' }], custom_fields: [{ value: 'Private field' }], attachments: [{ filename: 'secret.pdf' }]
+        }] } })
+    };
+    const client = new RedmineWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'redmine-key' })) }
+    });
+    const account = { connectorId: 'redmine', metadata: { fields: { baseUrl: 'https://redmine.example.com/redmine' } } };
+    const result = await client.fetchDelta(account, '2026-07-10T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://redmine.example.com/redmine/projects.json', expect.objectContaining({
+      params: { limit: 100, offset: 0 }, headers: expect.objectContaining({ 'X-Redmine-API-Key': 'redmine-key' }), maxRedirects: 0, proxy: false
+    }));
+    expect(http.get).toHaveBeenCalledWith('https://redmine.example.com/redmine/issues.json', expect.objectContaining({
+      params: expect.objectContaining({ status_id: '*', include: 'relations', updated_on: '>=2026-07-10T09:59:00.000Z' })
+    }));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/journals|attachments|wiki|time_entries|custom_fields|description/i);
+    expect(JSON.stringify(result.records)).not.toMatch(/Private project|Private issue|Private journal|Private field|secret\.pdf/);
+    expect(result).toMatchObject({ metadata: { source: 'redmine_api', projects: 1, issues: 1, contentPolicy: 'project_issue_metadata_only_no_descriptions_journals_custom_fields_or_attachments' }, hasMore: false, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'project:9', name: 'Sneup release', identifier: 'sneup' }),
+      expect.objectContaining({ id: 'issue:18', name: 'Ship Redmine connector', project: { id: 9, name: 'Sneup release' }, blocks: [{ externalId: 'issue:19', relationship: 'blocks' }] })
+    ]));
+  });
+
+  test('Redmine sync rejects untrusted instance URLs and fails closed at configured caps', async () => {
+    jest.dontMock('../src/services/redmineWorkSignalClient');
+    jest.resetModules();
+    const { RedmineWorkSignalClient } = require('../src/services/redmineWorkSignalClient');
+    const untrustedHttp = { get: jest.fn() };
+    const untrustedClient = new RedmineWorkSignalClient({ http: untrustedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'redmine-key' })) } });
+    await expect(untrustedClient.fetchDelta({ metadata: { fields: { baseUrl: 'https://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 400 });
+    expect(untrustedHttp.get).not.toHaveBeenCalled();
+
+    const previousLimit = process.env.SNEUP_REDMINE_MAX_ISSUES;
+    process.env.SNEUP_REDMINE_MAX_ISSUES = '1';
+    const cappedHttp = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { total_count: 0, projects: [] } })
+        .mockResolvedValueOnce({ data: { total_count: 2, issues: [{ id: 1, subject: 'One' }] } })
+    };
+    const cappedClient = new RedmineWorkSignalClient({ http: cappedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'redmine-key' })) } });
+    try {
+      await expect(cappedClient.fetchDelta({ metadata: { fields: { baseUrl: 'https://redmine.example.com' } } })).rejects.toMatchObject({ statusCode: 413 });
+      expect(cappedHttp.get).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_REDMINE_MAX_ISSUES;
+      else process.env.SNEUP_REDMINE_MAX_ISSUES = previousLimit;
+    }
+  });
+
+  test('Redmine adapter retains only approved project, issue, and relation metadata in normalized work signals', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    expect(workSignalAdapterService.getAdapter('redmine').capabilities.credentialBackedSync).toBe(true);
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'redmine' }, {
+      id: 'issue:18', sourceType: 'issue', issueId: 18, name: 'Ship Redmine connector', status: 'In Progress', priority: 'High',
+      project: { id: 9, name: 'Sneup release' }, tracker: 'Task', owners: ['Robert'], dueAt: '2026-07-15', updatedAt: '2026-07-12T12:00:00.000Z',
+      blocks: [{ externalId: 'issue:19', relationship: 'blocks' }], description: 'Private detail', journals: ['Private journal'], custom_fields: ['Private field']
+    });
+    expect(normalized).toMatchObject({
+      externalId: 'issue:18', sourceType: 'issue', title: 'Ship Redmine connector', description: '', status: 'in_progress', priority: 'high',
+      labels: ['redmine', 'issue', 'Sneup release', 'Task', 'In Progress']
+    });
+    expect(normalized.raw.blocks).toEqual([{ externalId: 'issue:19', relationship: 'blocks' }]);
+    expect(JSON.stringify(normalized.raw)).not.toMatch(/Private detail|Private journal|Private field/);
   });
 
   test('projects provider signals into normalized work graph records', () => {
