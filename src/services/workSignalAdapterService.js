@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -74,6 +74,7 @@ const figmaWorkSignalClient = require('./figmaWorkSignalClient');
 const confluenceWorkSignalClient = require('./confluenceWorkSignalClient');
 const boxWorkSignalClient = require('./boxWorkSignalClient');
 const rallyWorkSignalClient = require('./rallyWorkSignalClient');
+const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1010,6 +1011,12 @@ rallyAdapter.capabilities.credentialBackedSync = true;
 rallyAdapter.list = async account => (await rallyWorkSignalClient.fetchDelta(account, null)).records;
 rallyAdapter.fetchDelta = (account, cursor) => rallyWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('rally', rallyAdapter);
+
+const gmailAdapter = buildAdapter('gmail', 'Gmail inbox-thread metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'thread'), title: titleFromText(item.name, 'Gmail thread'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['gmail', item.sourceType, 'inbox']), dueAt: undefined, providerCreatedAt: undefined, providerUpdatedAt: pick(item.updatedAt), evidenceRefs: baseEvidence(account, item, 'Gmail inbox-thread metadata'), raw: { id: item.id, sourceType: item.sourceType, threadId: item.threadId, status: item.status, updatedAt: item.updatedAt } }));
+gmailAdapter.capabilities.credentialBackedSync = true;
+gmailAdapter.list = async account => (await gmailWorkSignalClient.fetchDelta(account, null)).records;
+gmailAdapter.fetchDelta = (account, cursor) => gmailWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('gmail', gmailAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

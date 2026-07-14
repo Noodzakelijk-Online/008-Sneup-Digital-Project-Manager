@@ -282,7 +282,7 @@ const CONNECTORS = [
     id: 'google_workspace',
     name: 'Google Workspace',
     category: 'calendar_email',
-    description: 'Gmail, Calendar, Drive, Docs, Sheets, Slides, Meet artifacts, and directory data through Google APIs.',
+    description: 'Calendar, Drive, Docs, Sheets, Slides, Meet artifacts, and directory data through Google APIs. Gmail connects separately with a narrower metadata-only scope.',
     auth: oauth2({
       envPrefix: 'GOOGLE',
       authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
@@ -292,13 +292,12 @@ const CONNECTORS = [
         'email',
         'profile',
         'https://www.googleapis.com/auth/calendar.readonly',
-        'https://www.googleapis.com/auth/drive.metadata.readonly',
-        'https://www.googleapis.com/auth/gmail.readonly'
+        'https://www.googleapis.com/auth/drive.metadata.readonly'
       ],
       extraAuthParams: { access_type: 'offline', prompt: 'consent' },
       docsUrl: 'https://developers.google.com/identity/protocols/oauth2/web-server'
     }),
-    sync: ['mail', 'calendar', 'drive', 'docs', 'sheets', 'slides', 'users']
+    sync: ['calendar', 'drive', 'docs', 'sheets', 'slides', 'users']
   },
   {
     id: 'slack',
@@ -493,7 +492,7 @@ const CONNECTORS = [
   { id: 'mattermost', name: 'Mattermost', category: 'communication', description: 'Teams, channels, messages, users, files, and self-hosted project communication.', auth: pat({ docsUrl: 'https://api.mattermost.com/' }), sync: ['teams', 'channels', 'messages', 'users'] },
   { id: 'webex', name: 'Webex', category: 'communication', description: 'Meetings, messages, spaces, people, recordings, and stakeholder sessions.', auth: pat({ docsUrl: 'https://developer.webex.com/docs/api/getting-started' }), sync: ['meetings', 'messages', 'spaces', 'people'] },
   { id: 'calendly', name: 'Calendly', category: 'calendar_email', description: 'Read-only bounded event-type metadata using a personal access token with users:read and event_types:read. Sneup excludes scheduled events, invitees, booking links, locations, routing forms, availability, calendars, and provider writes.', auth: pat({ scopes: ['users:read', 'event_types:read'], docsUrl: 'https://developer.calendly.com/scopes' }), sync: ['event_types'] },
-  { id: 'gmail', name: 'Gmail', category: 'calendar_email', description: 'Threads, messages, labels, project follow-ups, client requests, and stakeholder context.', auth: manual({ docsUrl: 'https://developers.google.com/gmail/api/guides' }), sync: ['threads', 'messages', 'labels'] },
+  { id: 'gmail', name: 'Gmail', category: 'calendar_email', description: 'Read-only bounded inbox-thread metadata with redacted subject lines. Sneup excludes email bodies, snippets, attachments, sender and recipient headers, message IDs, labels, drafts, settings, and provider writes. Gmail metadata is restricted Google user data; complete Google verification and any required security assessment before production use.', auth: oauth2({ envPrefix: 'GMAIL', authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token', scopes: ['https://www.googleapis.com/auth/gmail.metadata'], extraAuthParams: { access_type: 'offline', prompt: 'consent' }, docsUrl: 'https://developers.google.com/workspace/gmail/api/auth/scopes' }), sync: ['inbox_threads'] },
   { id: 'outlook', name: 'Outlook', category: 'calendar_email', description: 'Mail, calendar, contacts, meeting cadence, and stakeholder communication.', auth: manual({ docsUrl: 'https://learn.microsoft.com/en-us/graph/outlook-mail-concept-overview' }), sync: ['mail', 'calendar', 'contacts'] },
   { id: 'harvest', name: 'Harvest', category: 'time_finance', description: 'Read-only bounded time-entry metadata for utilization signals. Sneup excludes notes, rates, invoices, and budget detail.', auth: pat({ docsUrl: 'https://help.getharvest.com/api-v2/', fields: [{ name: 'accountId', label: 'Harvest account ID', placeholder: '123456', required: true }, { name: 'token', label: 'Personal access token', secret: true, required: true }] }), sync: ['time_entries', 'projects', 'clients'] },
   { id: 'toggl_track', name: 'Toggl Track', category: 'time_finance', description: 'Read-only bounded project and time-entry utilization metadata. Sneup excludes descriptions, tags, clients, people, rates, and sharing data.', auth: pat({ docsUrl: 'https://engineering.toggl.com/docs/track/', fields: [{ name: 'workspaceId', label: 'Toggl Track workspace ID', placeholder: '1234567', required: true }, { name: 'token', label: 'API token', secret: true, required: true }] }), sync: ['time_entries', 'projects'] },

@@ -102,6 +102,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/dropboxWorkSignalClient');
     jest.dontMock('../src/services/boxWorkSignalClient');
     jest.dontMock('../src/services/rallyWorkSignalClient');
+    jest.dontMock('../src/services/gmailWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -1170,6 +1171,10 @@ describe('connector registry', () => {
 
     expect(byId.google_workspace.auth.scopes).toContain('https://www.googleapis.com/auth/calendar.readonly');
     expect(byId.google_workspace.auth.scopes).not.toContain('https://www.googleapis.com/auth/calendar');
+    expect(byId.google_workspace.auth.scopes).not.toEqual(expect.arrayContaining(['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.metadata']));
+    expect(byId.gmail.auth.scopes).toEqual(['https://www.googleapis.com/auth/gmail.metadata']);
+    expect(byId.gmail.auth.scopes).not.toEqual(expect.arrayContaining(['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/gmail.send']));
+    expect(byId.gmail.sync).toEqual(['inbox_threads']);
     expect(byId.zoom.auth.scopes).toEqual(['meeting:read']);
     expect(byId.zoom.auth.scopes).not.toEqual(expect.arrayContaining(['meeting:write', 'recording:read', 'user:read']));
     expect(byId.miro.auth.scopes).toEqual(['boards:read']);
@@ -1717,6 +1722,7 @@ describe('work signal normalization', () => {
       'github',
       'gitlab',
       'google_workspace',
+      'gmail',
       'microsoft_365',
       'linear',
       'notion',
@@ -2356,6 +2362,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('rally').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Gmail adapter delegates bounded inbox-thread metadata reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'thread:17ab1234cdef5678' }] });
+    jest.doMock('../src/services/gmailWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'gmail' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('gmail').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -4858,6 +4875,39 @@ describe('work signal normalization', () => {
     const malformed = new RallyWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { QueryResult: { Results: [{ ObjectID: 'https://127.0.0.1/steal' }], TotalResultCount: 1 } } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ connectorId: 'rally' })).rejects.toMatchObject({ statusCode: 502 });
     const previous = process.env.SNEUP_RALLY_MAX_USER_STORIES; process.env.SNEUP_RALLY_MAX_USER_STORIES = '1'; const capped = new RallyWorkSignalClient({ http: { get: jest.fn(url => Promise.resolve(url.endsWith('/hierarchicalrequirement') ? { data: { QueryResult: { Results: [{ ObjectID: '1234', FormattedID: 'US1234', Name: 'First' }], TotalResultCount: 2 } } } : { data: { QueryResult: { Results: [], TotalResultCount: 0 } } })) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ connectorId: 'rally' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_RALLY_MAX_USER_STORIES; else process.env.SNEUP_RALLY_MAX_USER_STORIES = previous; }
+  });
+
+  test('Gmail sync pages bounded inbox-thread metadata without bodies, snippets, attachments, people, message IDs, labels, or provider writes', async () => {
+    jest.dontMock('../src/services/gmailWorkSignalClient');
+    jest.resetModules();
+    const { GmailWorkSignalClient } = require('../src/services/gmailWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const firstThread = '17ab1234cdef5678'; const secondThread = '17ab1234cdef5679';
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { threads: [{ id: firstThread }], nextPageToken: 'page_2' } })
+      .mockResolvedValueOnce({ data: { id: firstThread, snippet: 'private body preview', messages: [{ id: 'private-message-id', internalDate: '1783965600000', labelIds: ['INBOX'], payload: { headers: [{ name: 'Subject', value: `Launch ${privateEmail}` }, { name: 'From', value: privateEmail }, { name: 'To', value: privateEmail }] }, parts: [{ body: { data: 'private-body' } }] }] } })
+      .mockResolvedValueOnce({ data: { threads: [{ id: secondThread }] } })
+      .mockResolvedValueOnce({ data: { id: secondThread, messages: [{ id: 'another-private-id', internalDate: '1784052000000', payload: { headers: [{ name: 'Subject', value: 'Delivery handoff' }] } }] } }) };
+    const client = new GmailWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'gmail-token' })) } });
+    const previous = { max: process.env.SNEUP_GMAIL_MAX_THREADS, page: process.env.SNEUP_GMAIL_PAGE_SIZE, concurrency: process.env.SNEUP_GMAIL_REQUEST_CONCURRENCY }; process.env.SNEUP_GMAIL_MAX_THREADS = '2'; process.env.SNEUP_GMAIL_PAGE_SIZE = '1'; process.env.SNEUP_GMAIL_REQUEST_CONCURRENCY = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'gmail' }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://gmail.googleapis.com/gmail/v1/users/me/threads', expect.objectContaining({ params: { labelIds: 'INBOX', maxResults: 1 }, headers: expect.objectContaining({ Authorization: 'Bearer gmail-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${firstThread}`, expect.objectContaining({ params: { format: 'metadata', metadataHeaders: ['Subject'] } }));
+      expect(http.get).toHaveBeenNthCalledWith(3, 'https://gmail.googleapis.com/gmail/v1/users/me/threads', expect.objectContaining({ params: { labelIds: 'INBOX', maxResults: 1, pageToken: 'page_2' } }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'gmail_inbox_thread_metadata', threads: 2, scannedThreads: 2, pages: 2 }, nextCursor: '2026-07-13T12:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/private|snippet|From|To|message-id|labelIds|parts|private-body/); expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_GMAIL_MAX_THREADS; else process.env.SNEUP_GMAIL_MAX_THREADS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_GMAIL_PAGE_SIZE; else process.env.SNEUP_GMAIL_PAGE_SIZE = previous.page; if (previous.concurrency === undefined) delete process.env.SNEUP_GMAIL_REQUEST_CONCURRENCY; else process.env.SNEUP_GMAIL_REQUEST_CONCURRENCY = previous.concurrency; }
+  });
+
+  test('Gmail sync rejects invalid cursors, thread metadata, pagination, and collection caps', async () => {
+    jest.dontMock('../src/services/gmailWorkSignalClient'); jest.resetModules(); const { GmailWorkSignalClient } = require('../src/services/gmailWorkSignalClient'); const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) };
+    const invalid = new GmailWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ connectorId: 'gmail' }, 'bad-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new GmailWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { threads: [{ id: 'https://127.0.0.1/steal' }] } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ connectorId: 'gmail' })).rejects.toMatchObject({ statusCode: 502 });
+    const invalidPagination = new GmailWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { threads: [], nextPageToken: 'https://127.0.0.1/steal' } }) }, accountConnectorService: accountConnector }); await expect(invalidPagination.fetchDelta({ connectorId: 'gmail' })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_GMAIL_MAX_THREADS; process.env.SNEUP_GMAIL_MAX_THREADS = '1'; const capped = new GmailWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { threads: [{ id: '17ab1234cdef5678' }], nextPageToken: 'page_2' } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'gmail' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_GMAIL_MAX_THREADS; else process.env.SNEUP_GMAIL_MAX_THREADS = previous; }
   });
 
   test('Calendly sync reads bounded event-type metadata without profile, links, availability, invitees, or provider writes', async () => {
