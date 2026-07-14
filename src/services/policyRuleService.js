@@ -108,6 +108,19 @@ class PolicyRuleService {
     });
   }
 
+  async listPolicyHistory(options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const limit = Math.min(Math.max(Number.parseInt(options.limit, 10) || 25, 1), 100);
+    return AuditEvent.find({
+      workspaceId,
+      entityType: 'policy_rule',
+      action: 'trello_action_policy_updated'
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit);
+  }
+
   async resolveEffectivePolicy(actionType, options = {}) {
     this.requireDatabase();
     const base = interventionPolicy.classifyAction(actionType, options);

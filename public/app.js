@@ -21,6 +21,8 @@ const state = {
   workspaceInvitations: [],
   policyRules: [],
   policyRuleError: '',
+  policyHistory: [],
+  policyHistoryError: '',
   activeWorkspaceId: localStorage.getItem('sneup.workspaceId') || '',
   sessionToken: sessionStorage.getItem(SESSION_TOKEN_KEY) || '',
   enhancements: [],
@@ -129,6 +131,8 @@ const els = {
   workspaceInviteButton: document.getElementById('workspaceInviteButton'),
   policyRuleCount: document.getElementById('policyRuleCount'),
   policyRuleList: document.getElementById('policyRuleList'),
+  policyHistoryCount: document.getElementById('policyHistoryCount'),
+  policyHistoryList: document.getElementById('policyHistoryList'),
   setupButton: document.getElementById('setupButton'),
   modal: document.getElementById('connectorModal'),
   modalTitle: document.getElementById('modalTitle'),
@@ -629,12 +633,19 @@ async function loadWorkspaceAdmin() {
     const current = await fetchApi('/api/workspaces/current');
     state.currentWorkspace = current.workspace;
     try {
-      const policyData = await fetchApi('/api/policy-rules');
+      const [policyData, historyData] = await Promise.all([
+        fetchApi('/api/policy-rules'),
+        fetchApi('/api/policy-rules/history?limit=25')
+      ]);
       state.policyRules = policyData.policies || [];
       state.policyRuleError = '';
+      state.policyHistory = historyData.history || [];
+      state.policyHistoryError = '';
     } catch (error) {
       state.policyRules = [];
       state.policyRuleError = error.message;
+      state.policyHistory = [];
+      state.policyHistoryError = error.message;
     }
 
     if (!current.auth?.workspaceOverrideAllowed) {
@@ -670,6 +681,8 @@ async function loadWorkspaceAdmin() {
     state.workspaceInvitations = [];
     state.policyRules = [];
     state.policyRuleError = error.message;
+    state.policyHistory = [];
+    state.policyHistoryError = error.message;
     state.workspaces = state.currentWorkspace ? [state.currentWorkspace] : [];
     renderWorkspaces(error.message);
   }
@@ -2003,6 +2016,7 @@ function renderWorkspaces(errorMessage = '') {
   const users = state.workspaceUsers || [];
   const invitations = state.workspaceInvitations || [];
   const policyRules = state.policyRules || [];
+  const policyHistory = state.policyHistory || [];
   const pendingInvitations = invitations.filter(invite => invite.status === 'pending');
   els.workspaceMetrics.innerHTML = [
     ['Workspace', currentWorkspace?.name || 'Current'],
@@ -2032,6 +2046,10 @@ function renderWorkspaces(errorMessage = '') {
   els.policyRuleList.innerHTML = state.policyRuleError
     ? `<div class="notice">${escapeHtml(state.policyRuleError)}</div>`
     : listOrEmpty(policyRules, renderPolicyRule);
+  els.policyHistoryCount.textContent = `${policyHistory.length} change${policyHistory.length === 1 ? '' : 's'}`;
+  els.policyHistoryList.innerHTML = state.policyHistoryError
+    ? `<div class="notice">${escapeHtml(state.policyHistoryError)}</div>`
+    : listOrEmpty(policyHistory, renderPolicyHistory);
   bindWorkspaceIdentityActions();
   bindPolicyRuleActions();
 }
@@ -2114,6 +2132,28 @@ function renderPolicyRule(policy) {
         <span>${policy.configured ? 'workspace rule set' : 'baseline rule'}</span>
       </div>
       ${canManage ? `<div class="item-actions"><button class="button" data-policy-rule="${escapeHtml(policy.actionType)}" type="button">Configure</button></div>` : ''}
+    </div>
+  `;
+}
+
+function renderPolicyHistory(event) {
+  const after = event.afterState || {};
+  const before = event.beforeState || {};
+  const action = after.label || before.label || 'Trello action';
+  const state = after.enabled === false ? 'paused' : after.enabled === true ? 'active' : 'updated';
+  const stateClass = state === 'paused' ? 'critical' : state === 'active' ? 'healthy' : 'review';
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(action)}</strong>
+        <span class="pill ${stateClass}">${escapeHtml(state)}</span>
+      </div>
+      <div class="meta">
+        <span>${formatDate(event.createdAt)}</span>
+        <span>${escapeHtml(event.actor || 'sneup')}</span>
+        <span>${escapeHtml(after.riskLevel || before.riskLevel || 'risk unchanged')}</span>
+        ${after.relaxationConfirmed ? '<span>relaxation confirmed</span>' : ''}
+      </div>
     </div>
   `;
 }

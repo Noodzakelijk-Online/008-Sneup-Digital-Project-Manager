@@ -26,6 +26,19 @@ router.get('/', requirePermission('audit:read'), async (req, res) => {
   }
 });
 
+router.get('/history', requirePermission('audit:read'), async (req, res) => {
+  try {
+    const history = await policyRuleService.listPolicyHistory({
+      ...options(req),
+      limit: req.query.limit
+    });
+    res.json({ success: true, count: history.length, history });
+  } catch (error) {
+    logger.error('Failed to list Trello action safety policy history:', error);
+    sendError(res, error, 'Failed to list Trello action safety policy history');
+  }
+});
+
 router.put('/:actionType', requirePermission('policy-rules:manage'), async (req, res) => {
   try {
     const policy = await policyRuleService.updateActionPolicy(req.params.actionType, req.body, options(req));

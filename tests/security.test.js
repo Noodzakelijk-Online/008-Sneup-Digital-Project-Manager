@@ -61,6 +61,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/models/WorkDependency');
     jest.dontMock('../src/models/WorkEvent');
     jest.dontMock('../src/models/WorkItem');
+    jest.dontMock('../src/models/AuditEvent');
     jest.dontMock('../src/services/workspaceScopeService');
     jest.dontMock('../src/services/operationsLedgerService');
     jest.dontMock('../src/services/policyRuleService');
@@ -4046,6 +4047,15 @@ describe('enhancement backlog', () => {
 });
 
 describe('operations ledger intervention policy', () => {
+  afterEach(() => {
+    jest.dontMock('mongoose');
+    jest.dontMock('../src/models/AuditEvent');
+    jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/services/policyRuleService');
+    jest.dontMock('../src/services/operationsLedgerService');
+    jest.resetModules();
+  });
+
   test('requires approval for Trello write actions', () => {
     const interventionPolicy = require('../src/services/interventionPolicy');
 
@@ -4104,6 +4114,31 @@ describe('operations ledger intervention policy', () => {
       enabled: false
     });
     expect(service.serializePolicy('comment', service.mergePolicy(base, null)).policyRuleId).toBeNull();
+  });
+
+  test('lists only bounded workspace policy update evidence', async () => {
+    jest.resetModules();
+    const chain = {
+      sort: jest.fn(() => chain),
+      limit: jest.fn().mockResolvedValue([])
+    };
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/models/AuditEvent', () => ({ find: jest.fn(() => chain) }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+
+    const policyRuleService = require('../src/services/policyRuleService');
+    await expect(policyRuleService.listPolicyHistory({ workspaceId: 'workspace-1', limit: 500 })).resolves.toEqual([]);
+
+    const AuditEvent = require('../src/models/AuditEvent');
+    expect(AuditEvent.find).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      entityType: 'policy_rule',
+      action: 'trello_action_policy_updated'
+    });
+    expect(chain.sort).toHaveBeenCalledWith({ createdAt: -1 });
+    expect(chain.limit).toHaveBeenCalledWith(100);
   });
 
   test('intervention execution queues approval instead of writing directly to Trello', async () => {
