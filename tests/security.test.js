@@ -1103,7 +1103,11 @@ describe('workspace identity models', () => {
     expect(invite.matches('wrong-invite')).toBe(false);
     expect(invite.isUsable()).toBe(true);
     expect(WorkspaceInvite.schema.path('tokenHash').options.select).toBe(false);
+    expect(WorkspaceInvite.schema.path('redactedAt')).toBeTruthy();
     expect(WorkspaceInvite.schema.path('delivery.status').enumValues).toEqual(expect.arrayContaining(['not_sent', 'sent', 'failed']));
+    expect(WorkspaceInvite.schema.indexes()).toEqual(expect.arrayContaining([
+      [expect.objectContaining({ status: 1, redactedAt: 1, updatedAt: 1 }), expect.any(Object)]
+    ]));
     expect(JobRun.schema.path('workspaceId')).toBeTruthy();
     expect(JobControl.schema.path('workspaceId')).toBeTruthy();
     expect(JobControl.schema.indexes()).toEqual(expect.arrayContaining([

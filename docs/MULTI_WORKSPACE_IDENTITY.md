@@ -104,6 +104,10 @@ Content-Type: application/json
 
 Pending invitations can be listed and revoked by identity administrators. Invitation creation, revocation, and acceptance create high-risk audit events.
 
+## Invitation retention
+
+After an invitation reaches `accepted`, `revoked`, or `expired`, Sneup retains only its operational lifecycle evidence. The scheduled `identity.invitation_retention` job redacts the invite email, display name, token prefix, token hash, and delivery failure code after the configured retention period. It keeps the workspace/user relationship, role, status, timestamps, delivery mode/status, and one aggregate audit event containing only the redaction count and status distribution. The job processes at most `SNEUP_INVITE_RETENTION_BATCH_SIZE` records per workspace pass, so a large workspace is cleaned over successive runs rather than creating an unbounded database operation.
+
 ## Migration Notes
 
 For existing deployments, inspect before applying a workspace migration. Both commands use `SNEUP_DEFAULT_WORKSPACE_ID` and never print credentials:

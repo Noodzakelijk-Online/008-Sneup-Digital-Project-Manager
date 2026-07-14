@@ -90,6 +90,13 @@ const trackedJobs = [
     label: 'Reconciliation alert delivery',
     staleAfterMinutes: 45,
     manualTriggerAllowed: true
+  },
+  {
+    jobName: 'identity.invitation_retention',
+    jobType: 'security',
+    label: 'Invitation privacy retention',
+    staleAfterMinutes: 26 * 60,
+    manualTriggerAllowed: false
   }
 ];
 

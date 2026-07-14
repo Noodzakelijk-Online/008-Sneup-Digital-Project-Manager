@@ -77,7 +77,9 @@ const workspaceInviteSchema = new mongoose.Schema({
     attemptedAt: Date,
     sentAt: Date,
     failureCode: String
-  }
+  },
+  redactedAt: Date,
+  redactedBy: String
 }, {
   timestamps: true
 });
@@ -90,6 +92,7 @@ const tokenPepper = () => getTokenPepper(
 workspaceInviteSchema.index({ workspaceId: 1, userId: 1, status: 1 });
 workspaceInviteSchema.index({ workspaceId: 1, email: 1, status: 1 });
 workspaceInviteSchema.index({ status: 1, expiresAt: 1 });
+workspaceInviteSchema.index({ status: 1, redactedAt: 1, updatedAt: 1 });
 
 workspaceInviteSchema.statics.generateRawToken = function() {
   return `sneup_invite_${crypto.randomBytes(32).toString('base64url')}`;

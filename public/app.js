@@ -2413,17 +2413,19 @@ function renderWorkspaceInvitation(invitation) {
     && invitation.delivery?.mode === 'email'
     && ['failed', 'not_sent'].includes(invitation.delivery?.status);
   const delivery = invitation.delivery?.status === 'sent' ? 'email sent' : invitation.delivery?.status === 'failed' ? 'email failed' : 'manual link';
+  const retentionNotice = invitation.redactedAt ? '<span>personal data removed</span>' : '';
   return `
     <div class="item">
       <div class="item-title">
-        <strong>${escapeHtml(invitation.displayName)}</strong>
+        <strong>${escapeHtml(invitation.displayName || 'Invitation record')}</strong>
         <span class="pill ${invitation.status === 'accepted' ? 'healthy' : invitation.status === 'pending' ? 'review' : 'critical'}">${escapeHtml(invitation.status)}</span>
       </div>
       <div class="meta">
-        <span>${escapeHtml(invitation.email)}</span>
+        <span>${escapeHtml(invitation.email || 'Personal data removed')}</span>
         <span>${escapeHtml(invitation.role)}</span>
         <span>${escapeHtml(delivery)}</span>
         <span>Expires ${escapeHtml(formatDate(invitation.expiresAt))}</span>
+        ${retentionNotice}
       </div>
       ${canRevoke ? `
         <div class="item-actions">

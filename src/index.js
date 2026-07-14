@@ -223,6 +223,9 @@ const initApp = async () => {
 
       const notificationWorker = require('./workers/notificationWorker');
       notificationWorker.init();
+
+      const identityRetentionWorker = require('./workers/identityRetentionWorker');
+      identityRetentionWorker.init();
     } else {
       logger.warn('Background analytics and intervention workers are paused until MongoDB is connected.');
     }

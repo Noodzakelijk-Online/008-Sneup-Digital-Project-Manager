@@ -9,6 +9,12 @@ const logger = require('../utils/logger');
 const USER_ROLES = ['viewer', 'operator', 'manager', 'admin', 'owner', 'service'];
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_EMAIL_DELIVERY_TIMEOUT_MS = 15000;
+const TERMINAL_INVITE_STATUSES = ['accepted', 'revoked', 'expired'];
+const DEFAULT_INVITE_RETENTION_DAYS = 90;
+const MIN_INVITE_RETENTION_DAYS = 7;
+const MAX_INVITE_RETENTION_DAYS = 3650;
+const DEFAULT_INVITE_RETENTION_BATCH_SIZE = 100;
+const MAX_INVITE_RETENTION_BATCH_SIZE = 250;
 
 const invitationError = (message, statusCode = 400) => {
   const error = new Error(message);
@@ -46,14 +52,16 @@ const validateInviteInput = ({ email, displayName, role }) => {
   };
 };
 
-const publicInvite = (invite) => ({
+const publicInvite = (invite) => {
+  const redacted = Boolean(invite.redactedAt);
+  return {
   id: String(invite._id),
   workspaceId: String(invite.workspaceId),
   userId: String(invite.userId),
-  email: invite.email,
-  displayName: invite.displayName,
+  email: redacted ? '' : invite.email,
+  displayName: redacted ? '' : invite.displayName,
   role: invite.role,
-  tokenPrefix: invite.tokenPrefix,
+  tokenPrefix: redacted ? '' : invite.tokenPrefix,
   status: invite.status,
   expiresAt: invite.expiresAt,
   createdBy: invite.createdBy,
@@ -61,8 +69,28 @@ const publicInvite = (invite) => ({
   revokedAt: invite.revokedAt || null,
   revokedBy: invite.revokedBy || null,
   delivery: invite.delivery || { mode: 'manual', status: 'not_sent' },
+  redactedAt: invite.redactedAt || null,
   createdAt: invite.createdAt,
   updatedAt: invite.updatedAt
+  };
+};
+
+const inviteRetentionConfig = (environment = process.env) => ({
+  days: clampInteger(environment.SNEUP_INVITE_RETENTION_DAYS, DEFAULT_INVITE_RETENTION_DAYS, MIN_INVITE_RETENTION_DAYS, MAX_INVITE_RETENTION_DAYS),
+  batchSize: clampInteger(environment.SNEUP_INVITE_RETENTION_BATCH_SIZE, DEFAULT_INVITE_RETENTION_BATCH_SIZE, 1, MAX_INVITE_RETENTION_BATCH_SIZE)
+});
+
+const retentionCutoff = ({ now = new Date(), days = DEFAULT_INVITE_RETENTION_DAYS } = {}) => {
+  const current = new Date(now);
+  if (Number.isNaN(current.getTime())) throw invitationError('Retention time must be a valid date');
+  return new Date(current.getTime() - days * 24 * 60 * 60 * 1000);
+};
+
+const retentionQuery = ({ workspaceId, cutoff }) => ({
+  ...(workspaceId ? { workspaceId } : {}),
+  status: { $in: TERMINAL_INVITE_STATUSES },
+  redactedAt: { $exists: false },
+  updatedAt: { $lte: cutoff }
 });
 
 const publicAcceptedInvite = (invite, workspace, user, session, rawSessionToken) => ({
@@ -369,6 +397,57 @@ const listInvites = async ({ workspaceId, limit }) => {
     .limit(clampInteger(limit, 100, 1, 500));
 };
 
+const listRetainableWorkspaceIds = async ({ now = new Date(), environment = process.env } = {}) => {
+  const config = inviteRetentionConfig(environment);
+  const cutoff = retentionCutoff({ now, days: config.days });
+  return WorkspaceInvite.distinct('workspaceId', retentionQuery({ cutoff }));
+};
+
+const redactRetainedInvites = async ({ workspaceId, now = new Date(), environment = process.env, actor = 'sneup-invite-retention' } = {}) => {
+  if (!workspaceId) throw invitationError('workspaceId is required for invitation retention', 400);
+  const config = inviteRetentionConfig(environment);
+  const cutoff = retentionCutoff({ now, days: config.days });
+  const candidates = await WorkspaceInvite.find(retentionQuery({ workspaceId, cutoff }))
+    .select('_id status acceptedAt revokedAt expiresAt delivery.mode delivery.status createdAt updatedAt')
+    .sort({ updatedAt: 1 })
+    .limit(config.batchSize);
+  if (candidates.length === 0) {
+    return { processedCount: 0, successCount: 0, failureCount: 0, metadata: { retentionDays: config.days, cutoff, batchSize: config.batchSize } };
+  }
+
+  const candidateIds = candidates.map(invite => invite._id);
+  const result = await WorkspaceInvite.updateMany({
+    _id: { $in: candidateIds },
+    ...retentionQuery({ workspaceId, cutoff })
+  }, {
+    $set: { redactedAt: new Date(now), redactedBy: actor },
+    $unset: { email: 1, displayName: 1, tokenPrefix: 1, tokenHash: 1, 'delivery.failureCode': 1 }
+  });
+  const redactedCount = Number(result.modifiedCount ?? result.nModified ?? 0);
+  if (redactedCount > 0) {
+    const byStatus = candidates.reduce((summary, invite) => {
+      summary[invite.status] = (summary[invite.status] || 0) + 1;
+      return summary;
+    }, {});
+    await recordAudit({
+      workspaceId,
+      entityType: 'workspace_invite_retention',
+      entityId: String(workspaceId),
+      action: 'workspace_invites_redacted',
+      actor,
+      source: 'scheduled',
+      riskLevel: 'medium',
+      afterState: { redactedCount, retentionDays: config.days, cutoff, byStatus }
+    });
+  }
+  return {
+    processedCount: candidates.length,
+    successCount: redactedCount,
+    failureCount: 0,
+    metadata: { retentionDays: config.days, cutoff, batchSize: config.batchSize, redactedCount }
+  };
+};
+
 const revokeInvite = async ({ workspaceId, inviteId, actor }) => {
   const invite = await WorkspaceInvite.findOne({ _id: inviteId, workspaceId });
   if (!invite) throw invitationError('Invitation not found', 404);
@@ -485,8 +564,12 @@ module.exports = {
   acceptInvite,
   createInvite,
   getInviteUrl,
+  inviteRetentionConfig,
   listInvites,
+  listRetainableWorkspaceIds,
   publicInvite,
+  redactRetainedInvites,
+  retentionCutoff,
   retryInviteDelivery,
   revokeInvite,
   sendInviteEmail,

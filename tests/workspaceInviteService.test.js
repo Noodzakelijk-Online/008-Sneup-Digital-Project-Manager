@@ -20,7 +20,14 @@ describe('workspace invitation delivery retries', () => {
     restoreEnvironment();
   });
 
-  const loadService = ({ invite, user, replacementInvite }) => {
+  const loadService = ({ invite, user, replacementInvite, retentionCandidates = [], retentionModifiedCount = 0, retainableWorkspaceIds = [] }) => {
+    const retentionChain = {
+      select: jest.fn(),
+      sort: jest.fn(),
+      limit: jest.fn().mockResolvedValue(retentionCandidates)
+    };
+    retentionChain.select.mockReturnValue(retentionChain);
+    retentionChain.sort.mockReturnValue(retentionChain);
     const WorkspaceInvite = {
       findOne: jest.fn().mockResolvedValue(invite),
       findOneAndUpdate: jest.fn().mockResolvedValue({
@@ -29,7 +36,9 @@ describe('workspace invitation delivery retries', () => {
         revokedAt: new Date('2026-07-14T12:00:00.000Z'),
         revokedBy: 'admin-1:delivery_retry'
       }),
-      updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+      find: jest.fn(() => retentionChain),
+      distinct: jest.fn().mockResolvedValue(retainableWorkspaceIds),
+      updateMany: jest.fn().mockResolvedValue({ modifiedCount: retentionModifiedCount }),
       generateRawToken: jest.fn(() => 'sneup_invite_fresh_token'),
       prefixFor: jest.fn(token => String(token).slice(0, 18)),
       buildSecretRecord: jest.fn((token, fields) => ({
@@ -208,5 +217,60 @@ describe('workspace invitation delivery retries', () => {
         $unset: { revokedAt: 1, revokedBy: 1 }
       }
     ]);
+  });
+
+  test('redacts terminal invitation personal data in bounded batches and records aggregate-only audit evidence', async () => {
+    const candidate = {
+      _id: 'invite-retain-1',
+      workspaceId: 'workspace-1',
+      status: 'accepted',
+      acceptedAt: new Date('2026-03-01T10:00:00.000Z'),
+      expiresAt: new Date('2026-03-08T10:00:00.000Z'),
+      delivery: { mode: 'email', status: 'sent' },
+      updatedAt: new Date('2026-03-01T10:00:00.000Z')
+    };
+    const { service, WorkspaceInvite, operationsLedgerService } = loadService({
+      invite: candidate,
+      user: { _id: 'user-1', status: 'active' },
+      replacementInvite: { save: jest.fn() },
+      retentionCandidates: [candidate],
+      retentionModifiedCount: 1,
+      retainableWorkspaceIds: ['workspace-1']
+    });
+    const now = new Date('2026-07-14T12:00:00.000Z');
+    const environment = {
+      SNEUP_INVITE_RETENTION_DAYS: '30',
+      SNEUP_INVITE_RETENTION_BATCH_SIZE: '10'
+    };
+
+    const workspaceIds = await service.listRetainableWorkspaceIds({ now, environment });
+    const result = await service.redactRetainedInvites({ workspaceId: 'workspace-1', now, environment });
+    const publicRecord = service.publicInvite({
+      ...candidate,
+      email: 'private.invitee@example.com',
+      displayName: 'Private Invitee',
+      tokenPrefix: 'sneup_invite_private',
+      redactedAt: now
+    });
+
+    expect(workspaceIds).toEqual(['workspace-1']);
+    expect(WorkspaceInvite.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      _id: { $in: ['invite-retain-1'] },
+      workspaceId: 'workspace-1',
+      status: { $in: ['accepted', 'revoked', 'expired'] },
+      redactedAt: { $exists: false }
+    }), {
+      $set: expect.objectContaining({ redactedBy: 'sneup-invite-retention' }),
+      $unset: expect.objectContaining({ email: 1, displayName: 1, tokenPrefix: 1, tokenHash: 1 })
+    });
+    expect(result).toMatchObject({ processedCount: 1, successCount: 1, metadata: { retentionDays: 30, redactedCount: 1 } });
+    expect(publicRecord).toMatchObject({ email: '', displayName: '', tokenPrefix: '', redactedAt: now });
+    expect(service.inviteRetentionConfig({ SNEUP_INVITE_RETENTION_DAYS: '1', SNEUP_INVITE_RETENTION_BATCH_SIZE: '1000' }))
+      .toEqual({ days: 7, batchSize: 250 });
+    expect(operationsLedgerService.recordAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'workspace_invites_redacted',
+      afterState: expect.objectContaining({ redactedCount: 1, retentionDays: 30, byStatus: { accepted: 1 } })
+    }));
+    expect(JSON.stringify(operationsLedgerService.recordAudit.mock.calls)).not.toMatch(/new\.user@example\.com|tokenHash|displayName/);
   });
 });
