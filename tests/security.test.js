@@ -87,6 +87,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/floatWorkSignalClient');
     jest.dontMock('../src/services/resourceGuruWorkSignalClient');
     jest.dontMock('../src/services/sentryWorkSignalClient');
+    jest.dontMock('../src/services/pagerDutyWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2066,6 +2067,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('sentry').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('PagerDuty adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'incident:P123ABC' }] });
+    jest.doMock('../src/services/pagerDutyWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'pagerduty' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('pagerduty').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3983,6 +3995,35 @@ describe('work signal normalization', () => {
       : { data: [], headers: { link: '<https://sentry.io/api/0/organizations/sneup/issues/?cursor=0:0:0>; rel="next"; results="false"' } })) };
     const capped = new SentryWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'sentry-token' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { organizationSlug: 'sneup' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_SENTRY_MAX_PROJECTS; else process.env.SNEUP_SENTRY_MAX_PROJECTS = previous; }
+  });
+
+  test('PagerDuty sync reads bounded active incident and service metadata without responder or note content or provider writes', async () => {
+    jest.dontMock('../src/services/pagerDutyWorkSignalClient');
+    jest.resetModules();
+    const { PagerDutyWorkSignalClient } = require('../src/services/pagerDutyWorkSignalClient');
+    const http = { get: jest.fn((url) => Promise.resolve(url.endsWith('/services')
+      ? { data: { services: [{ id: 'P123ABC', name: 'Sneup API', status: 'active', description: 'Private service description', escalation_policy: { summary: 'Private escalation' }, integrations: [{ summary: 'Private integration' }], created_at: '2026-07-01T10:00:00.000Z' }], more: false } }
+      : { data: { incidents: [{ id: 'P765XYZ', title: 'Payment failure with private@email.test', status: 'triggered', urgency: 'high', created_at: '2026-07-10T10:00:00.000Z', last_status_change_at: '2026-07-12T12:00:00.000Z', service: { id: 'P123ABC', summary: 'Sneup API' }, assignments: [{ assignee: { summary: 'Private responder' } }], escalation_policy: { summary: 'Private escalation' }, body: { details: 'Private incident note' } }], more: false } })) };
+    const client = new PagerDutyWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'pagerduty-token' })) } });
+    const result = await client.fetchDelta({}, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://api.pagerduty.com/incidents', expect.objectContaining({ params: expect.objectContaining({ 'statuses[]': ['triggered', 'acknowledged'], sort_by: 'created_at:desc', since: '2026-07-09T23:59:00.000Z', limit: 100, offset: 0, total: false }), headers: expect.objectContaining({ Authorization: 'Token token=pagerduty-token', Accept: 'application/vnd.pagerduty+json;version=2' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private service description|Private escalation|Private integration|Private responder|Private incident note|private@email\.test/);
+    expect(result).toMatchObject({ metadata: { source: 'pagerduty_api', services: 1, activeIncidents: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('PagerDuty sync rejects missing credentials and fails closed at a pagination cap', async () => {
+    jest.dontMock('../src/services/pagerDutyWorkSignalClient');
+    jest.resetModules();
+    const { PagerDutyWorkSignalClient } = require('../src/services/pagerDutyWorkSignalClient');
+    const missingToken = new PagerDutyWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({})) } });
+    await expect(missingToken.fetchDelta({})).rejects.toMatchObject({ statusCode: 503 });
+    const previous = process.env.SNEUP_PAGERDUTY_MAX_SERVICES; process.env.SNEUP_PAGERDUTY_MAX_SERVICES = '1';
+    const http = { get: jest.fn((url) => Promise.resolve(url.endsWith('/services')
+      ? { data: { services: [{ id: 'P123ABC', name: 'One' }], more: true } }
+      : { data: { incidents: [], more: false } })) };
+    const capped = new PagerDutyWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'pagerduty-token' })) } });
+    try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_PAGERDUTY_MAX_SERVICES; else process.env.SNEUP_PAGERDUTY_MAX_SERVICES = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

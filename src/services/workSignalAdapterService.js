@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -54,6 +54,7 @@ const clockifyWorkSignalClient = require('./clockifyWorkSignalClient');
 const floatWorkSignalClient = require('./floatWorkSignalClient');
 const resourceGuruWorkSignalClient = require('./resourceGuruWorkSignalClient');
 const sentryWorkSignalClient = require('./sentryWorkSignalClient');
+const pagerDutyWorkSignalClient = require('./pagerDutyWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -870,6 +871,12 @@ sentryAdapter.capabilities.credentialBackedSync = true;
 sentryAdapter.list = async account => (await sentryWorkSignalClient.fetchDelta(account, null)).records;
 sentryAdapter.fetchDelta = (account, cursor) => sentryWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('sentry', sentryAdapter);
+
+const pagerDutyAdapter = buildAdapter('pagerduty', 'PagerDuty service and active incident metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'incident'), title: item.sourceType === 'service' ? titleFromText(item.name, 'PagerDuty service') : titleFromText(item.name, 'PagerDuty incident'), description: '', status: item.status || 'triggered', priority: item.status === 'triggered' ? 'high' : 'normal', owners: [], labels: compact(['pagerduty', item.sourceType, item.serviceId ? `service:${item.serviceId}` : undefined, item.urgency]), dueAt: undefined, providerCreatedAt: pick(item.createdAt, item.lastStatusChangeAt), providerUpdatedAt: pick(item.lastStatusChangeAt, item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'PagerDuty incident metadata'), raw: { id: item.id, sourceType: item.sourceType, serviceId: item.serviceId, serviceStatus: item.serviceStatus, status: item.status, urgency: item.urgency, createdAt: item.createdAt, updatedAt: item.updatedAt, lastStatusChangeAt: item.lastStatusChangeAt } }));
+pagerDutyAdapter.capabilities.credentialBackedSync = true;
+pagerDutyAdapter.list = async account => (await pagerDutyWorkSignalClient.fetchDelta(account, null)).records;
+pagerDutyAdapter.fetchDelta = (account, cursor) => pagerDutyWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('pagerduty', pagerDutyAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

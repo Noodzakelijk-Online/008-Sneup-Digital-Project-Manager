@@ -230,6 +230,8 @@ Resource Guru uses authorization-code OAuth and requires selection of one author
 
 Sentry uses an auth token scoped to `org:read` and `event:read` plus one explicit organization slug. It reads bounded project and unresolved issue metadata with GET only, validates Sentry's pagination signal, excludes event payloads, stack traces, culprits, owners, tags, users, releases, alerts, and provider writes, and fails visibly at configured collection caps.
 
+PagerDuty uses a read-only REST API token. It reads bounded active incident and service metadata with GET only, validates native offset pagination, excludes responders, escalation policies, schedules, notes, integrations, and provider writes, and fails visibly at configured collection caps.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations
