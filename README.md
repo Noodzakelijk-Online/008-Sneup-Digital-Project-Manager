@@ -224,9 +224,9 @@ Aha! uses a user-scoped API token against one public `*.aha.io` account domain. 
 
 Productboard uses a personal API token with bearer authorization. It reads bounded component, feature, and objective metadata through the v2 entities endpoint with a server-side field allowlist, validates opaque provider cursors before use, excludes descriptions, owners, tags, notes, custom fields, relationships, and never makes provider writes.
 
-Toggl Track uses an API token with HTTP Basic authentication and requires one numeric workspace ID. It reads bounded project metadata plus a short, bounded personal time-entry window with `GET`, keeps only workspace-scoped utilization metadata, honors the provider's 1,000-entry ceiling, and excludes descriptions, tags, clients, people, rates, sharing data, notes, and provider writes.
+Toggl Track uses an API token with HTTP Basic authentication and requires one numeric workspace ID. It reads bounded project metadata plus a short, bounded personal time-entry window with `GET`, keeps only workspace-scoped utilization metadata and an opaque user ID for an explicit human-confirmed capacity mapping, honors the provider's 1,000-entry ceiling, and excludes descriptions, tags, clients, people, rates, sharing data, notes, and provider writes.
 
-Clockify uses an API key and requires one workspace ID. It reads only the authenticated user's bounded, paginated project and time-entry metadata with `GET`, validates the provider pagination signal, excludes descriptions, tags, clients, people, rates, custom fields, and provider writes, and fails visibly at configured collection caps.
+Clockify uses an API key and requires one workspace ID. It reads only the authenticated user's bounded, paginated project and time-entry metadata with `GET`, retains the opaque authenticated user ID only for an explicit human-confirmed capacity mapping, validates the provider pagination signal, excludes descriptions, tags, clients, people profiles, rates, custom fields, and provider writes, and fails visibly at configured collection caps.
 
 Float uses a bearer API token. It reads bounded paginated project and date-filtered allocation metadata with server-side field allowlists, excludes people profiles and names, notes, clients, tags, rates, budgets, time off, logged time, and provider writes, and fails visibly at configured collection caps.
 

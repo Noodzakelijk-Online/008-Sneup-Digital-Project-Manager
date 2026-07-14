@@ -8,7 +8,7 @@ const parseDate = value => { const parsed = new Date(value); return value && !Nu
 const validId = value => /^[1-9][0-9]{0,18}$/.test(String(value || ''));
 
 const project = item => validId(item?.id) && item.name ? compact({ id: `project:${item.id}`, sourceType: 'project', projectId: item.id, name: item.name, status: item.status?.name || item.status, isActive: item.active === true, createdAt: item.created_at, updatedAt: item.at || item.created_at }) : null;
-const timeEntry = (item, workspaceId) => validId(item?.id) && String(item.workspace_id ?? item.wid) === workspaceId ? compact({ id: `time_entry:${item.id}`, sourceType: 'time_entry', timeEntryId: item.id, workspaceId: item.workspace_id ?? item.wid, projectId: item.project_id ?? item.pid, startedAt: item.start, stoppedAt: item.stop, durationSeconds: Number.isFinite(Number(item.duration)) ? Number(item.duration) : undefined, billable: item.billable === true, updatedAt: item.at || item.start }) : null;
+const timeEntry = (item, workspaceId) => validId(item?.id) && String(item.workspace_id ?? item.wid) === workspaceId ? compact({ id: `time_entry:${item.id}`, sourceType: 'time_entry', timeEntryId: item.id, workspaceId: item.workspace_id ?? item.wid, projectId: item.project_id ?? item.pid, userId: validId(item.user_id ?? item.uid) ? String(item.user_id ?? item.uid) : undefined, startedAt: item.start, stoppedAt: item.stop, durationSeconds: Number.isFinite(Number(item.duration)) ? Number(item.duration) : undefined, billable: item.billable === true, updatedAt: item.at || item.start }) : null;
 
 class TogglTrackWorkSignalClient {
   constructor(options = {}) { this.http = options.http || axios; this.accountConnectorService = options.accountConnectorService || accountConnectorService; this.now = options.now || (() => new Date()); }
@@ -36,7 +36,7 @@ class TogglTrackWorkSignalClient {
     if (rawEntries.length >= config.maxEntries) { const error = new Error('Toggl Track sync reached its configured time-entry limit. Narrow the source window or increase SNEUP_TOGGL_MAX_ENTRIES before continuing.'); error.statusCode = 413; throw error; }
     const projects = rawProjects.map(project).filter(Boolean); const entries = rawEntries.map(item => timeEntry(item, workspaceId)).filter(Boolean); const records = [...projects, ...entries];
     const newest = records.reduce((latest, item) => { const updated = parseDate(item.updatedAt || item.startedAt || item.createdAt); return updated && (!latest || updated > latest) ? updated : latest; }, cursorDate);
-    return { records, nextCursor: newest ? newest.toISOString() : cursor || null, hasMore: false, metadata: { source: 'toggl_track_api', workspaceId, projects: projects.length, timeEntries: entries.length, quota: this.quota(entriesResponse.headers), contentPolicy: 'selected_workspace_project_and_time_entry_utilization_metadata_only_no_descriptions_tags_clients_people_rates_sharing_notes_or_provider_writes' } };
+    return { records, nextCursor: newest ? newest.toISOString() : cursor || null, hasMore: false, metadata: { source: 'toggl_track_api', workspaceId, projects: projects.length, timeEntries: entries.length, quota: this.quota(entriesResponse.headers), contentPolicy: 'selected_workspace_project_and_time_entry_utilization_metadata_with_opaque_user_id_only_for_explicit_capacity_mapping_no_descriptions_tags_clients_people_profiles_rates_sharing_notes_or_provider_writes' } };
   }
 }
 

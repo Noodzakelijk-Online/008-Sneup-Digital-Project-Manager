@@ -17,7 +17,7 @@ const MAX_CALENDAR_SIGNALS = 2000;
 const UTILIZATION_WINDOW_DAYS = 28;
 const ALLOCATION_WINDOW_DAYS = 28;
 const CALENDAR_WINDOW_DAYS = 28;
-const TIME_TRACKING_PROVIDERS = ['harvest', 'everhour'];
+const TIME_TRACKING_PROVIDERS = ['harvest', 'everhour', 'toggl_track', 'clockify'];
 const RESOURCING_PROVIDERS = ['float', 'resource_guru'];
 const CALENDAR_PROVIDERS = ['google_workspace', 'microsoft_365'];
 const MAX_CALENDAR_EVENT_HOURS = 12;
@@ -104,17 +104,40 @@ const identityKey = (value) => String(value || '')
   .toLowerCase()
   .replace(/[^a-z0-9]/g, '');
 
-const providerNameList = (providers = []) => providers
-  .map((provider) => ({ harvest: 'Harvest', everhour: 'Everhour' }[provider] || provider))
-  .join(' and ');
+const providerNameList = (providers = []) => {
+  const names = providers
+    .map((provider) => ({ harvest: 'Harvest', everhour: 'Everhour', toggl_track: 'Toggl Track', clockify: 'Clockify' }[provider] || provider));
+  if (names.length <= 1) return names[0] || '';
+  if (names.length === 2) return names.join(' and ');
+  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+};
 
-const utilizationSummary = ({ signals = [], members = [], now = new Date(), truncated = false }) => {
+const resourceIdentityKey = (provider, externalId) => `${String(provider || '').trim().toLowerCase()}:${String(externalId || '').trim()}`;
+
+const trackedHoursFor = (raw = {}) => {
+  const directHours = Number(raw.hours);
+  if (Number.isFinite(directHours) && directHours >= 0 && directHours <= 10000) return directHours;
+  const durationSeconds = Number(raw.durationSeconds);
+  return Number.isFinite(durationSeconds) && durationSeconds >= 0 && durationSeconds <= 36000000 ? durationSeconds / 3600 : undefined;
+};
+
+const utilizationSummary = ({ signals = [], members = [], profilesByMember = new Map(), now = new Date(), truncated = false }) => {
   const cutoff = new Date(now);
   cutoff.setUTCDate(cutoff.getUTCDate() - UTILIZATION_WINDOW_DAYS);
   const memberIdByIdentity = new Map();
+  const memberIdByExternalIdentity = new Map();
+  const duplicateExternalIdentities = new Set();
   members.forEach((member) => {
     [member.fullName, member.username].map(identityKey).filter(Boolean).forEach((key) => {
       if (!memberIdByIdentity.has(key)) memberIdByIdentity.set(key, asId(member));
+    });
+    profileForMember(member, profilesByMember).externalIdentities.forEach((identity) => {
+      const provider = String(identity?.provider || '').toLowerCase();
+      const externalId = String(identity?.externalId || '').trim();
+      if (!TIME_TRACKING_PROVIDERS.includes(provider) || !externalId) return;
+      const key = resourceIdentityKey(provider, externalId);
+      if (memberIdByExternalIdentity.has(key)) duplicateExternalIdentities.add(key);
+      else memberIdByExternalIdentity.set(key, asId(member));
     });
   });
 
@@ -129,7 +152,7 @@ const utilizationSummary = ({ signals = [], members = [], now = new Date(), trun
     const provider = String(signal?.provider || 'harvest').toLowerCase();
     const raw = signal?.raw || {};
     const spentAt = new Date(raw.spentDate || signal.providerCreatedAt || '');
-    const hours = Number(raw.hours);
+    const hours = trackedHoursFor(raw);
     if (!TIME_TRACKING_PROVIDERS.includes(provider)
       || !Number.isFinite(hours) || hours <= 0 || Number.isNaN(spentAt.getTime()) || spentAt < cutoff || spentAt > now) return;
     const providerSummary = providerSummaries.get(provider) || {
@@ -139,7 +162,11 @@ const utilizationSummary = ({ signals = [], members = [], now = new Date(), trun
     totalHours += hours;
     providerSummary.entries += 1;
     providerSummary.hours += hours;
-    const memberId = memberIdByIdentity.get(identityKey(raw.user?.name || signal.owners?.[0]));
+    const externalIdentity = resourceIdentityKey(provider, raw.userId ?? raw.user?.id);
+    const mappedMemberId = duplicateExternalIdentities.has(externalIdentity)
+      ? undefined
+      : memberIdByExternalIdentity.get(externalIdentity);
+    const memberId = mappedMemberId || memberIdByIdentity.get(identityKey(raw.user?.name || signal.owners?.[0]));
     if (!memberId) {
       unmatchedEntries += 1;
       unmatchedHours += hours;
@@ -199,8 +226,6 @@ const utilizationSummary = ({ signals = [], members = [], now = new Date(), trun
     byMember
   };
 };
-
-const resourceIdentityKey = (provider, externalId) => `${String(provider || '').trim().toLowerCase()}:${String(externalId || '').trim()}`;
 
 const allocationSummary = ({ signals = [], boards = [], members = [], profilesByMember = new Map(), now = new Date(), truncated = false }) => {
   const windowEnd = new Date(now);
@@ -395,7 +420,7 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
     ? historicalHours.reduce((sum, value) => sum + value, 0) / historicalHours.length
     : DEFAULT_CARD_HOURS;
   const hasThroughputEvidence = performances.some((record) => Number(record.metrics?.cardsCompleted || 0) > 0);
-  const utilization = utilizationSummary({ signals: utilizationSignals, members: activeMembers, now, truncated: utilizationTruncated });
+  const utilization = utilizationSummary({ signals: utilizationSignals, members: activeMembers, profilesByMember, now, truncated: utilizationTruncated });
   const allocation = allocationSummary({ signals: allocationSignals, boards, members: activeMembers, profilesByMember, now, truncated: allocationTruncated });
   const calendar = calendarSummary({ signals: calendarSignals, members: activeMembers, profilesByMember, now, truncated: calendarTruncated });
 
@@ -619,8 +644,8 @@ const demoForecast = () => ({
     { boardId: 'demo-board-2', boardName: 'Client Launches', openCards: 27, workHours: 184, weeklyAvailableHours: 28, utilizationPercent: 657, p50: { businessDays: 33, date: addBusinessDays(new Date(), 33) }, p80: { businessDays: 44, date: addBusinessDays(new Date(), 44) }, nearestDueDate: addBusinessDays(new Date(), 18), confidence: 62, confidenceLabel: 'directional', health: 'at_risk', assumptions: ['One contributor is unavailable for part of the window.'], risks: ['3 cards are overdue'], members: [] }
   ],
   memberCapacity: [
-    { memberId: 'demo-member-1', name: 'Milan', weeklyHours: 32, allocationPercent: 85, focusHoursPerWeek: 4, weeklyAvailableHours: 23.2, dailyAvailableHours: 4.6, timeOffHours: 0, configured: true, historicalCardHours: 5.4, trackedTimeEntriesLast28Days: 4, trackedTimeHoursLast28Days: 16, trackedTimeWeeklyHours: 4, trackedTimeProvidersLast28Days: ['harvest', 'everhour'], active: true, skills: ['engineering'] },
-    { memberId: 'demo-member-2', name: 'Nina', weeklyHours: 32, allocationPercent: 75, focusHoursPerWeek: 4, weeklyAvailableHours: 20, dailyAvailableHours: 4, timeOffHours: 12, configured: true, historicalCardHours: 6.2, trackedTimeEntriesLast28Days: 3, trackedTimeHoursLast28Days: 10, trackedTimeWeeklyHours: 2.5, trackedTimeProvidersLast28Days: ['everhour'], active: true, skills: ['operations'] },
+    { memberId: 'demo-member-1', name: 'Milan', weeklyHours: 32, allocationPercent: 85, focusHoursPerWeek: 4, weeklyAvailableHours: 23.2, dailyAvailableHours: 4.6, timeOffHours: 0, configured: true, historicalCardHours: 5.4, trackedTimeEntriesLast28Days: 4, trackedTimeHoursLast28Days: 16, trackedTimeWeeklyHours: 4, trackedTimeProvidersLast28Days: ['harvest', 'everhour', 'toggl_track'], active: true, skills: ['engineering'] },
+    { memberId: 'demo-member-2', name: 'Nina', weeklyHours: 32, allocationPercent: 75, focusHoursPerWeek: 4, weeklyAvailableHours: 20, dailyAvailableHours: 4, timeOffHours: 12, configured: true, historicalCardHours: 6.2, trackedTimeEntriesLast28Days: 3, trackedTimeHoursLast28Days: 10, trackedTimeWeeklyHours: 2.5, trackedTimeProvidersLast28Days: ['everhour', 'clockify'], active: true, skills: ['operations'] },
     { memberId: 'demo-member-3', name: 'Sam', weeklyHours: 24, allocationPercent: 100, focusHoursPerWeek: 4, weeklyAvailableHours: 20, dailyAvailableHours: 4, timeOffHours: 0, configured: false, historicalCardHours: 6, trackedTimeEntriesLast28Days: 1, trackedTimeHoursLast28Days: 4, trackedTimeWeeklyHours: 1, trackedTimeProvidersLast28Days: ['harvest'], active: true, skills: [] }
   ],
   dataQuality: {
@@ -632,7 +657,7 @@ const demoForecast = () => ({
       provider: 'multi_provider',
       providers: TIME_TRACKING_PROVIDERS,
       activeProviders: TIME_TRACKING_PROVIDERS,
-      providerLabel: 'Harvest and Everhour',
+      providerLabel: 'Harvest, Everhour, Toggl Track, and Clockify',
       entries: 8,
       totalHours: 30,
       weeklyHours: 7.5,

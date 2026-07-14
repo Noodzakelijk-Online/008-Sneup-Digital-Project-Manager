@@ -6,9 +6,17 @@ const clamp = (value, fallback, minimum, maximum) => { const parsed = Number.par
 const compact = value => Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ''));
 const parseDate = value => { const parsed = new Date(value); return value && !Number.isNaN(parsed.getTime()) ? parsed : null; };
 const validId = value => /^[A-Za-z0-9_-]{1,128}$/.test(String(value || ''));
+const durationSeconds = (value) => {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+  const match = /^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$/i.exec(String(value || ''));
+  if (!match) return undefined;
+  const [, hours = '0', minutes = '0', seconds = '0'] = match;
+  return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
+};
 
 const project = item => validId(item?.id) && item.name ? compact({ id: `project:${item.id}`, sourceType: 'project', projectId: item.id, name: item.name, archived: item.archived === true, billable: item.billable === true, workspaceId: item.workspaceId }) : null;
-const timeEntry = item => validId(item?.id) && validId(item?.workspaceId) ? compact({ id: `time_entry:${item.id}`, sourceType: 'time_entry', timeEntryId: item.id, workspaceId: item.workspaceId, projectId: item.projectId, taskId: item.taskId, startedAt: item.timeInterval?.start, stoppedAt: item.timeInterval?.end, trackedDuration: item.timeInterval?.duration, billable: item.billable === true }) : null;
+const timeEntry = (item, authenticatedUserId) => validId(item?.id) && validId(item?.workspaceId) ? compact({ id: `time_entry:${item.id}`, sourceType: 'time_entry', timeEntryId: item.id, workspaceId: item.workspaceId, projectId: item.projectId, taskId: item.taskId, userId: validId(authenticatedUserId) ? authenticatedUserId : undefined, startedAt: item.timeInterval?.start, stoppedAt: item.timeInterval?.end, durationSeconds: durationSeconds(item.timeInterval?.duration), billable: item.billable === true }) : null;
 
 class ClockifyWorkSignalClient {
   constructor(options = {}) { this.http = options.http || axios; this.accountConnectorService = options.accountConnectorService || accountConnectorService; this.now = options.now || (() => new Date()); }
@@ -40,10 +48,10 @@ class ClockifyWorkSignalClient {
     const cursorDate = parseDate(cursor); const now = this.now(); const start = cursorDate ? new Date(cursorDate.getTime() - config.cursorLookbackMs) : new Date(now.getTime() - config.initialLookbackDays * 86400000);
     const [projects, entries] = await Promise.all([
       this.listPages(`/workspaces/${encodeURIComponent(workspaceId)}/projects`, apiKey, config, {}, config.maxProjects, 'project', project),
-      this.listPages(`/workspaces/${encodeURIComponent(workspaceId)}/user/${encodeURIComponent(userId)}/time-entries`, apiKey, config, { start: start.toISOString(), end: now.toISOString(), hydrated: false }, config.maxEntries, 'time-entry', timeEntry)
+      this.listPages(`/workspaces/${encodeURIComponent(workspaceId)}/user/${encodeURIComponent(userId)}/time-entries`, apiKey, config, { start: start.toISOString(), end: now.toISOString(), hydrated: false }, config.maxEntries, 'time-entry', item => timeEntry(item, userId))
     ]);
     const records = [...projects, ...entries]; const newest = entries.reduce((latest, item) => { const updated = parseDate(item.stoppedAt || item.startedAt); return updated && (!latest || updated > latest) ? updated : latest; }, cursorDate);
-    return { records, nextCursor: newest ? newest.toISOString() : cursor || null, hasMore: false, metadata: { source: 'clockify_api', workspaceId, projects: projects.length, timeEntries: entries.length, contentPolicy: 'authenticated_user_selected_workspace_project_and_utilization_metadata_only_no_descriptions_tags_clients_people_rates_custom_fields_or_provider_writes' } };
+    return { records, nextCursor: newest ? newest.toISOString() : cursor || null, hasMore: false, metadata: { source: 'clockify_api', workspaceId, projects: projects.length, timeEntries: entries.length, contentPolicy: 'authenticated_user_selected_workspace_project_and_utilization_metadata_with_opaque_user_id_only_for_explicit_capacity_mapping_no_descriptions_tags_clients_people_profiles_rates_custom_fields_or_provider_writes' } };
   }
 }
 

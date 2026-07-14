@@ -653,7 +653,7 @@ describe('capacity-aware forecasting', () => {
     });
     expect(forecast.dataQuality.utilization).toMatchObject({
       provider: 'multi_provider',
-      providers: ['harvest', 'everhour'],
+      providers: ['harvest', 'everhour', 'toggl_track', 'clockify'],
       activeProviders: ['harvest', 'everhour'],
       providerLabel: 'Harvest and Everhour',
       entries: 3,
@@ -669,6 +669,46 @@ describe('capacity-aware forecasting', () => {
     });
     expect(forecast.portfolio.risks.join(' ')).toContain('Tracked-time evidence reports more hours than modeled capacity');
     expect(forecast.portfolio.assumptions.join(' ')).toContain('Bounded Harvest and Everhour metadata');
+  });
+
+  test('uses only explicit opaque Toggl and Clockify user mappings for tracked-time evidence', () => {
+    const { buildForecast } = require('../src/services/forecastService');
+    const forecast = buildForecast({
+      now: new Date('2026-07-06T09:00:00.000Z'),
+      boards: [{ _id: 'board-1', name: 'Launch' }],
+      members: [{ _id: 'member-1', username: 'milan', fullName: 'Milan' }],
+      profiles: [{
+        _id: 'profile-1', memberId: 'member-1', weeklyHours: 20, allocationPercent: 100, focusHoursPerWeek: 4,
+        externalIdentities: [{ provider: 'toggl_track', externalId: '42' }, { provider: 'clockify', externalId: 'clock-user-7' }]
+      }],
+      cards: [{ _id: 'card-1', boardId: 'board-1', members: ['member-1'], riskLevel: 'normal' }],
+      utilizationSignals: [
+        { provider: 'toggl_track', providerCreatedAt: '2026-07-04T09:00:00.000Z', raw: { userId: '42', durationSeconds: 7200 } },
+        { provider: 'clockify', providerCreatedAt: '2026-07-05T09:00:00.000Z', raw: { userId: 'clock-user-7', durationSeconds: 3600 } },
+        { provider: 'clockify', providerCreatedAt: '2026-07-05T09:00:00.000Z', raw: { userId: 'unmapped-user', durationSeconds: 3600 } }
+      ]
+    });
+
+    expect(forecast.memberCapacity[0]).toMatchObject({
+      trackedTimeEntriesLast28Days: 2,
+      trackedTimeHoursLast28Days: 3,
+      trackedTimeWeeklyHours: 0.8,
+      trackedTimeProvidersLast28Days: ['toggl_track', 'clockify']
+    });
+    expect(forecast.dataQuality.utilization).toMatchObject({
+      activeProviders: ['toggl_track', 'clockify'],
+      providerLabel: 'Toggl Track and Clockify',
+      entries: 3,
+      totalHours: 4,
+      matchedEntries: 2,
+      unmatchedEntries: 1,
+      unmatchedHours: 1,
+      matchedMembers: 1,
+      providerEvidence: {
+        toggl_track: { entries: 1, hours: 2, matchedEntries: 1, matchedMembers: 1 },
+        clockify: { entries: 2, hours: 2, matchedEntries: 1, unmatchedEntries: 1 }
+      }
+    });
   });
 
   test('uses only explicit Float and Resource Guru member mappings as bounded allocation evidence', () => {
@@ -4539,12 +4579,13 @@ describe('work signal normalization', () => {
     const { TogglTrackWorkSignalClient } = require('../src/services/togglTrackWorkSignalClient');
     const http = { get: jest.fn()
       .mockResolvedValueOnce({ data: [{ id: 9, name: 'Sneup release', status: 'active', active: true, rate: 220, client_name: 'Private client', at: '2026-07-11T12:00:00.000Z' }] })
-      .mockResolvedValueOnce({ data: [{ id: 18, workspace_id: 77, project_id: 9, description: 'Private time-entry detail', tags: ['private'], client_name: 'Private client', user_name: 'Private user', duration: 3600, billable: true, start: '2026-07-12T10:00:00.000Z', stop: '2026-07-12T11:00:00.000Z', at: '2026-07-12T11:00:00.000Z', shared_with: [{ user_name: 'Private colleague' }] }, { id: 19, workspace_id: 88, description: 'Other workspace', duration: 60, start: '2026-07-12T10:00:00.000Z' }], headers: { 'x-toggl-quota-remaining': '29', 'x-toggl-quota-resets-in': '3600' } }) };
+      .mockResolvedValueOnce({ data: [{ id: 18, workspace_id: 77, project_id: 9, user_id: 42, description: 'Private time-entry detail', tags: ['private'], client_name: 'Private client', user_name: 'Private user', duration: 3600, billable: true, start: '2026-07-12T10:00:00.000Z', stop: '2026-07-12T11:00:00.000Z', at: '2026-07-12T11:00:00.000Z', shared_with: [{ user_name: 'Private colleague' }] }, { id: 19, workspace_id: 88, description: 'Other workspace', duration: 60, start: '2026-07-12T10:00:00.000Z' }], headers: { 'x-toggl-quota-remaining': '29', 'x-toggl-quota-resets-in': '3600' } }) };
     const client = new TogglTrackWorkSignalClient({ http, now: () => new Date('2026-07-12T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'toggl-token' })) } });
     const result = await client.fetchDelta({ metadata: { fields: { workspaceId: '77' } } }, '2026-07-10T00:00:00.000Z');
     expect(http.get).toHaveBeenCalledWith('https://api.track.toggl.com/api/v9/me/time_entries', expect.objectContaining({ params: expect.objectContaining({ start_date: '2026-07-09T23:59:00.000Z', end_date: '2026-07-12T12:00:00.000Z', meta: false, include_sharing: false }), headers: expect.objectContaining({ Authorization: `Basic ${Buffer.from('toggl-token:api_token').toString('base64')}` }), maxRedirects: 0, proxy: false }));
     expect(http).not.toHaveProperty('post');
     expect(JSON.stringify(result.records)).not.toMatch(/Private time-entry detail|private|Private client|Private user|Private colleague|Other workspace|220/);
+    expect(result.records.find(record => record.id === 'time_entry:18')).toMatchObject({ userId: '42', durationSeconds: 3600 });
     expect(result).toMatchObject({ metadata: { source: 'toggl_track_api', workspaceId: '77', projects: 1, timeEntries: 1, quota: { remaining: 29, resetsInSeconds: 3600 } }, nextCursor: '2026-07-12T11:00:00.000Z' });
   });
 
@@ -4572,6 +4613,7 @@ describe('work signal normalization', () => {
     expect(http.get).toHaveBeenCalledWith('https://api.clockify.me/api/v1/workspaces/workspace-1/user/user-1/time-entries', expect.objectContaining({ params: expect.objectContaining({ start: '2026-07-09T23:59:00.000Z', end: '2026-07-12T12:00:00.000Z', hydrated: false, page: 1, 'page-size': 100 }), headers: expect.objectContaining({ 'X-Api-Key': 'clockify-key' }), maxRedirects: 0, proxy: false }));
     expect(http).not.toHaveProperty('post');
     expect(JSON.stringify(result.records)).not.toMatch(/Private entry detail|private|Private client|Private project note|220|secret|Private user/);
+    expect(result.records.find(record => record.id === 'time_entry:entry-1')).toMatchObject({ userId: 'user-1', durationSeconds: 3600 });
     expect(result).toMatchObject({ metadata: { source: 'clockify_api', workspaceId: 'workspace-1', projects: 1, timeEntries: 1 }, nextCursor: '2026-07-12T11:00:00.000Z' });
   });
 

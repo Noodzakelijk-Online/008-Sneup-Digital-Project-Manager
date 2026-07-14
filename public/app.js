@@ -428,7 +428,7 @@ function formatForecastDate(value) {
 }
 
 function formatProviderNames(providers = []) {
-  const labels = providers.map(provider => ({ harvest: 'Harvest', everhour: 'Everhour' }[provider] || provider)).filter(Boolean);
+  const labels = providers.map(provider => ({ harvest: 'Harvest', everhour: 'Everhour', toggl_track: 'Toggl Track', clockify: 'Clockify' }[provider] || provider)).filter(Boolean);
   if (labels.length <= 1) return labels[0] || 'connected time tools';
   return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
 }
