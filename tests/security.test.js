@@ -82,6 +82,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/meisterTaskWorkSignalClient');
     jest.dontMock('../src/services/ahaWorkSignalClient');
     jest.dontMock('../src/services/productboardWorkSignalClient');
+    jest.dontMock('../src/services/togglTrackWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2006,6 +2007,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('productboard').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Toggl Track adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'time_entry:18' }] });
+    jest.doMock('../src/services/togglTrackWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'toggl_track' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('toggl_track').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3785,6 +3797,32 @@ describe('work signal normalization', () => {
     const component = { id: '123e4567-e89b-12d3-a456-426614174000', type: 'component', fields: { name: 'Platform' }, createdAt: '2026-07-10T10:00:00.000Z' };
     const client = new ProductboardWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [component], links: { next: 'https://api.productboard.com/v2/entities?pageCursor=next-page' } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'productboard-token' })) } });
     try { await expect(client.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_PRODUCTBOARD_MAX_COMPONENTS; else process.env.SNEUP_PRODUCTBOARD_MAX_COMPONENTS = previous; }
+  });
+
+  test('Toggl Track sync reads bounded selected-workspace utilization metadata without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/togglTrackWorkSignalClient');
+    jest.resetModules();
+    const { TogglTrackWorkSignalClient } = require('../src/services/togglTrackWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: [{ id: 9, name: 'Sneup release', status: 'active', active: true, rate: 220, client_name: 'Private client', at: '2026-07-11T12:00:00.000Z' }] })
+      .mockResolvedValueOnce({ data: [{ id: 18, workspace_id: 77, project_id: 9, description: 'Private time-entry detail', tags: ['private'], client_name: 'Private client', user_name: 'Private user', duration: 3600, billable: true, start: '2026-07-12T10:00:00.000Z', stop: '2026-07-12T11:00:00.000Z', at: '2026-07-12T11:00:00.000Z', shared_with: [{ user_name: 'Private colleague' }] }, { id: 19, workspace_id: 88, description: 'Other workspace', duration: 60, start: '2026-07-12T10:00:00.000Z' }], headers: { 'x-toggl-quota-remaining': '29', 'x-toggl-quota-resets-in': '3600' } }) };
+    const client = new TogglTrackWorkSignalClient({ http, now: () => new Date('2026-07-12T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'toggl-token' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { workspaceId: '77' } } }, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://api.track.toggl.com/api/v9/me/time_entries', expect.objectContaining({ params: expect.objectContaining({ start_date: '2026-07-09T23:59:00.000Z', end_date: '2026-07-12T12:00:00.000Z', meta: false, include_sharing: false }), headers: expect.objectContaining({ Authorization: `Basic ${Buffer.from('toggl-token:api_token').toString('base64')}` }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private time-entry detail|private|Private client|Private user|Private colleague|Other workspace|220/);
+    expect(result).toMatchObject({ metadata: { source: 'toggl_track_api', workspaceId: '77', projects: 1, timeEntries: 1, quota: { remaining: 29, resetsInSeconds: 3600 } }, nextCursor: '2026-07-12T11:00:00.000Z' });
+  });
+
+  test('Toggl Track sync rejects an invalid workspace and fails closed at the provider entry ceiling', async () => {
+    jest.dontMock('../src/services/togglTrackWorkSignalClient');
+    jest.resetModules();
+    const { TogglTrackWorkSignalClient } = require('../src/services/togglTrackWorkSignalClient');
+    const invalid = new TogglTrackWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'toggl-token' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { workspaceId: '0' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_TOGGL_MAX_ENTRIES; process.env.SNEUP_TOGGL_MAX_ENTRIES = '1';
+    const capped = new TogglTrackWorkSignalClient({ http: { get: jest.fn().mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [{ id: 1, workspace_id: 77, start: '2026-07-12T10:00:00.000Z' }] }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'toggl-token' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { workspaceId: '77' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_TOGGL_MAX_ENTRIES; else process.env.SNEUP_TOGGL_MAX_ENTRIES = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

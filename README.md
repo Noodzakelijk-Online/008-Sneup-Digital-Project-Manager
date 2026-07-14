@@ -220,6 +220,8 @@ Aha! uses a user-scoped API token against one public `*.aha.io` account domain. 
 
 Productboard uses a personal API token with bearer authorization. It reads bounded component, feature, and objective metadata through the v2 entities endpoint with a server-side field allowlist, validates opaque provider cursors before use, excludes descriptions, owners, tags, notes, custom fields, relationships, and never makes provider writes.
 
+Toggl Track uses an API token with HTTP Basic authentication and requires one numeric workspace ID. It reads bounded project metadata plus a short, bounded personal time-entry window with `GET`, keeps only workspace-scoped utilization metadata, honors the provider's 1,000-entry ceiling, and excludes descriptions, tags, clients, people, rates, sharing data, notes, and provider writes.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations

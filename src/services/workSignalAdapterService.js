@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -49,6 +49,7 @@ const freedcampWorkSignalClient = require('./freedcampWorkSignalClient');
 const meisterTaskWorkSignalClient = require('./meisterTaskWorkSignalClient');
 const ahaWorkSignalClient = require('./ahaWorkSignalClient');
 const productboardWorkSignalClient = require('./productboardWorkSignalClient');
+const togglTrackWorkSignalClient = require('./togglTrackWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -835,6 +836,12 @@ productboardAdapter.capabilities.credentialBackedSync = true;
 productboardAdapter.list = async account => (await productboardWorkSignalClient.fetchDelta(account, null)).records;
 productboardAdapter.fetchDelta = (account, cursor) => productboardWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('productboard', productboardAdapter);
+
+const togglTrackAdapter = buildAdapter('toggl_track', 'Toggl Track project and utilization metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'time_entry'), title: item.sourceType === 'project' ? titleFromText(item.name, 'Toggl Track project') : `Toggl Track entry ${item.timeEntryId || item.id}`, description: '', status: item.sourceType === 'project' ? statusFromText(item.status) : 'done', priority: 'unknown', owners: [], labels: compact(['toggl_track', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.status, item.billable === true ? 'billable' : undefined]), dueAt: undefined, providerCreatedAt: pick(item.createdAt, item.startedAt), providerUpdatedAt: pick(item.updatedAt, item.startedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Toggl Track utilization metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, timeEntryId: item.timeEntryId, workspaceId: item.workspaceId, status: item.status, isActive: item.isActive, startedAt: item.startedAt, stoppedAt: item.stoppedAt, durationSeconds: item.durationSeconds, billable: item.billable, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+togglTrackAdapter.capabilities.credentialBackedSync = true;
+togglTrackAdapter.list = async account => (await togglTrackWorkSignalClient.fetchDelta(account, null)).records;
+togglTrackAdapter.fetchDelta = (account, cursor) => togglTrackWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('toggl_track', togglTrackAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
