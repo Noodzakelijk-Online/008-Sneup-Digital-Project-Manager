@@ -13,9 +13,13 @@ const DEFAULT_CARD_HOURS = 6;
 const MAX_FORECAST_CARDS = 1000;
 const MAX_UTILIZATION_SIGNALS = 2000;
 const MAX_ALLOCATION_SIGNALS = 2000;
+const MAX_CALENDAR_SIGNALS = 2000;
 const UTILIZATION_WINDOW_DAYS = 28;
 const ALLOCATION_WINDOW_DAYS = 28;
+const CALENDAR_WINDOW_DAYS = 28;
 const RESOURCING_PROVIDERS = ['float', 'resource_guru'];
+const CALENDAR_PROVIDERS = ['google_workspace', 'microsoft_365'];
+const MAX_CALENDAR_EVENT_HOURS = 12;
 
 const asId = (value) => value?._id ? String(value._id) : value ? String(value) : '';
 const round = (value, precision = 1) => Number(Number(value || 0).toFixed(precision));
@@ -228,7 +232,83 @@ const allocationSummary = ({ signals = [], members = [], profilesByMember = new 
   };
 };
 
-const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], performances = [], utilizationSignals = [], utilizationTruncated = false, allocationSignals = [], allocationTruncated = false, now = new Date(), mode = 'live' }) => {
+const calendarSummary = ({ signals = [], members = [], profilesByMember = new Map(), now = new Date(), truncated = false }) => {
+  const windowEnd = new Date(now);
+  windowEnd.setUTCDate(windowEnd.getUTCDate() + CALENDAR_WINDOW_DAYS);
+  const memberIdByIdentity = new Map();
+  const duplicateIdentities = new Set();
+  members.forEach((member) => {
+    const profile = profileForMember(member, profilesByMember);
+    profile.externalIdentities.forEach((identity) => {
+      if (!CALENDAR_PROVIDERS.includes(String(identity.provider || '').toLowerCase()) || !identity.externalId) return;
+      const key = resourceIdentityKey(identity.provider, identity.externalId);
+      if (memberIdByIdentity.has(key)) duplicateIdentities.add(key);
+      else memberIdByIdentity.set(key, asId(member));
+    });
+  });
+
+  const intervalsByMember = new Map();
+  let entries = 0;
+  let matchedEntries = 0;
+  let unmatchedEntries = 0;
+  signals.forEach((signal) => {
+    const provider = String(signal?.provider || '').toLowerCase();
+    const raw = signal?.raw || {};
+    const start = new Date(raw.start?.dateTime || '');
+    const end = new Date(raw.end?.dateTime || '');
+    if (!CALENDAR_PROVIDERS.includes(provider) || signal.status === 'archived'
+      || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start
+      || end <= now || start >= windowEnd || end.getTime() - start.getTime() > MAX_CALENDAR_EVENT_HOURS * 60 * 60 * 1000) return;
+    const clippedStart = start > now ? start : now;
+    const clippedEnd = end < windowEnd ? end : windowEnd;
+    const ownerMemberIds = new Set((signal.owners || [])
+      .map((owner) => resourceIdentityKey(provider, owner))
+      .filter((key) => !duplicateIdentities.has(key))
+      .map((key) => memberIdByIdentity.get(key))
+      .filter(Boolean));
+    entries += 1;
+    if (ownerMemberIds.size !== 1) {
+      unmatchedEntries += 1;
+      return;
+    }
+    matchedEntries += 1;
+    const memberId = [...ownerMemberIds][0];
+    const intervals = intervalsByMember.get(memberId) || [];
+    intervals.push({ start: clippedStart.getTime(), end: clippedEnd.getTime() });
+    intervalsByMember.set(memberId, intervals);
+  });
+
+  const byMember = new Map();
+  let matchedHours = 0;
+  intervalsByMember.forEach((intervals, memberId) => {
+    const merged = intervals.sort((left, right) => left.start - right.start).reduce((items, interval) => {
+      const previous = items[items.length - 1];
+      if (previous && interval.start <= previous.end) previous.end = Math.max(previous.end, interval.end);
+      else items.push({ ...interval });
+      return items;
+    }, []);
+    const hours = merged.reduce((total, interval) => total + (interval.end - interval.start) / (60 * 60 * 1000), 0);
+    matchedHours += hours;
+    byMember.set(memberId, { entries: intervals.length, hours });
+  });
+
+  return {
+    providers: CALENDAR_PROVIDERS,
+    windowDays: CALENDAR_WINDOW_DAYS,
+    recordsRead: signals.length,
+    entries,
+    matchedEntries,
+    unmatchedEntries,
+    matchedHours: round(matchedHours),
+    matchedWeeklyHours: round(matchedHours / (CALENDAR_WINDOW_DAYS / 7)),
+    matchedMembers: byMember.size,
+    mappingConflicts: duplicateIdentities.size,
+    truncated,
+    byMember
+  };
+};
+
+const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], performances = [], utilizationSignals = [], utilizationTruncated = false, allocationSignals = [], allocationTruncated = false, calendarSignals = [], calendarTruncated = false, now = new Date(), mode = 'live' }) => {
   const profilesByMember = new Map(profiles.map((profile) => [asId(profile.memberId), profile]));
   const boardNames = new Map(boards.map((board) => [asId(board), board.name || 'Untitled board']));
   const activeMembers = members.filter((member) => profileForMember(member, profilesByMember).active);
@@ -241,6 +321,7 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
   const hasThroughputEvidence = performances.some((record) => Number(record.metrics?.cardsCompleted || 0) > 0);
   const utilization = utilizationSummary({ signals: utilizationSignals, members: activeMembers, now, truncated: utilizationTruncated });
   const allocation = allocationSummary({ signals: allocationSignals, members: activeMembers, profilesByMember, now, truncated: allocationTruncated });
+  const calendar = calendarSummary({ signals: calendarSignals, members: activeMembers, profilesByMember, now, truncated: calendarTruncated });
 
   const memberCapacity = activeMembers.map((member) => {
     const profile = profileForMember(member, profilesByMember);
@@ -248,6 +329,7 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
     const timeOffHours = timeOffHoursInWindow(profile, now);
     const harvest = utilization.byMember.get(asId(member)) || { entries: 0, hours: 0 };
     const scheduled = allocation.byMember.get(asId(member)) || { entries: 0, hours: 0 };
+    const meetings = calendar.byMember.get(asId(member)) || { entries: 0, hours: 0 };
     return {
       memberId: asId(member),
       name: member.fullName || member.username || 'Unassigned',
@@ -262,7 +344,10 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
       harvestWeeklyHours: round(harvest.hours / (UTILIZATION_WINDOW_DAYS / 7)),
       scheduledAllocationEntriesNext28Days: scheduled.entries,
       scheduledAllocationHoursNext28Days: round(scheduled.hours),
-      scheduledAllocationWeeklyHours: round(scheduled.hours / (ALLOCATION_WINDOW_DAYS / 7))
+      scheduledAllocationWeeklyHours: round(scheduled.hours / (ALLOCATION_WINDOW_DAYS / 7)),
+      calendarEventsNext28Days: meetings.entries,
+      calendarBusyHoursNext28Days: round(meetings.hours),
+      calendarBusyWeeklyHours: round(meetings.hours / (CALENDAR_WINDOW_DAYS / 7))
     };
   });
 
@@ -292,6 +377,9 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
     const allocationMembers = usableCapacity.filter((member) => member.scheduledAllocationEntriesNext28Days > 0);
     const overAllocatedMembers = allocationMembers.filter((member) => member.scheduledAllocationWeeklyHours > member.weeklyAvailableHours * 1.1);
     const allocationCoverage = usableCapacity.length === 0 ? 0 : allocationMembers.length / usableCapacity.length;
+    const calendarMembers = usableCapacity.filter((member) => member.calendarEventsNext28Days > 0);
+    const meetingHeavyMembers = calendarMembers.filter((member) => member.calendarBusyWeeklyHours > member.weeklyAvailableHours * 0.75);
+    const calendarCoverage = usableCapacity.length === 0 ? 0 : calendarMembers.length / usableCapacity.length;
     const uncertaintyMultiplier = 1
       + (unassigned > 0 ? 0.12 : 0)
       + (highRisk / Math.max(1, scopeCards.length)) * 0.25
@@ -299,7 +387,8 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
       + (usableCapacity.some((member) => !member.configured) ? 0.08 : 0)
       + (historicalHours.length === 0 ? 0.12 : 0)
       + (overCommittedMembers.length > 0 ? 0.08 : 0)
-      + (overAllocatedMembers.length > 0 ? 0.08 : 0);
+      + (overAllocatedMembers.length > 0 ? 0.08 : 0)
+      + (meetingHeavyMembers.length > 0 ? 0.06 : 0);
     const p50BusinessDays = capacityDays === null ? null : Math.max(1, Math.ceil(capacityDays));
     const p80BusinessDays = capacityDays === null ? null : Math.max(p50BusinessDays, Math.ceil(capacityDays * uncertaintyMultiplier));
     const nearestDueDate = scopeCards
@@ -310,20 +399,22 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
     const profileCoverage = usableCapacity.length === 0 ? 0 : usableCapacity.filter((member) => member.configured).length / usableCapacity.length;
     const ownershipCoverage = scopeCards.length === 0 ? 1 : 1 - unassigned / scopeCards.length;
     const historyCoverage = historicalHours.length > 0 || hasThroughputEvidence ? 1 : 0;
-    const confidence = clamp(Math.round(38 + profileCoverage * 27 + ownershipCoverage * 20 + historyCoverage * 15 + utilizationCoverage * 7 + allocationCoverage * 4 - highRisk * 3 - overCommittedMembers.length * 5 - overAllocatedMembers.length * 5), 15, 92);
+    const confidence = clamp(Math.round(38 + profileCoverage * 27 + ownershipCoverage * 20 + historyCoverage * 15 + utilizationCoverage * 7 + allocationCoverage * 4 + calendarCoverage * 3 - highRisk * 3 - overCommittedMembers.length * 5 - overAllocatedMembers.length * 5 - meetingHeavyMembers.length * 4), 15, 92);
     const risks = [
       ...(unassigned ? [`${unassigned} card${unassigned === 1 ? ' has' : 's have'} no accountable owner`] : []),
       ...(overdue ? [`${overdue} card${overdue === 1 ? ' is' : 's are'} overdue`] : []),
       ...(highRisk ? [`${highRisk} high-risk card${highRisk === 1 ? '' : 's'} increase delivery uncertainty`] : []),
       ...(usableCapacity.some((member) => member.timeOffHours > 0) ? ['Planned time off reduces the available forecast window'] : []),
       ...(overCommittedMembers.length > 0 ? [`Harvest reports more tracked hours than modeled capacity for ${overCommittedMembers.length} assigned contributor${overCommittedMembers.length === 1 ? '' : 's'}`] : []),
-      ...(overAllocatedMembers.length > 0 ? [`Mapped resourcing allocations exceed modeled capacity for ${overAllocatedMembers.length} assigned contributor${overAllocatedMembers.length === 1 ? '' : 's'}`] : [])
+      ...(overAllocatedMembers.length > 0 ? [`Mapped resourcing allocations exceed modeled capacity for ${overAllocatedMembers.length} assigned contributor${overAllocatedMembers.length === 1 ? '' : 's'}`] : []),
+      ...(meetingHeavyMembers.length > 0 ? [`Mapped calendars show high meeting load for ${meetingHeavyMembers.length} assigned contributor${meetingHeavyMembers.length === 1 ? '' : 's'}`] : [])
     ];
     const assumptions = [
       `Capacity uses ${round(weeklyHours)} available team hours per week after allocation and focus time.`,
       `Open cards use ${round(teamCardHours)} hours each when a personal historical estimate is unavailable.`,
       ...(utilizationMembers.length > 0 ? [`Harvest time-entry metadata covers ${utilizationMembers.length}/${usableCapacity.length} assigned contributors over the last ${UTILIZATION_WINDOW_DAYS} days and calibrates forecast confidence only.`] : []),
       ...(allocationMembers.length > 0 ? [`Explicit Float or Resource Guru member mappings cover ${allocationMembers.length}/${usableCapacity.length} assigned contributors over the next ${ALLOCATION_WINDOW_DAYS} days and calibrate forecast confidence only.`] : []),
+      ...(calendarMembers.length > 0 ? [`Explicit Google Workspace or Microsoft 365 organizer mappings cover ${calendarMembers.length}/${usableCapacity.length} assigned contributors over the next ${CALENDAR_WINDOW_DAYS} days and calibrate forecast confidence only.`] : []),
       `P80 adds ${Math.round((uncertaintyMultiplier - 1) * 100)}% delivery uncertainty for ownership, risk, and evidence gaps.`
     ];
     return {
@@ -398,6 +489,19 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
         mappingConflicts: allocation.mappingConflicts,
         truncated: allocation.truncated
       },
+      calendar: {
+        providers: calendar.providers,
+        windowDays: calendar.windowDays,
+        recordsRead: calendar.recordsRead,
+        entries: calendar.entries,
+        matchedEntries: calendar.matchedEntries,
+        unmatchedEntries: calendar.unmatchedEntries,
+        matchedHours: calendar.matchedHours,
+        matchedWeeklyHours: calendar.matchedWeeklyHours,
+        matchedMembers: calendar.matchedMembers,
+        mappingConflicts: calendar.mappingConflicts,
+        truncated: calendar.truncated
+      },
       truncated: cards.length > MAX_FORECAST_CARDS
     }
   };
@@ -437,7 +541,7 @@ class ForecastService {
     const now = new Date();
     const utilizationStart = new Date(now);
     utilizationStart.setUTCDate(utilizationStart.getUTCDate() - UTILIZATION_WINDOW_DAYS);
-    const [boards, cards, members, profiles, performances, utilizationSignals, allocationSignals] = await Promise.all([
+    const [boards, cards, members, profiles, performances, utilizationSignals, allocationSignals, calendarSignals] = await Promise.all([
       Board.find({ workspaceId, closed: false }).limit(250),
       Card.find({ workspaceId, closed: false }).limit(MAX_FORECAST_CARDS + 1),
       Member.find({ workspaceId }).limit(500),
@@ -453,7 +557,12 @@ class ForecastService {
         workspaceId,
         provider: { $in: RESOURCING_PROVIDERS },
         sourceType: { $in: ['allocation', 'booking'] }
-      }).select('provider raw lastSeenAt').sort({ lastSeenAt: -1 }).limit(MAX_ALLOCATION_SIGNALS + 1)
+      }).select('provider raw lastSeenAt').sort({ lastSeenAt: -1 }).limit(MAX_ALLOCATION_SIGNALS + 1),
+      WorkSignal.find({
+        workspaceId,
+        provider: { $in: CALENDAR_PROVIDERS },
+        sourceType: 'event'
+      }).select('provider status owners raw lastSeenAt').sort({ lastSeenAt: -1 }).limit(MAX_CALENDAR_SIGNALS + 1)
     ]);
     return buildForecast({
       boards,
@@ -465,6 +574,8 @@ class ForecastService {
       utilizationTruncated: utilizationSignals.length > MAX_UTILIZATION_SIGNALS,
       allocationSignals: allocationSignals.slice(0, MAX_ALLOCATION_SIGNALS),
       allocationTruncated: allocationSignals.length > MAX_ALLOCATION_SIGNALS,
+      calendarSignals: calendarSignals.slice(0, MAX_CALENDAR_SIGNALS),
+      calendarTruncated: calendarSignals.length > MAX_CALENDAR_SIGNALS,
       now
     });
   }

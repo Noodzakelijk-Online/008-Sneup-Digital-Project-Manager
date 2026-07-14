@@ -650,6 +650,32 @@ describe('capacity-aware forecasting', () => {
     expect(forecast.portfolio.risks.join(' ')).toContain('Mapped resourcing allocations exceed modeled capacity');
     expect(forecast.portfolio.assumptions.join(' ')).toContain('Explicit Float or Resource Guru member mappings');
   });
+
+  test('uses only explicit calendar organizer mappings and merges overlapping availability blocks', () => {
+    const { buildForecast } = require('../src/services/forecastService');
+    const forecast = buildForecast({
+      now: new Date('2026-07-06T08:00:00.000Z'),
+      boards: [{ _id: 'board-1', name: 'Launch' }],
+      members: [{ _id: 'member-1', username: 'milan', fullName: 'Milan' }],
+      profiles: [{
+        _id: 'profile-1', memberId: 'member-1', weeklyHours: 8, allocationPercent: 100, focusHoursPerWeek: 4,
+        externalIdentities: [{ provider: 'google_workspace', externalId: 'person@example.com' }, { provider: 'microsoft_365', externalId: 'person@example.com' }]
+      }],
+      cards: [{ _id: 'card-1', boardId: 'board-1', members: ['member-1'], riskLevel: 'normal' }],
+      calendarSignals: [
+        { provider: 'google_workspace', sourceType: 'event', owners: ['person@example.com'], raw: { start: { dateTime: '2026-07-07T09:00:00.000Z' }, end: { dateTime: '2026-07-07T17:00:00.000Z' } } },
+        { provider: 'microsoft_365', sourceType: 'event', owners: ['person@example.com'], raw: { start: { dateTime: '2026-07-08T09:00:00.000Z' }, end: { dateTime: '2026-07-08T17:00:00.000Z' } } },
+        { provider: 'google_workspace', sourceType: 'event', owners: ['unmapped@example.com'], raw: { start: { dateTime: '2026-07-09T09:00:00.000Z' }, end: { dateTime: '2026-07-09T10:00:00.000Z' } } },
+        { provider: 'google_workspace', sourceType: 'event', owners: ['person@example.com'], raw: { start: { date: '2026-07-10' }, end: { date: '2026-07-11' } } },
+        { provider: 'microsoft_365', status: 'archived', sourceType: 'event', owners: ['person@example.com'], raw: { start: { dateTime: '2026-07-10T09:00:00.000Z' }, end: { dateTime: '2026-07-10T10:00:00.000Z' } } }
+      ]
+    });
+
+    expect(forecast.memberCapacity[0]).toMatchObject({ calendarEventsNext28Days: 2, calendarBusyHoursNext28Days: 16, calendarBusyWeeklyHours: 4, weeklyAvailableHours: 4 });
+    expect(forecast.dataQuality.calendar).toMatchObject({ providers: ['google_workspace', 'microsoft_365'], entries: 3, matchedEntries: 2, unmatchedEntries: 1, matchedHours: 16, matchedWeeklyHours: 4, matchedMembers: 1 });
+    expect(forecast.portfolio.risks.join(' ')).toContain('Mapped calendars show high meeting load');
+    expect(forecast.portfolio.assumptions.join(' ')).toContain('Explicit Google Workspace or Microsoft 365 organizer mappings');
+  });
 });
 
 describe('notification delivery safety', () => {

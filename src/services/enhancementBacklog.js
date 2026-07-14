@@ -75,11 +75,11 @@ const enhancements = [
     priority: 'P1',
     area: 'forecasting',
     title: 'Upgrade forecasting with capacity calendars and confidence ranges',
-    evidence: 'Sneup now stores workspace-scoped capacity profiles with weekly hours, allocation, focus time, planned time off, skills, and explicit Float or Resource Guru provider IDs. Analysis-only portfolio and board forecasts use those profiles plus historical effort, ownership, overdue work, and risk to return P50/P80 ranges, confidence, assumptions, and delivery risks. Bounded Harvest time-entry metadata and mapped Float allocations or approved Resource Guru bookings calibrate confidence, expose matched weekly evidence in the Capacity view, and flag modeled-capacity mismatches without changing provider data or retaining notes, rates, invoices, or budget detail.',
+    evidence: 'Sneup now stores workspace-scoped capacity profiles with weekly hours, allocation, focus time, planned time off, skills, and explicit provider IDs. Analysis-only portfolio and board forecasts use those profiles plus historical effort, ownership, overdue work, and risk to return P50/P80 ranges, confidence, assumptions, and delivery risks. Bounded Harvest time-entry metadata, mapped Float allocations or approved Resource Guru bookings, and mapped Google Workspace or Microsoft 365 organizer metadata calibrate confidence, expose matched weekly evidence in the Capacity view, and flag modeled-capacity mismatches without changing provider data. Calendar evidence ignores event text, attendees, locations, all-day events, cancelled events, overlong events, and overlapping-time double counting.',
     impact: 'Improves delivery predictions and prevents false certainty in project dates.',
     effort: 'L',
     status: 'in-progress',
-    nextStep: 'Add calendar availability evidence only with explicit member mapping, then tune capacity mismatch thresholds from reviewed production evidence.',
+    nextStep: 'Tune capacity and meeting-load mismatch thresholds from reviewed production evidence, then add provider/project-to-board mappings before treating allocations as remaining capacity.',
     acceptanceCriteria: [
       'Forecasts return P50/P80 date ranges instead of single dates.',
       'Forecasts explain capacity assumptions and known blockers.',
