@@ -5,6 +5,7 @@ const clamp = (value, fallback, minimum, maximum) => { const parsed = Number.par
 const compact = value => Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ''));
 const boundedText = value => { const text = String(value || '').replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted email]').replace(/\bhttps?:\/\/\S+/gi, '[redacted url]').replace(/\s+/g, ' ').trim(); return text ? text.slice(0, 160) : undefined; };
 const validId = value => typeof value === 'string' && value.length >= 8 && value.length <= 2048 && /^[A-Za-z0-9._~+/=-]+$/.test(value);
+const validPageToken = value => typeof value === 'string' && value.length > 0 && value.length <= 2048 && /^[A-Za-z0-9._~+/=-]+$/.test(value);
 const parseDate = value => { if (!value) return null; const date = new Date(value); return Number.isNaN(date.getTime()) ? null : date; };
 const invalidResponse = message => { const error = new Error(message); error.statusCode = 502; return error; };
 const limitReached = () => { const error = new Error('Outlook sync reached its configured inbox-message limit. Increase SNEUP_OUTLOOK_MAX_MESSAGES before continuing.'); error.statusCode = 413; return error; };
@@ -32,7 +33,7 @@ class OutlookWorkSignalClient {
     const expected = new URL(`${config.apiUrl}/me/mailFolders/inbox/messages`);
     if (next.origin !== expected.origin || next.pathname !== expected.pathname) throw invalidResponse('Outlook returned an unexpected inbox pagination location. Reconnect this account before syncing again.');
     const token = next.searchParams.get('$skiptoken');
-    if (!validId(token)) throw invalidResponse('Outlook returned an invalid inbox pagination token. Reconnect this account before syncing again.');
+    if (!validPageToken(token)) throw invalidResponse('Outlook returned an invalid inbox pagination token. Reconnect this account before syncing again.');
     return token;
   }
 

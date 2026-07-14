@@ -106,6 +106,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/outlookWorkSignalClient');
     jest.dontMock('../src/services/podioWorkSignalClient');
     jest.dontMock('../src/services/intercomWorkSignalClient');
+    jest.dontMock('../src/services/webexWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -2401,6 +2402,11 @@ describe('work signal normalization', () => {
   test('Intercom adapter delegates bounded conversation-list metadata reads to the credential-backed client', async () => {
     jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'conversation:1234' }] }); jest.doMock('../src/services/intercomWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'intercom' };
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('intercom').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Webex adapter delegates bounded meeting-list metadata reads to the credential-backed client', async () => {
+    jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'meeting:abc123' }] }); jest.doMock('../src/services/webexWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'webex' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('webex').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -4924,7 +4930,7 @@ describe('work signal normalization', () => {
       expect(http.get).toHaveBeenNthCalledWith(2, `https://gmail.googleapis.com/gmail/v1/users/me/threads/${firstThread}`, expect.objectContaining({ params: { format: 'metadata', metadataHeaders: ['Subject'] } }));
       expect(http.get).toHaveBeenNthCalledWith(3, 'https://gmail.googleapis.com/gmail/v1/users/me/threads', expect.objectContaining({ params: { labelIds: 'INBOX', maxResults: 1, pageToken: 'page_2' } }));
       expect(http).not.toHaveProperty('post');
-      expect(result).toMatchObject({ metadata: { source: 'gmail_inbox_thread_metadata', threads: 2, scannedThreads: 2, pages: 2 }, nextCursor: '2026-07-13T12:00:00.000Z', hasMore: false });
+      expect(result).toMatchObject({ metadata: { source: 'gmail_inbox_thread_metadata', threads: 2, scannedThreads: 2, pages: 2 }, nextCursor: '2026-07-14T18:00:00.000Z', hasMore: false });
       expect(JSON.stringify(result.records)).not.toMatch(/private|snippet|From|To|message-id|labelIds|parts|private-body/); expect(result.records[0].name).not.toContain(privateEmail);
     } finally { if (previous.max === undefined) delete process.env.SNEUP_GMAIL_MAX_THREADS; else process.env.SNEUP_GMAIL_MAX_THREADS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_GMAIL_PAGE_SIZE; else process.env.SNEUP_GMAIL_PAGE_SIZE = previous.page; if (previous.concurrency === undefined) delete process.env.SNEUP_GMAIL_REQUEST_CONCURRENCY; else process.env.SNEUP_GMAIL_REQUEST_CONCURRENCY = previous.concurrency; }
   });
@@ -5147,6 +5153,36 @@ describe('work signal normalization', () => {
       .mockResolvedValueOnce({ data: { results: [{ id: '1001', name: 'One' }, { id: '1002', name: 'Two' }], _links: {} } })
       .mockResolvedValueOnce({ data: { results: [], _links: {} } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ metadata: { fields: { confluenceCloudId: 'cloud-0001' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_CONFLUENCE_MAX_SPACES; else process.env.SNEUP_CONFLUENCE_MAX_SPACES = previous; }
+  });
+
+  test('Webex sync reads one bounded meeting metadata collection without agendas, people, links, recordings, messages, or provider writes', async () => {
+    jest.dontMock('../src/services/webexWorkSignalClient');
+    jest.resetModules();
+    const { WebexWorkSignalClient } = require('../src/services/webexWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn().mockResolvedValue({ data: { items: [{ id: 'meeting_123', title: `Delivery review ${privateEmail}`, state: 'scheduled', meetingType: 'scheduledMeeting', start: '2026-07-15T10:00:00Z', end: '2026-07-15T10:30:00Z', created: '2026-07-10T10:00:00Z', lastActivity: '2026-07-12T10:00:00Z', agenda: 'Private delivery discussion', password: 'private-password', hostEmail: privateEmail, joinLink: 'https://webex.example.test/private', invitees: [{ email: privateEmail }], recordings: ['private'], messages: ['private'] }] } }) };
+    const client = new WebexWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'webex-access-token' })) } });
+    const previous = { max: process.env.SNEUP_WEBEX_MAX_MEETINGS, page: process.env.SNEUP_WEBEX_PAGE_SIZE, lookback: process.env.SNEUP_WEBEX_INITIAL_LOOKBACK_DAYS, horizon: process.env.SNEUP_WEBEX_FUTURE_HORIZON_DAYS };
+    process.env.SNEUP_WEBEX_MAX_MEETINGS = '2'; process.env.SNEUP_WEBEX_PAGE_SIZE = '2'; process.env.SNEUP_WEBEX_INITIAL_LOOKBACK_DAYS = '30'; process.env.SNEUP_WEBEX_FUTURE_HORIZON_DAYS = '120';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'webex' }, '2026-07-11T00:00:00.000Z');
+      expect(http.get).toHaveBeenCalledWith('https://webexapis.com/v1/meetings', expect.objectContaining({ params: { from: '2026-07-11T00:00:00.000Z', to: '2026-11-11T12:00:00.000Z', max: 2 }, headers: expect.objectContaining({ Authorization: 'Bearer webex-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'webex_meeting_list_metadata', meetings: 1, pages: 1 }, nextCursor: '2026-07-12T10:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private delivery|private-password|webex\.example|invitees|recordings|messages|hostEmail/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_WEBEX_MAX_MEETINGS; else process.env.SNEUP_WEBEX_MAX_MEETINGS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_WEBEX_PAGE_SIZE; else process.env.SNEUP_WEBEX_PAGE_SIZE = previous.page; if (previous.lookback === undefined) delete process.env.SNEUP_WEBEX_INITIAL_LOOKBACK_DAYS; else process.env.SNEUP_WEBEX_INITIAL_LOOKBACK_DAYS = previous.lookback; if (previous.horizon === undefined) delete process.env.SNEUP_WEBEX_FUTURE_HORIZON_DAYS; else process.env.SNEUP_WEBEX_FUTURE_HORIZON_DAYS = previous.horizon; }
+  });
+
+  test('Webex sync rejects invalid cursors, malformed meeting identifiers, and collection caps', async () => {
+    jest.dontMock('../src/services/webexWorkSignalClient');
+    jest.resetModules();
+    const { WebexWorkSignalClient } = require('../src/services/webexWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ token: 'token' })) };
+    const invalid = new WebexWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ connectorId: 'webex' }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new WebexWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { items: [{ id: 'https://127.0.0.1/steal' }] } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ connectorId: 'webex' })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = { max: process.env.SNEUP_WEBEX_MAX_MEETINGS, page: process.env.SNEUP_WEBEX_PAGE_SIZE }; process.env.SNEUP_WEBEX_MAX_MEETINGS = '1'; process.env.SNEUP_WEBEX_PAGE_SIZE = '1'; const capped = new WebexWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { items: [{ id: 'meeting_123' }] } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'webex' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous.max === undefined) delete process.env.SNEUP_WEBEX_MAX_MEETINGS; else process.env.SNEUP_WEBEX_MAX_MEETINGS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_WEBEX_PAGE_SIZE; else process.env.SNEUP_WEBEX_PAGE_SIZE = previous.page; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

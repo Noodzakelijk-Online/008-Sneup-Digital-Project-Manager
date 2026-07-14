@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -75,6 +75,7 @@ const confluenceWorkSignalClient = require('./confluenceWorkSignalClient');
 const boxWorkSignalClient = require('./boxWorkSignalClient');
 const podioWorkSignalClient = require('./podioWorkSignalClient');
 const intercomWorkSignalClient = require('./intercomWorkSignalClient');
+const webexWorkSignalClient = require('./webexWorkSignalClient');
 const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
@@ -1038,6 +1039,12 @@ intercomAdapter.capabilities.credentialBackedSync = true;
 intercomAdapter.list = async account => (await intercomWorkSignalClient.fetchDelta(account, null)).records;
 intercomAdapter.fetchDelta = (account, cursor) => intercomWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('intercom', intercomAdapter);
+
+const webexAdapter = buildAdapter('webex', 'Webex meeting-list metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'meeting'), title: titleFromText(item.name, 'Webex meeting'), description: '', status: item.status || 'scheduled', priority: 'unknown', url: undefined, owners: [], labels: compact(['webex', item.sourceType, item.meetingType]), dueAt: pick(item.startAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Webex meeting metadata'), raw: { id: item.id, sourceType: item.sourceType, meetingId: item.meetingId, status: item.status, meetingType: item.meetingType, startAt: item.startAt, endAt: item.endAt, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+webexAdapter.capabilities.credentialBackedSync = true;
+webexAdapter.list = async account => (await webexWorkSignalClient.fetchDelta(account, null)).records;
+webexAdapter.fetchDelta = (account, cursor) => webexWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('webex', webexAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
