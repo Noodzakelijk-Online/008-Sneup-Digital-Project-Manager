@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -36,6 +36,7 @@ const airtableWorkSignalClient = require('./airtableWorkSignalClient');
 const todoistWorkSignalClient = require('./todoistWorkSignalClient');
 const shortcutWorkSignalClient = require('./shortcutWorkSignalClient');
 const bitbucketWorkSignalClient = require('./bitbucketWorkSignalClient');
+const harvestWorkSignalClient = require('./harvestWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -586,6 +587,37 @@ bitbucketAdapter.capabilities.credentialBackedSync = true;
 bitbucketAdapter.list = async account => (await bitbucketWorkSignalClient.fetchDelta(account, null)).records;
 bitbucketAdapter.fetchDelta = (account, cursor) => bitbucketWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('bitbucket', bitbucketAdapter);
+
+const harvestAdapter = buildAdapter('harvest', 'Harvest time-entry adapter', (account, entry) => ({
+  externalId: pick(entry.externalId, entry.id),
+  sourceType: 'time_entry',
+  title: titleFromText([entry.project?.name || 'Untitled project', entry.task?.name || 'Tracked time'].join(' - ')),
+  description: '',
+  status: entry.isRunning ? 'in_progress' : 'done',
+  priority: 'normal',
+  url: undefined,
+  owners: userNames(entry.user),
+  labels: compact([entry.client?.name, entry.project?.name, entry.task?.name, entry.billable ? 'billable' : 'non-billable', entry.approvalStatus]),
+  providerCreatedAt: pick(entry.createdAt),
+  providerUpdatedAt: pick(entry.updatedAt, entry.createdAt),
+  evidenceRefs: baseEvidence(account, entry, 'Harvest time entry'),
+  raw: {
+    id: entry.id,
+    spentDate: entry.spentDate,
+    hours: entry.hours,
+    approvalStatus: entry.approvalStatus,
+    isRunning: entry.isRunning === true,
+    billable: entry.billable === true,
+    user: entry.user,
+    client: entry.client,
+    project: entry.project,
+    task: entry.task
+  }
+}));
+harvestAdapter.capabilities.credentialBackedSync = true;
+harvestAdapter.list = async account => (await harvestWorkSignalClient.fetchDelta(account, null)).records;
+harvestAdapter.fetchDelta = (account, cursor) => harvestWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('harvest', harvestAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

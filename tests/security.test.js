@@ -68,6 +68,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/githubWorkSignalClient');
     jest.dontMock('../src/services/trelloWorkSignalClient');
     jest.dontMock('../src/services/jiraWorkSignalClient');
+    jest.dontMock('../src/services/harvestWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1853,6 +1854,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('bitbucket').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Harvest adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'time_entry:1' }] });
+    jest.doMock('../src/services/harvestWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'harvest' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('harvest').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -2948,6 +2961,68 @@ describe('work signal normalization', () => {
     expect(normalized).toMatchObject({
       externalId: 'issue:7', sourceType: 'issue', title: 'Ship Bitbucket sync', description: '', status: 'open', priority: 'high', owners: ['Robert'], labels: ['noodzakelijk/sneup', 'bug', 'issue']
     });
+  });
+
+  test('Harvest sync reads bounded time-entry metadata without notes, rates, invoices, or provider writes', async () => {
+    jest.dontMock('../src/services/harvestWorkSignalClient');
+    jest.resetModules();
+    const { HarvestWorkSignalClient } = require('../src/services/harvestWorkSignalClient');
+    const http = { get: jest.fn().mockResolvedValue({ data: {
+      time_entries: [{
+        id: 71, spent_date: '2026-07-10', hours: 2.25, rounded_hours: 2.5, approval_status: 'approved', is_running: false, billable: true,
+        created_at: '2026-07-10T09:00:00.000Z', updated_at: '2026-07-10T12:00:00.000Z',
+        user: { id: 9, name: 'Robert' }, client: { id: 5, name: 'Noodzakelijk' }, project: { id: 3, name: 'Sneup' }, task: { id: 4, name: 'Connector delivery' },
+        notes: 'Private meeting notes', billable_rate: 125, cost_rate: 80, invoice: { id: 1, number: 'INV-001' }
+      }], total_entries: 1, next_page: null
+    } }) };
+    const client = new HarvestWorkSignalClient({
+      http,
+      now: () => new Date('2026-07-14T12:00:00.000Z'),
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'harvest-token' })) }
+    });
+    const account = { connectorId: 'harvest', metadata: { fields: { accountId: '123456' } } };
+    const result = await client.fetchDelta(account, '2026-07-10T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://api.harvestapp.com/v2/time_entries', expect.objectContaining({
+      params: expect.objectContaining({ page: 1, per_page: 250, from: '2026-04-15', to: '2026-07-14', updated_since: expect.any(String) }),
+      headers: expect.objectContaining({ Authorization: 'Bearer harvest-token', 'Harvest-Account-Id': '123456', 'User-Agent': expect.stringContaining('Sneup') })
+    }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toContain('Private meeting notes');
+    expect(JSON.stringify(result.records)).not.toContain('INV-001');
+    expect(JSON.stringify(result.records)).not.toContain('125');
+    expect(result).toMatchObject({ metadata: { source: 'harvest_api', projects: 1, items: 1 }, hasMore: false, nextCursor: '2026-07-10T12:00:00.000Z' });
+    expect(result.records[0]).toMatchObject({ id: 'time_entry:71', hours: 2.5, user: { name: 'Robert' }, project: { name: 'Sneup' } });
+  });
+
+  test('Harvest sync fails closed when the configured time-entry limit would truncate provider data', async () => {
+    jest.dontMock('../src/services/harvestWorkSignalClient');
+    jest.resetModules();
+    const { HarvestWorkSignalClient } = require('../src/services/harvestWorkSignalClient');
+    const previousLimit = process.env.SNEUP_HARVEST_MAX_ENTRIES;
+    process.env.SNEUP_HARVEST_MAX_ENTRIES = '1';
+    const http = { get: jest.fn().mockResolvedValue({ data: { time_entries: [{ id: 1 }, { id: 2 }], total_entries: 2, next_page: 2 } }) };
+    const client = new HarvestWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'harvest-token' })) } });
+    try {
+      await expect(client.fetchDelta({ metadata: { fields: { accountId: '123456' } } })).rejects.toMatchObject({ statusCode: 413 });
+      expect(http.get).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_HARVEST_MAX_ENTRIES;
+      else process.env.SNEUP_HARVEST_MAX_ENTRIES = previousLimit;
+    }
+  });
+
+  test('Harvest normalization preserves utilization context without private time-entry content', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'harvest' }, {
+      id: 'time_entry:71', spentDate: '2026-07-10', hours: 2.5, approvalStatus: 'approved', isRunning: false, billable: true,
+      createdAt: '2026-07-10T09:00:00.000Z', updatedAt: '2026-07-10T12:00:00.000Z',
+      user: { id: 9, name: 'Robert' }, client: { id: 5, name: 'Noodzakelijk' }, project: { id: 3, name: 'Sneup' }, task: { id: 4, name: 'Connector delivery' }, notes: 'Private detail'
+    });
+    expect(normalized).toMatchObject({
+      externalId: 'time_entry:71', sourceType: 'time_entry', title: 'Sneup - Connector delivery', description: '', status: 'done', priority: 'normal', owners: ['Robert'], labels: ['Noodzakelijk', 'Sneup', 'Connector delivery', 'billable', 'approved']
+    });
+    expect(JSON.stringify(normalized.raw)).not.toContain('Private detail');
   });
 
   test('projects provider signals into normalized work graph records', () => {
