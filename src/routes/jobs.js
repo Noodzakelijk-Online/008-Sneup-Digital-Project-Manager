@@ -39,9 +39,9 @@ const recordJobAudit = async (req, action, jobName, afterState = {}) => {
   }
 };
 
-const calculateAllPerformance = async (period) => {
-  const workspaceId = getDefaultWorkspaceObjectId();
-  const boards = await Board.find(defaultWorkspaceQuery({ closed: false }));
+const calculateAllPerformance = async (period, options = {}) => {
+  const workspaceId = options.workspaceId || getDefaultWorkspaceObjectId();
+  const boards = await Board.find({ workspaceId, closed: false });
   let successCount = 0;
   let failureCount = 0;
 
@@ -66,25 +66,24 @@ const calculateAllPerformance = async (period) => {
 const manualJobHandlers = {
   'trello.incremental_sync': {
     jobType: 'sync',
-    run: () => trelloSync.syncRecentActivity()
+    run: ({ workspaceId }) => trelloSync.syncRecentActivity({ workspaceId })
   },
   'analytics.generate_all': {
     jobType: 'analytics',
-    run: () => analyticsService.generateAllAnalytics()
+    run: ({ workspaceId }) => analyticsService.generateAllAnalytics({ workspaceId })
   },
   'connectors.work_signals_sync': {
     jobType: 'sync',
-    run: () => connectorSyncService.syncConnectedAccounts({ triggerType: 'manual' })
+    run: ({ workspaceId }) => connectorSyncService.syncConnectedAccounts({ workspaceId, triggerType: 'manual' })
   },
   'notifications.reconciliation_alerts': {
     jobType: 'system',
-    run: () => notificationService.dispatchAllReconciliationAlerts()
+    run: ({ workspaceId }) => notificationService.dispatchReconciliationAlerts({ workspaceId })
   },
   'interventions.process_all': {
     jobType: 'intervention',
-    run: async () => {
-      const workspaceId = getDefaultWorkspaceObjectId();
-      const boards = await Board.find(defaultWorkspaceQuery({ closed: false }));
+    run: async ({ workspaceId }) => {
+      const boards = await Board.find({ workspaceId, closed: false });
       let successCount = 0;
       let failureCount = 0;
 
@@ -107,8 +106,7 @@ const manualJobHandlers = {
   },
   'interventions.follow_ups': {
     jobType: 'intervention',
-    run: async () => {
-      const workspaceId = getDefaultWorkspaceObjectId();
+    run: async ({ workspaceId }) => {
       const ledgerResult = await operationsLedgerService.processDueFollowUps({ workspaceId });
       const queuedInterventions = await interventionEngine.processFollowUps({ workspaceId });
       return {
@@ -120,24 +118,24 @@ const manualJobHandlers = {
   },
   'interventions.escalations': {
     jobType: 'intervention',
-    run: async () => {
+    run: async ({ workspaceId }) => {
       const queuedInterventions = await interventionEngine.processEscalations({
-        workspaceId: getDefaultWorkspaceObjectId()
+        workspaceId
       });
       return { processedCount: queuedInterventions.length, successCount: 1, failureCount: 0 };
     }
   },
   'performance.daily': {
     jobType: 'performance',
-    run: () => calculateAllPerformance('daily')
+    run: ({ workspaceId }) => calculateAllPerformance('daily', { workspaceId })
   },
   'performance.weekly': {
     jobType: 'performance',
-    run: () => calculateAllPerformance('weekly')
+    run: ({ workspaceId }) => calculateAllPerformance('weekly', { workspaceId })
   },
   'performance.monthly': {
     jobType: 'performance',
-    run: () => calculateAllPerformance('monthly')
+    run: ({ workspaceId }) => calculateAllPerformance('monthly', { workspaceId })
   }
 };
 
@@ -280,7 +278,7 @@ router.post('/:jobName/trigger', requirePermission('jobs:manage'), async (req, r
       metadata: {
         requestedBy: actorFromRequest(req)
       }
-    }, handler.run);
+    }, () => handler.run({ workspaceId }));
     await recordJobAudit(req, 'job_manual_triggered', req.params.jobName, result);
 
     res.json({

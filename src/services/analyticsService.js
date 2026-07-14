@@ -37,10 +37,10 @@ const initAnalytics = () => {
 };
 
 // Generate analytics for all boards
-const generateAllAnalytics = async () => {
+const generateAllAnalytics = async (options = {}) => {
   try {
     logger.info('Generating analytics for all boards');
-    const workspaceId = getDefaultWorkspaceObjectId();
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     
     const boards = await Board.find({ workspaceId, closed: false });
     

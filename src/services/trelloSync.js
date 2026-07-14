@@ -514,12 +514,12 @@ const syncComments = async (card) => {
 };
 
 // Sync recent activity (incremental sync)
-const syncRecentActivity = async () => {
+const syncRecentActivity = async (options = {}) => {
   try {
     logger.info('Starting incremental sync');
-    
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     // Get all boards
-    const boards = await Board.find(defaultWorkspaceQuery({ closed: false }));
+    const boards = await Board.find({ workspaceId, closed: false });
     
     // Sync each board's recent activity
     let successCount = 0;
