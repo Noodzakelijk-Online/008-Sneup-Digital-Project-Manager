@@ -16,6 +16,7 @@ const trelloSync = require('./services/trelloSync');
 const analyticsService = require('./services/analyticsService');
 const connectorSyncService = require('./services/connectorSyncService');
 const workspaceScopeService = require('./services/workspaceScopeService');
+const responseTimingService = require('./services/responseTimingService');
 
 // Import routes
 const boardRoutes = require('./routes/boards');
@@ -88,6 +89,7 @@ app.use((req, res, next) => {
 });
 app.use(apiRateLimit);
 app.use(requireApiAccess);
+app.use(responseTimingService.middleware());
 
 // Health check endpoint
 app.get('/health', (req, res) => {

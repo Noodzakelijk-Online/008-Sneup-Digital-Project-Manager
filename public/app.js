@@ -5,6 +5,7 @@ const state = {
   snapshot: null,
   operationsBrief: null,
   jobDashboard: null,
+  responseTiming: null,
   connectors: [],
   categories: [],
   accounts: [],
@@ -638,13 +639,18 @@ async function loadOperationsBrief() {
 
 async function loadJobDashboard() {
   try {
-    const response = await apiFetch('/api/jobs');
+    const [response, timing] = await Promise.all([
+      apiFetch('/api/jobs'),
+      fetchApi('/api/security/response-timing').catch(() => ({ timing: null }))
+    ]);
     const data = await response.json();
     if (!data.success) throw new Error(data.error || 'Job health unavailable');
     state.jobDashboard = data.dashboard;
+    state.responseTiming = timing.timing || null;
     renderJobDashboard();
   } catch (error) {
     state.jobDashboard = null;
+    state.responseTiming = null;
     els.jobHealthCount.textContent = '0 tracked';
     els.jobHealthList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
   }
@@ -917,12 +923,26 @@ function renderJobDashboard() {
         <span>${summary.failedRuns || 0} failed runs</span>
       </div>
     </div>
+    ${renderResponseTiming()}
     ${listOrEmpty(displayJobs, renderJobHealthItem)}
   `;
 
   document.querySelectorAll('[data-job-action]').forEach((button) => {
     button.addEventListener('click', () => runJobAction(button.dataset.jobName, button.dataset.jobAction));
   });
+}
+
+function renderResponseTiming() {
+  const timing = state.responseTiming;
+  const views = (timing?.views || []).filter(view => view.samples > 0).slice(0, 8);
+  if (!timing || views.length === 0) return '';
+  return `
+    <div class="item">
+      <div class="item-title"><strong>Command-center response timing</strong><span class="pill healthy">bounded</span></div>
+      <div class="meta">Recent in-memory samples only. No request bodies, identifiers, query strings, or credentials are retained.</div>
+      <div class="meta">${views.map(view => `<span>${escapeHtml(view.view)}: p50 ${view.p50Ms}ms, p95 ${view.p95Ms}ms (${view.samples})</span>`).join('')}</div>
+    </div>
+  `;
 }
 
 function renderOperationsLedger() {

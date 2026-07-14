@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const responseTimingService = require('../services/responseTimingService');
+const { requirePermission } = require('../utils/requestSecurity');
 
 const publicAuthContext = (auth = {}) => ({
   authenticated: Boolean(auth.authenticated),
@@ -27,6 +29,13 @@ router.get('/context', (req, res) => {
       workspaceScoped: true,
       trelloWritesApprovalGated: true
     }
+  });
+});
+
+router.get('/response-timing', requirePermission('audit:read'), (req, res) => {
+  res.json({
+    success: true,
+    timing: responseTimingService.getSummary()
   });
 });
 

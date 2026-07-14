@@ -6146,6 +6146,44 @@ describe('job observability', () => {
   });
 });
 
+describe('command-center response timing telemetry', () => {
+  test('keeps only bounded, recent timing samples for approved GET view routes', () => {
+    const { ResponseTimingService } = require('../src/services/responseTimingService');
+    let now = 100;
+    const telemetry = new ResponseTimingService({ now: () => now, maxSamples: 3 });
+    const recordRequest = (path, durationMs, statusCode = 200) => {
+      const req = { method: 'GET', path };
+      const res = new EventEmitter();
+      res.statusCode = statusCode;
+      const next = jest.fn();
+      telemetry.middleware()(req, res, next);
+      expect(next).toHaveBeenCalledTimes(1);
+      now += durationMs;
+      res.emit('finish');
+    };
+
+    recordRequest('/api/autopilot/mission-control', 10);
+    recordRequest('/api/autopilot/mission-control', 20);
+    recordRequest('/api/autopilot/mission-control', 30, 500);
+    recordRequest('/api/autopilot/mission-control', 40);
+    recordRequest('/api/cards/private-card', 99);
+
+    const summary = telemetry.getSummary();
+    const overview = summary.views.find(view => view.view === 'overview');
+    expect(overview).toMatchObject({ samples: 3, averageMs: 30, p50Ms: 30, p95Ms: 40, maxMs: 40, failures: 1 });
+    expect(summary).toMatchObject({ retention: 'in_memory_bounded_recent_samples', maxSamplesPerView: 3, sampledViews: 1 });
+    expect(JSON.stringify(summary)).not.toContain('private-card');
+  });
+
+  test('does not instrument mutations or unknown API routes', () => {
+    const { ResponseTimingService } = require('../src/services/responseTimingService');
+    const telemetry = new ResponseTimingService({ maxSamples: 10 });
+    expect(telemetry.getView({ method: 'POST', path: '/api/recommendations' })).toBeNull();
+    expect(telemetry.getView({ method: 'GET', path: '/api/cards/private-card' })).toBeNull();
+    expect(telemetry.getView({ method: 'GET', path: '/api/connectors' })).toBe('connectors');
+  });
+});
+
 describe('optional AI startup', () => {
   test('registers global process handlers only once across module reloads', () => {
     const { registerProcessHandlers } = require('../src/utils/processHandlers');
