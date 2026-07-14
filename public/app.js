@@ -37,6 +37,8 @@ const state = {
     findings: [],
     healthSnapshots: [],
     reconciliationHealth: null,
+    notificationPolicies: [],
+    notificationDeliveries: [],
     errors: []
   },
   category: 'all',
@@ -72,6 +74,11 @@ const els = {
   recommendationCount: document.getElementById('recommendationCount'),
   trelloAttempts: document.getElementById('trelloAttempts'),
   trelloAttemptCount: document.getElementById('trelloAttemptCount'),
+  notificationPolicies: document.getElementById('notificationPolicies'),
+  notificationPolicyCount: document.getElementById('notificationPolicyCount'),
+  notificationPolicyButton: document.getElementById('notificationPolicyButton'),
+  notificationDeliveries: document.getElementById('notificationDeliveries'),
+  notificationDeliveryCount: document.getElementById('notificationDeliveryCount'),
   findingsList: document.getElementById('findingsList'),
   findingsCount: document.getElementById('findingsCount'),
   boardHealthList: document.getElementById('boardHealthList'),
@@ -132,6 +139,7 @@ document.getElementById('refreshButton').addEventListener('click', loadAll);
 document.getElementById('approvalButton').addEventListener('click', () => showView('approvals'));
 document.getElementById('connectorButton').addEventListener('click', () => showView('connectors'));
 els.setupButton.addEventListener('click', () => openFirstRunSetup());
+els.notificationPolicyButton.addEventListener('click', openNotificationPolicy);
 els.workspaceInviteButton.addEventListener('click', openWorkspaceInvite);
 els.workspaceSelect.addEventListener('change', async (event) => {
   state.activeWorkspaceId = event.target.value;
@@ -662,7 +670,9 @@ async function loadOperationsLedger() {
     followUps: fetchApi('/api/follow-ups/due?limit=50'),
     findings: fetchApi('/api/findings?status=open&limit=50'),
     healthSnapshots: fetchApi('/api/findings/board-health?limit=20'),
-    reconciliationHealth: fetchApi('/api/trello-actions/reconciliation/health?limit=100')
+    reconciliationHealth: fetchApi('/api/trello-actions/reconciliation/health?limit=100'),
+    notificationPolicies: fetchApi('/api/notifications/policies?limit=100'),
+    notificationDeliveries: fetchApi('/api/notifications/deliveries?limit=100')
   };
 
   const entries = await Promise.all(Object.entries(requests).map(async ([key, promise]) => {
@@ -689,6 +699,8 @@ async function loadOperationsLedger() {
     if (key === 'findings') state.ledger.findings = data.findings || [];
     if (key === 'healthSnapshots') state.ledger.healthSnapshots = data.snapshots || [];
     if (key === 'reconciliationHealth') state.ledger.reconciliationHealth = data.health || null;
+    if (key === 'notificationPolicies') state.ledger.notificationPolicies = data.policies || [];
+    if (key === 'notificationDeliveries') state.ledger.notificationDeliveries = data.deliveries || [];
   });
 
   renderOperationsLedger();
@@ -834,6 +846,8 @@ function renderOperationsLedger() {
   const findings = state.ledger.findings || [];
   const healthSnapshots = state.ledger.healthSnapshots || [];
   const reconciliationHealth = state.ledger.reconciliationHealth;
+  const notificationPolicies = state.ledger.notificationPolicies || [];
+  const notificationDeliveries = state.ledger.notificationDeliveries || [];
   const reconciliationSummary = reconciliationHealth?.summary || {};
 
   const openRobert = decisions.filter(item => item.ownerType === 'robert').length;
@@ -879,6 +893,10 @@ function renderOperationsLedger() {
     ? `${reconciliationSummary.requiresOperator} need evidence`
     : `${actions.length} attempts`;
   els.trelloAttempts.innerHTML = `${renderTrelloReconciliationHealth(reconciliationHealth)}${listOrEmpty(actions, renderTrelloAttempt)}`;
+  els.notificationPolicyCount.textContent = `${notificationPolicies.length} polic${notificationPolicies.length === 1 ? 'y' : 'ies'}`;
+  els.notificationPolicies.innerHTML = listOrEmpty(notificationPolicies, renderNotificationPolicy);
+  els.notificationDeliveryCount.textContent = `${notificationDeliveries.length} event${notificationDeliveries.length === 1 ? '' : 's'}`;
+  els.notificationDeliveries.innerHTML = listOrEmpty(notificationDeliveries, renderNotificationDelivery);
   els.followUpCount.textContent = `${followUps.length} due`;
   els.followUps.innerHTML = listOrEmpty(followUps, renderFollowUp);
   els.auditCount.textContent = `${auditEvents.length} events`;
@@ -905,6 +923,15 @@ function renderOperationsLedger() {
   });
   document.querySelectorAll('[data-trello-action-reconcile]').forEach((button) => {
     button.addEventListener('click', () => openTrelloActionReconciliation(button.dataset.trelloActionReconcile));
+  });
+  document.querySelectorAll('[data-notification-policy-activate]').forEach((button) => {
+    button.addEventListener('click', () => openNotificationActivation(button.dataset.notificationPolicyActivate));
+  });
+  document.querySelectorAll('[data-notification-policy-pause]').forEach((button) => {
+    button.addEventListener('click', () => updateNotificationPolicy(button.dataset.notificationPolicyPause, { status: 'paused' }));
+  });
+  document.querySelectorAll('[data-notification-policy-test]').forEach((button) => {
+    button.addEventListener('click', () => openNotificationTest(button.dataset.notificationPolicyTest));
   });
   bindLedgerDrilldownActions();
   bindGraphActions();
@@ -1146,6 +1173,53 @@ function renderTrelloReconciliationHealth(health) {
       </div>
       <div class="meta"><span>Confirm the observed provider result in the matching action below.</span><span>Thresholds: ${health.thresholds?.warningHours || 4}h / ${health.thresholds?.criticalHours || 24}h</span></div>
       <div class="meta">${alerts.slice(0, 3).map(item => `<span>${escapeHtml(item.actionType || 'Trello action')}: ${escapeHtml(item.message)}</span>`).join('')}</div>
+    </div>
+  `;
+}
+
+function renderNotificationPolicy(policy) {
+  const policyId = getId(policy.id || policy._id);
+  const statusClass = policy.status === 'active' ? 'healthy' : 'review';
+  const channel = String(policy.channel || '').replaceAll('_', ' ');
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(policy.name)}</strong>
+        <span class="pill ${statusClass}">${escapeHtml(policy.status)}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(channel)}</span>
+        <span>${escapeHtml(policy.destinationLabel || 'Unlabelled destination')}</span>
+        <span>${escapeHtml(policy.minimumSeverity)} and above</span>
+      </div>
+      <div class="meta"><span>${policy.destinationConfigured ? 'Encrypted destination configured' : 'Destination needs configuration'}</span><span>${(policy.eventTypes || []).map(type => escapeHtml(type.replaceAll('_', ' '))).join(', ')}</span></div>
+      <div class="item-actions">
+        ${policy.status === 'active'
+    ? `<button class="button" data-notification-policy-pause="${escapeHtml(policyId)}" type="button">Pause</button>`
+    : `<button class="button primary" data-notification-policy-activate="${escapeHtml(policyId)}" type="button">Activate</button>`}
+        <button class="button" data-notification-policy-test="${escapeHtml(policyId)}" type="button">Send test</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderNotificationDelivery(delivery) {
+  const policies = state.ledger.notificationPolicies || [];
+  const policy = policies.find(item => getId(item.id || item._id) === getId(delivery.policyId));
+  const statusClass = delivery.status === 'delivered' ? 'healthy'
+    : delivery.status === 'failed' ? 'critical' : 'review';
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(delivery.title || 'Notification delivery')}</strong>
+        <span class="pill ${statusClass}">${escapeHtml(delivery.status)}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(policy?.name || 'Notification policy')}</span>
+        <span>${escapeHtml(delivery.severity || 'info')}</span>
+        <span>${formatDate(delivery.deliveredAt || delivery.failedAt || delivery.createdAt)}</span>
+      </div>
+      <div class="meta"><span>${escapeHtml(delivery.errorMessage || delivery.message || 'Delivery recorded')}</span></div>
     </div>
   `;
 }
@@ -3174,6 +3248,139 @@ function openTrelloActionReconciliation(actionId) {
       submitButton.disabled = false;
       submitButton.textContent = 'Finalize ledger';
       openNotice('Reconciliation blocked', error.message);
+    }
+  });
+}
+
+function openNotificationPolicy() {
+  els.modalTitle.textContent = 'Add alert policy';
+  els.modalBody.innerHTML = `
+    <form id="notificationPolicyForm" class="notice-stack">
+      <label>Name<input name="name" type="text" maxlength="120" required placeholder="Operations alerts"></label>
+      <label>Channel
+        <select name="channel" required>
+          <option value="slack_webhook">Slack webhook</option>
+          <option value="teams_webhook">Teams webhook</option>
+          <option value="generic_webhook">Generic webhook</option>
+        </select>
+      </label>
+      <label>Destination label<input name="destinationLabel" type="text" maxlength="160" required placeholder="Project operations channel"></label>
+      <label>HTTPS webhook URL<input name="destinationUrl" type="url" inputmode="url" autocomplete="off" required placeholder="https://..."></label>
+      <label>Minimum severity
+        <select name="minimumSeverity">
+          <option value="warning">Warning and critical</option>
+          <option value="critical">Critical only</option>
+        </select>
+      </label>
+      <div class="notice">The policy starts paused. Activate it separately when this workspace is ready to deliver matching reconciliation alerts.</div>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelNotificationPolicy">Cancel</button>
+        <button class="button primary" type="submit">Save paused policy</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelNotificationPolicy').addEventListener('click', closeModal);
+  document.getElementById('notificationPolicyForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.textContent = 'Saving...';
+    try {
+      await fetchApi('/api/notifications/policies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget).entries()))
+      });
+      closeModal();
+      await loadOperationsLedger();
+    } catch (error) {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Save paused policy';
+      openNotice('Policy not saved', error.message);
+    }
+  });
+}
+
+async function updateNotificationPolicy(policyId, body) {
+  try {
+    await fetchApi(`/api/notifications/policies/${encodeURIComponent(policyId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    await loadOperationsLedger();
+    return true;
+  } catch (error) {
+    openNotice('Policy update blocked', error.message);
+    return false;
+  }
+}
+
+function openNotificationActivation(policyId) {
+  const policy = (state.ledger.notificationPolicies || []).find(item => getId(item.id || item._id) === policyId);
+  if (!policy) return;
+  els.modalTitle.textContent = 'Activate alert policy';
+  els.modalBody.innerHTML = `
+    <form id="activateNotificationPolicyForm" class="notice-stack">
+      <div class="notice">Activating <strong>${escapeHtml(policy.name)}</strong> sends matching ${escapeHtml(policy.minimumSeverity)} reconciliation evidence alerts to <strong>${escapeHtml(policy.destinationLabel || 'the configured destination')}</strong>.</div>
+      <label><input type="checkbox" name="confirmActivation" required> I confirm this workspace may deliver these alerts.</label>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelNotificationActivation">Cancel</button>
+        <button class="button primary" type="submit">Activate policy</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelNotificationActivation').addEventListener('click', closeModal);
+  document.getElementById('activateNotificationPolicyForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.textContent = 'Activating...';
+    try {
+      if (await updateNotificationPolicy(policyId, { status: 'active' })) closeModal();
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Activate policy';
+    }
+  });
+}
+
+function openNotificationTest(policyId) {
+  const policy = (state.ledger.notificationPolicies || []).find(item => getId(item.id || item._id) === policyId);
+  if (!policy) return;
+  els.modalTitle.textContent = 'Send test alert';
+  els.modalBody.innerHTML = `
+    <form id="notificationTestForm" class="notice-stack">
+      <div class="notice">This sends a real test delivery to <strong>${escapeHtml(policy.destinationLabel || 'the configured destination')}</strong>. It does not activate the policy.</div>
+      <label><input type="checkbox" name="confirmDelivery" required> I understand this sends an external test notification.</label>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelNotificationTest">Cancel</button>
+        <button class="button primary" type="submit">Send test</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelNotificationTest').addEventListener('click', closeModal);
+  document.getElementById('notificationTestForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.textContent = 'Sending...';
+    try {
+      await fetchApi(`/api/notifications/policies/${encodeURIComponent(policyId)}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmDelivery: true })
+      });
+      closeModal();
+      await loadOperationsLedger();
+      openNotice('Test delivered', 'The external destination accepted the test alert.');
+    } catch (error) {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Send test';
+      openNotice('Test delivery failed', error.message);
     }
   });
 }

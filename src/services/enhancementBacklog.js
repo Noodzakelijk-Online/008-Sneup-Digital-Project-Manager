@@ -155,11 +155,11 @@ const enhancements = [
     priority: 'P2',
     area: 'notifications',
     title: 'Add multi-channel notification delivery',
-    evidence: 'Sneup detects commands and risks, but it does not yet deliver them to Slack, Teams, email, or calendar workflows.',
+    evidence: 'Workspace-scoped Slack, Teams, and generic webhook policies now store destinations encrypted, require explicit activation, limit delivery to reconciliation evidence gaps, ledger every delivery, and prevent duplicate alert delivery within a day.',
     impact: 'Moves Sneup from dashboard-only visibility into the places project managers and teams already work.',
     effort: 'L',
-    status: 'ready',
-    nextStep: 'Implement NotificationPolicy and NotificationDelivery models with Slack, Teams, email, and webhook senders.',
+    status: 'in-progress',
+    nextStep: 'Add email, digest cadence, quiet hours, and source-evidence deep links while retaining explicit policy activation and delivery-ledger controls.',
     acceptanceCriteria: [
       'Users can choose channel, severity threshold, digest cadence, and quiet hours.',
       'Notifications link back to source evidence and the approval queue.',
@@ -257,7 +257,7 @@ const enhancements = [
     impact: 'Prevents duplicate comments, moves, assignments, labels, and other consequential provider writes under concurrent requests or partial internal failures.',
     effort: 'M',
     status: 'done',
-    nextStep: 'Add reconciliation aging metrics and an operator alert before unresolved action evidence becomes stale.',
+    nextStep: 'Add digest and quiet-hour controls to the delivered reconciliation alert policies.',
     acceptanceCriteria: [
       'Only one executor can claim an approved provider write.',
       'Provider writes cannot be executed from a record that disables required approval.',

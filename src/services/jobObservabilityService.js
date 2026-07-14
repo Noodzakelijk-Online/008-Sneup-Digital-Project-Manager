@@ -82,6 +82,13 @@ const trackedJobs = [
     label: 'Connector work signal sync',
     staleAfterMinutes: 90,
     manualTriggerAllowed: true
+  },
+  {
+    jobName: 'notifications.reconciliation_alerts',
+    jobType: 'system',
+    label: 'Reconciliation alert delivery',
+    staleAfterMinutes: 45,
+    manualTriggerAllowed: true
   }
 ];
 

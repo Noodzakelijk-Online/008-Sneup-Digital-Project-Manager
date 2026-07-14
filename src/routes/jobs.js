@@ -8,6 +8,7 @@ const interventionEngine = require('../services/interventionEngine');
 const jobObservabilityService = require('../services/jobObservabilityService');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const performanceTracker = require('../services/performanceTracker');
+const notificationService = require('../services/notificationService');
 const trelloSync = require('../services/trelloSync');
 const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { clampInteger, requirePermission } = require('../utils/requestSecurity');
@@ -74,6 +75,10 @@ const manualJobHandlers = {
   'connectors.work_signals_sync': {
     jobType: 'sync',
     run: () => connectorSyncService.syncConnectedAccounts({ triggerType: 'manual' })
+  },
+  'notifications.reconciliation_alerts': {
+    jobType: 'system',
+    run: () => notificationService.dispatchAllReconciliationAlerts()
   },
   'interventions.process_all': {
     jobType: 'intervention',

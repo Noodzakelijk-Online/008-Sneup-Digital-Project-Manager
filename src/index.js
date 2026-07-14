@@ -40,6 +40,7 @@ const workspaceRoutes = require('./routes/workspaces');
 const workSignalRoutes = require('./routes/workSignals');
 const reportRoutes = require('./routes/reports');
 const forecastRoutes = require('./routes/forecasts');
+const notificationRoutes = require('./routes/notifications');
 
 // Initialize Express app
 const app = express();
@@ -120,6 +121,7 @@ app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/work-signals', workSignalRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/forecasts', forecastRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -202,6 +204,9 @@ const initApp = async () => {
 
       const performanceWorker = require('./workers/performanceWorker');
       performanceWorker.init();
+
+      const notificationWorker = require('./workers/notificationWorker');
+      notificationWorker.init();
     } else {
       logger.warn('Background analytics and intervention workers are paused until MongoDB is connected.');
     }

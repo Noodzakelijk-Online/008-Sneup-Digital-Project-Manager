@@ -16,6 +16,7 @@ const {
 const accountConnectorService = require('../src/services/accountConnectorService');
 const enhancementBacklog = require('../src/services/enhancementBacklog');
 const { getCategories, getConnectors } = require('../src/services/connectorRegistry');
+const { NotificationService } = require('../src/services/notificationService');
 
 const createResponse = () => ({
   statusCode: 200,
@@ -364,10 +365,15 @@ describe('request security boundaries', () => {
     expect(getPermissionsForRoles(['viewer'])).not.toContain('trello-actions:execute-approved');
     expect(getPermissionsForRoles(['manager'])).not.toContain('identity:manage');
     expect(getPermissionsForRoles(['manager'])).toContain('jobs:manage');
+    expect(getPermissionsForRoles(['manager'])).toEqual(expect.arrayContaining([
+      'notification-policies:manage',
+      'notifications:dispatch'
+    ]));
     expect(getPermissionsForRoles(['operator'])).not.toContain('jobs:manage');
     expect(getPermissionsForRoles(['admin'])).toContain('identity:manage');
     expect(hasPermission({ roles: ['manager'] }, 'approvals:decide')).toBe(true);
     expect(hasPermission({ roles: ['manager'] }, 'jobs:manage')).toBe(true);
+    expect(hasPermission({ roles: ['manager'] }, 'notification-policies:manage')).toBe(true);
     expect(hasPermission({ roles: ['operator'] }, 'approvals:decide')).toBe(false);
 
     const allowedReq = createRequest({
@@ -497,6 +503,53 @@ describe('capacity-aware forecasting', () => {
     expect(forecast.portfolio.p80).toBeNull();
     expect(forecast.portfolio.confidence).toBeLessThan(50);
     expect(forecast.portfolio.health).toBe('watch');
+  });
+});
+
+describe('notification delivery safety', () => {
+  const notificationService = new NotificationService();
+
+  test('requires public HTTPS webhook destinations without embedded credentials or custom ports', () => {
+    expect(notificationService.assertSafeWebhookUrl('https://hooks.slack.com/services/example')).toBe('https://hooks.slack.com/services/example');
+    [
+      'http://hooks.slack.com/services/example',
+      'https://localhost/hook',
+      'https://127.0.0.1/hook',
+      'https://10.0.0.20/hook',
+      'https://192.168.1.5/hook',
+      'https://user:secret@example.com/hook',
+      'https://example.com:8443/hook',
+      'not a url'
+    ].forEach((destination) => {
+      expect(() => notificationService.assertSafeWebhookUrl(destination)).toThrow(/webhook/i);
+    });
+  });
+
+  test('keeps destination data out of webhook payloads and uses provider-native payload shapes', () => {
+    const event = {
+      eventType: 'reconciliation_alert',
+      severity: 'critical',
+      title: 'Sneup: critical reconciliation evidence gap',
+      message: 'Move action needs operator evidence.',
+      sourceType: 'trello_action_attempt',
+      sourceId: 'attempt-1',
+      destinationEncrypted: 'never-send-this'
+    };
+
+    const slack = notificationService.buildWebhookPayload('slack_webhook', event);
+    const generic = notificationService.buildWebhookPayload('generic_webhook', event);
+
+    expect(slack).toEqual(expect.objectContaining({
+      text: expect.stringContaining('critical reconciliation evidence gap'),
+      unfurl_links: false
+    }));
+    expect(generic).toMatchObject({
+      eventType: 'reconciliation_alert',
+      severity: 'critical',
+      sourceId: 'attempt-1'
+    });
+    expect(JSON.stringify(slack)).not.toContain('never-send-this');
+    expect(JSON.stringify(generic)).not.toContain('never-send-this');
   });
 });
 

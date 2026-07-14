@@ -417,8 +417,8 @@ For issues, questions, or feature requests, please open an issue on GitHub.
 ## Roadmap
 
 - [ ] Dashboard UI with React
-- [ ] Email notifications for critical events
-- [ ] Slack integration
+- [ ] Email notifications and digests
+- [x] Slack, Teams, and generic reconciliation-alert webhooks
 - [ ] Advanced machine learning for predictions
 - [ ] Multi-language support
 - [ ] Mobile app
@@ -430,5 +430,9 @@ For issues, questions, or feature requests, please open an issue on GitHub.
 ## Connector Sync Safety
 
 Connector work-signal ingestion is read-only. Trello-linked accounts fetch accessible boards and cards through the Trello API; Jira-linked accounts discover their authorized site and query issues through the Atlassian Cloud API; Asana-linked accounts select an authorized workspace and query its project tasks; Slack-linked accounts query accessible channel history; GitHub-linked accounts fetch accessible repositories plus issues and pull requests through the GitHub API; Google Workspace-linked accounts read Calendar events and Drive metadata; Microsoft 365-linked accounts read Calendar summaries, To Do task metadata, and signed-in-user OneDrive root-item metadata through Graph; Linear-linked accounts query bounded issue pages with team, project, cycle, workflow, assignee, and label context; Notion-linked accounts query only pages and data sources explicitly shared with the connection, without fetching page blocks or comments. Sneup never writes to these providers from this sync path. Linked credentials stay encrypted at rest and are decrypted only in-process for the outbound provider call.
+
+## Reconciliation Alert Delivery
+
+Workspace managers can configure Slack, Teams, or generic HTTPS webhook policies from the Approvals ledger. Destinations are encrypted with `CONNECTOR_ENCRYPTION_KEY`, excluded from API responses and audit payloads, and only send after the policy is explicitly activated. Sneup accepts public HTTPS destinations without credentials or custom ports, records a delivery claim before each request, rejects redirects, and deduplicates each reconciliation evidence gap for a policy per UTC day. The scheduled `notifications.reconciliation_alerts` job surfaces delivery failures in Job Health. Email, quiet hours, digest cadence, and evidence deep links remain planned enhancements.
 
 Provider syncs are deliberately bounded so one account cannot monopolize memory or provider quota. Configure `SNEUP_TRELLO_MAX_BOARDS`, `SNEUP_TRELLO_MAX_CARDS_PER_BOARD`, and `SNEUP_TRELLO_MAX_TOTAL_CARDS` for Trello workspaces, `SNEUP_JIRA_MAX_ISSUES` and `SNEUP_JIRA_PAGE_SIZE` for Jira workspaces, `SNEUP_ASANA_MAX_PROJECTS`, `SNEUP_ASANA_MAX_TASKS_PER_PROJECT`, and `SNEUP_ASANA_MAX_TOTAL_TASKS` for Asana workspaces, `SNEUP_SLACK_MAX_CHANNELS`, `SNEUP_SLACK_MAX_MESSAGES_PER_CHANNEL`, and `SNEUP_SLACK_MAX_TOTAL_MESSAGES` for Slack workspaces, `SNEUP_GITHUB_MAX_REPOSITORIES`, `SNEUP_GITHUB_MAX_ITEMS_PER_REPOSITORY`, and `SNEUP_GITHUB_MAX_TOTAL_ITEMS` for GitHub workspaces, `SNEUP_MICROSOFT_MAX_EVENTS`, `SNEUP_MICROSOFT_MAX_TASK_LISTS`, `SNEUP_MICROSOFT_MAX_TASKS_PER_LIST`, `SNEUP_MICROSOFT_MAX_TOTAL_TASKS`, and `SNEUP_MICROSOFT_MAX_FILES` for Microsoft 365 workspaces, `SNEUP_LINEAR_MAX_ISSUES` plus `SNEUP_LINEAR_PAGE_SIZE` for Linear workspaces, and `SNEUP_NOTION_MAX_RESULTS` plus `SNEUP_NOTION_PAGE_SIZE` for Notion connections. If a run reaches a configured cap, Sneup fails the sync visibly rather than silently advancing the cursor and dropping work. Jira multi-site accounts and Asana multi-workspace accounts must explicitly select a source before syncing, so work from an unintended workspace cannot enter Sneup.
