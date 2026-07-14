@@ -651,6 +651,34 @@ describe('capacity-aware forecasting', () => {
     expect(forecast.portfolio.assumptions.join(' ')).toContain('Explicit Float or Resource Guru member mappings');
   });
 
+  test('uses explicit provider project mappings only to scope schedule evidence to one board', () => {
+    const { buildForecast } = require('../src/services/forecastService');
+    const forecast = buildForecast({
+      now: new Date('2026-07-06T09:00:00.000Z'),
+      boards: [
+        { _id: 'board-1', name: 'Launch', externalProjectMappings: [{ provider: 'float', projectId: '44' }] },
+        { _id: 'board-2', name: 'Operations', externalProjectMappings: [] }
+      ],
+      members: [{ _id: 'member-1', username: 'milan', fullName: 'Milan' }],
+      profiles: [{ _id: 'profile-1', memberId: 'member-1', weeklyHours: 20, allocationPercent: 100, focusHoursPerWeek: 4, externalIdentities: [{ provider: 'float', externalId: '7' }] }],
+      cards: [
+        { _id: 'card-1', boardId: 'board-1', members: ['member-1'], riskLevel: 'normal' },
+        { _id: 'card-2', boardId: 'board-2', members: ['member-1'], riskLevel: 'normal' }
+      ],
+      allocationSignals: [
+        { provider: 'float', sourceType: 'allocation', raw: { projectId: '44', assigneeId: '7', scheduledHours: 64, startedAt: '2026-07-06', dueAt: '2026-08-02' } },
+        { provider: 'float', sourceType: 'allocation', raw: { projectId: 'not-mapped', assigneeId: '7', scheduledHours: 32, startedAt: '2026-07-06', dueAt: '2026-08-02' } }
+      ]
+    });
+
+    const launch = forecast.boards.find(item => item.boardId === 'board-1');
+    const operations = forecast.boards.find(item => item.boardId === 'board-2');
+    expect(launch).toMatchObject({ mappedProjectScheduleEntriesNext28Days: 1, mappedProjectScheduleHoursNext28Days: 64, mappedProjectScheduleWeeklyHours: 16, weeklyAvailableHours: 16 });
+    expect(operations).toMatchObject({ mappedProjectScheduleEntriesNext28Days: 0, mappedProjectScheduleHoursNext28Days: 0, weeklyAvailableHours: 16 });
+    expect(launch.assumptions.join(' ')).toContain('map explicitly to this board and remain confidence-only evidence');
+    expect(forecast.dataQuality.allocations).toMatchObject({ mappedProjectEntries: 1, mappedProjectHours: 64, mappedProjectWeeklyHours: 16, mappedBoards: 1, projectMappingConflicts: 0 });
+  });
+
   test('uses only explicit calendar organizer mappings and merges overlapping availability blocks', () => {
     const { buildForecast } = require('../src/services/forecastService');
     const forecast = buildForecast({
@@ -875,6 +903,8 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('New accountable owner');
     expect(appJs).toContain('Target Trello list');
     expect(appJs).toContain("fetchApi('/api/forecasts')");
+    expect(appJs).toContain('Map provider projects');
+    expect(appJs).toContain('/project-mappings');
     expect(appJs).toContain('Capacity and delivery forecasts');
     expect(appJs).toContain('data-graph-filter');
     expect(appJs).toContain('data-graph-dependency-review');

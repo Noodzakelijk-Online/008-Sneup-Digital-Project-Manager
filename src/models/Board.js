@@ -1,5 +1,10 @@
 const mongoose = require('mongoose');
 
+const externalProjectMappingSchema = new mongoose.Schema({
+  provider: { type: String, required: true, trim: true, lowercase: true, maxlength: 64 },
+  projectId: { type: String, required: true, trim: true, maxlength: 160 }
+}, { _id: false });
+
 const boardSchema = new mongoose.Schema({
   workspaceId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -36,6 +41,11 @@ const boardSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'List'
   }],
+  // Human-confirmed provider project IDs; Trello sync never changes these mappings.
+  externalProjectMappings: {
+    type: [externalProjectMappingSchema],
+    default: []
+  },
   lastSync: {
     type: Date,
     default: Date.now

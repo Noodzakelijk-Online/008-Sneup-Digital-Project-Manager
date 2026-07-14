@@ -1,4 +1,5 @@
 const express = require('express');
+const Board = require('../models/Board');
 const CapacityProfile = require('../models/CapacityProfile');
 const Member = require('../models/Member');
 const forecastService = require('../services/forecastService');
@@ -35,6 +36,8 @@ const normalizeTimeOff = (items) => {
 };
 
 const CAPACITY_EVIDENCE_PROVIDERS = new Set(['float', 'resource_guru', 'google_workspace', 'microsoft_365']);
+const RESOURCING_PROJECT_PROVIDERS = new Set(['float', 'resource_guru']);
+const SAFE_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9@._+-]{0,159}$/;
 const normalizeExternalIdentities = (items) => {
   if (!Array.isArray(items)) return [];
   if (items.length > 10) {
@@ -46,7 +49,7 @@ const normalizeExternalIdentities = (items) => {
   return items.map((item) => {
     const provider = String(item?.provider || '').trim().toLowerCase();
     const externalId = String(item?.externalId || '').trim();
-    if (!CAPACITY_EVIDENCE_PROVIDERS.has(provider) || !/^[A-Za-z0-9][A-Za-z0-9@._+-]{0,159}$/.test(externalId)) {
+    if (!CAPACITY_EVIDENCE_PROVIDERS.has(provider) || !SAFE_PROVIDER_ID.test(externalId)) {
       const error = new Error('Each external identity needs a supported provider and a safe provider ID');
       error.statusCode = 400;
       throw error;
@@ -59,6 +62,33 @@ const normalizeExternalIdentities = (items) => {
     }
     seen.add(key);
     return { provider, externalId };
+  });
+};
+
+const normalizeProjectMappings = (items) => {
+  if (!Array.isArray(items)) return [];
+  if (items.length > 20) {
+    const error = new Error('externalProjectMappings may include at most 20 provider projects');
+    error.statusCode = 400;
+    throw error;
+  }
+  const seen = new Set();
+  return items.map((item) => {
+    const provider = String(item?.provider || '').trim().toLowerCase();
+    const projectId = String(item?.projectId || '').trim();
+    if (!RESOURCING_PROJECT_PROVIDERS.has(provider) || !SAFE_PROVIDER_ID.test(projectId)) {
+      const error = new Error('Each project mapping needs a supported resourcing provider and a safe project ID');
+      error.statusCode = 400;
+      throw error;
+    }
+    const key = `${provider}:${projectId}`;
+    if (seen.has(key)) {
+      const error = new Error('Project mappings must be unique per board');
+      error.statusCode = 400;
+      throw error;
+    }
+    seen.add(key);
+    return { provider, projectId };
   });
 };
 
@@ -122,6 +152,49 @@ router.post('/capacity/:memberId', requirePermission('capacity:manage'), async (
     res.json({ success: true, profile });
   } catch (error) {
     sendError(res, error, 'Failed to update capacity profile');
+  }
+});
+
+router.post('/boards/:boardId/project-mappings', requirePermission('capacity:manage'), async (req, res) => {
+  try {
+    operationsLedgerService.requireDatabase();
+    const workspaceId = getRequestWorkspaceObjectId(req);
+    const board = await Board.findOne({ _id: req.params.boardId, workspaceId });
+    if (!board) return res.status(404).json({ success: false, error: 'Board not found' });
+
+    const externalProjectMappings = normalizeProjectMappings(req.body.externalProjectMappings);
+    for (const mapping of externalProjectMappings) {
+      const mappedElsewhere = await Board.findOne({
+        workspaceId,
+        _id: { $ne: board._id },
+        externalProjectMappings: { $elemMatch: mapping }
+      }).select('_id name');
+      if (mappedElsewhere) {
+        const error = new Error(`This ${mapping.provider} project is already mapped to ${mappedElsewhere.name || 'another board'}`);
+        error.statusCode = 409;
+        throw error;
+      }
+    }
+
+    const beforeState = board.toObject();
+    board.externalProjectMappings = externalProjectMappings;
+    await board.save();
+
+    await operationsLedgerService.recordAudit({
+      workspaceId,
+      entityType: 'board',
+      entityId: board._id,
+      action: 'board_project_mappings_updated',
+      actor: req.auth?.actorId || 'sneup',
+      source: 'api',
+      riskLevel: 'medium',
+      beforeState,
+      afterState: board.toObject()
+    });
+
+    res.json({ success: true, board });
+  } catch (error) {
+    sendError(res, error, 'Failed to update board project mappings');
   }
 });
 

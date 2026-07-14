@@ -75,11 +75,11 @@ const enhancements = [
     priority: 'P1',
     area: 'forecasting',
     title: 'Upgrade forecasting with capacity calendars and confidence ranges',
-    evidence: 'Sneup now stores workspace-scoped capacity profiles with weekly hours, allocation, focus time, planned time off, skills, and explicit provider IDs. Analysis-only portfolio and board forecasts use those profiles plus historical effort, ownership, overdue work, and risk to return P50/P80 ranges, confidence, assumptions, and delivery risks. Bounded Harvest time-entry metadata, mapped Float allocations or approved Resource Guru bookings, and mapped Google Workspace or Microsoft 365 organizer metadata calibrate confidence, expose matched weekly evidence in the Capacity view, and flag modeled-capacity mismatches without changing provider data. Calendar evidence ignores event text, attendees, locations, all-day events, cancelled events, overlong events, and overlapping-time double counting.',
+    evidence: 'Sneup now stores workspace-scoped capacity profiles with weekly hours, allocation, focus time, planned time off, skills, and explicit provider IDs. Analysis-only portfolio and board forecasts use those profiles plus historical effort, ownership, overdue work, and risk to return P50/P80 ranges, confidence, assumptions, and delivery risks. Bounded Harvest time-entry metadata, mapped Float allocations or approved Resource Guru bookings, and mapped Google Workspace or Microsoft 365 organizer metadata calibrate confidence, expose matched weekly evidence in the Capacity view, and flag modeled-capacity mismatches without changing provider data. Human-confirmed Float or Resource Guru project IDs now map to one exact board, are audited, reject cross-board duplication, and expose board-scoped scheduling evidence without reducing capacity. Calendar evidence ignores event text, attendees, locations, all-day events, cancelled events, overlong events, and overlapping-time double counting.',
     impact: 'Improves delivery predictions and prevents false certainty in project dates.',
     effort: 'L',
     status: 'in-progress',
-    nextStep: 'Tune capacity and meeting-load mismatch thresholds from reviewed production evidence, then add provider/project-to-board mappings before treating allocations as remaining capacity.',
+    nextStep: 'Tune capacity and meeting-load mismatch thresholds from reviewed production evidence before considering any calibrated, explicitly approved capacity-reduction model.',
     acceptanceCriteria: [
       'Forecasts return P50/P80 date ranges instead of single dates.',
       'Forecasts explain capacity assumptions and known blockers.',

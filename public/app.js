@@ -407,6 +407,7 @@ function renderForecast(errorMessage = '') {
     ['Estimated work', `${portfolio.workHours || 0}h`],
     ['Tracked utilization', utilization.entries ? `${utilization.weeklyHours || 0}h/week` : 'No Harvest evidence'],
     ['Mapped allocations', allocations.matchedEntries ? `${allocations.matchedWeeklyHours || 0}h/week` : 'No resourcing evidence'],
+    ['Board-mapped schedule', allocations.mappedProjectEntries ? `${allocations.mappedProjectWeeklyHours || 0}h/week` : 'No project mappings'],
     ['Mapped calendar', calendar.matchedEntries ? `${calendar.matchedWeeklyHours || 0}h/week` : 'No calendar evidence']
   ].map(([label, value]) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
   els.portfolioForecast.innerHTML = renderForecastSummary(portfolio);
@@ -414,6 +415,9 @@ function renderForecast(errorMessage = '') {
   els.forecastBoards.innerHTML = listOrEmpty(boards, renderBoardForecast);
   document.querySelectorAll('[data-capacity-member]').forEach((button) => {
     button.addEventListener('click', () => openCapacityEditor(button.dataset.capacityMember));
+  });
+  document.querySelectorAll('[data-board-project-mappings]').forEach((button) => {
+    button.addEventListener('click', () => openBoardProjectMappingsEditor(button.dataset.boardProjectMappings));
   });
 }
 
@@ -439,13 +443,56 @@ function renderForecastSummary(forecast = {}) {
 }
 
 function renderBoardForecast(forecast = {}) {
+  const editable = Boolean(state.securityContext?.permissions?.includes('capacity:manage'));
   return `
     <article class="connector-card forecast-card">
       <div class="connector-top"><div><h3>${escapeHtml(forecast.boardName || 'Board')}</h3><p>${forecast.openCards || 0} open cards and ${forecast.workHours || 0} modeled work hours.</p></div><span class="pill ${forecast.health === 'at_risk' ? 'high' : forecast.health === 'watch' ? 'review' : 'healthy'}">${escapeHtml(forecast.health || 'unknown')}</span></div>
       <div class="forecast-dates"><span><strong>P50</strong>${escapeHtml(formatForecastDate(forecast.p50?.date))}</span><span><strong>P80</strong>${escapeHtml(formatForecastDate(forecast.p80?.date))}</span><span><strong>Confidence</strong>${forecast.confidence || 0}%</span></div>
       <div class="meta">${(forecast.risks || []).slice(0, 2).map(escapeHtml).join(' | ') || 'No material delivery risk detected.'}</div>
+      <div class="meta">${forecast.mappedProjectScheduleEntriesNext28Days ? `Mapped project schedule: ${escapeHtml(forecast.mappedProjectScheduleWeeklyHours || 0)}h/week.` : 'No provider project schedule is mapped to this board.'}</div>
+      ${editable && forecast.boardId ? `<div class="connector-actions"><button class="button" type="button" data-board-project-mappings="${escapeHtml(forecast.boardId)}">Map provider projects</button></div>` : ''}
     </article>
   `;
+}
+
+function openBoardProjectMappingsEditor(boardId) {
+  const board = (state.forecast?.boards || []).find(item => String(item.boardId) === String(boardId));
+  if (!board) return;
+  const mappings = (board.externalProjectMappings || []).map(item => `${item.provider}: ${item.projectId}`).join('\n');
+  els.modalTitle.textContent = `Project mappings: ${board.boardName || 'board'}`;
+  els.modalBody.innerHTML = `
+    <form id="boardProjectMappingsForm">
+      <div class="notice">Only explicit Float or Resource Guru project IDs scope schedule evidence to this board. Mapped schedules remain analysis-only and do not change provider data or delivery capacity.</div>
+      <div class="field"><label for="boardProjectMappings">Provider project IDs (one provider: ID per line)</label><textarea id="boardProjectMappings" name="externalProjectMappings" placeholder="float: 123&#10;resource_guru: 456">${escapeHtml(mappings)}</textarea></div>
+      <div class="toolbar modal-actions"><button class="button" type="button" id="cancelBoardProjectMappings">Cancel</button><button class="button primary" type="submit">Save project mappings</button></div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelBoardProjectMappings').addEventListener('click', closeModal);
+  document.getElementById('boardProjectMappingsForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      await fetchApi(`/api/forecasts/boards/${boardId}/project-mappings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          externalProjectMappings: form.elements.externalProjectMappings.value.split('\n').map((line) => {
+            const separator = line.indexOf(':');
+            return separator > 0 ? { provider: line.slice(0, separator).trim(), projectId: line.slice(separator + 1).trim() } : null;
+          }).filter(Boolean)
+        })
+      });
+      closeModal();
+      await loadForecast();
+      openNotice('Project mappings saved', 'Sneup refreshed board-scoped schedule evidence without changing provider data.');
+    } catch (error) {
+      submit.disabled = false;
+      openNotice('Project mapping update failed', error.message);
+    }
+  });
 }
 
 function renderCapacityMember(member = {}) {

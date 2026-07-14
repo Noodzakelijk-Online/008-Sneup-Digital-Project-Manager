@@ -157,7 +157,7 @@ const utilizationSummary = ({ signals = [], members = [], now = new Date(), trun
 
 const resourceIdentityKey = (provider, externalId) => `${String(provider || '').trim().toLowerCase()}:${String(externalId || '').trim()}`;
 
-const allocationSummary = ({ signals = [], members = [], profilesByMember = new Map(), now = new Date(), truncated = false }) => {
+const allocationSummary = ({ signals = [], boards = [], members = [], profilesByMember = new Map(), now = new Date(), truncated = false }) => {
   const windowEnd = new Date(now);
   windowEnd.setUTCDate(windowEnd.getUTCDate() + ALLOCATION_WINDOW_DAYS);
   const memberIdByIdentity = new Map();
@@ -172,7 +172,21 @@ const allocationSummary = ({ signals = [], members = [], profilesByMember = new 
     });
   });
 
+  const boardIdByProject = new Map();
+  const duplicateProjects = new Set();
+  boards.forEach((board) => {
+    (board.externalProjectMappings || []).forEach((mapping) => {
+      const provider = String(mapping?.provider || '').trim().toLowerCase();
+      const projectId = String(mapping?.projectId || '').trim();
+      if (!RESOURCING_PROVIDERS.includes(provider) || !projectId) return;
+      const key = resourceIdentityKey(provider, projectId);
+      if (boardIdByProject.has(key)) duplicateProjects.add(key);
+      else boardIdByProject.set(key, asId(board));
+    });
+  });
+
   const byMember = new Map();
+  const byBoard = new Map();
   let entries = 0;
   let totalHours = 0;
   let matchedEntries = 0;
@@ -211,7 +225,18 @@ const allocationSummary = ({ signals = [], members = [], profilesByMember = new 
     current.entries += 1;
     current.hours += hoursInWindow;
     byMember.set(memberId, current);
+    const projectKey = resourceIdentityKey(provider, raw.projectId);
+    const boardId = duplicateProjects.has(projectKey) ? null : boardIdByProject.get(projectKey);
+    if (boardId) {
+      const boardCurrent = byBoard.get(boardId) || { entries: 0, hours: 0 };
+      boardCurrent.entries += 1;
+      boardCurrent.hours += hoursInWindow;
+      byBoard.set(boardId, boardCurrent);
+    }
   });
+
+  const mappedProjectEntries = [...byBoard.values()].reduce((total, value) => total + value.entries, 0);
+  const mappedProjectHours = [...byBoard.values()].reduce((total, value) => total + value.hours, 0);
 
   return {
     providers: RESOURCING_PROVIDERS,
@@ -227,8 +252,14 @@ const allocationSummary = ({ signals = [], members = [], profilesByMember = new 
     unmatchedHours: round(unmatchedHours),
     matchedMembers: byMember.size,
     mappingConflicts: duplicateIdentities.size,
+    mappedProjectEntries,
+    mappedProjectHours: round(mappedProjectHours),
+    mappedProjectWeeklyHours: round(mappedProjectHours / (ALLOCATION_WINDOW_DAYS / 7)),
+    mappedBoards: byBoard.size,
+    projectMappingConflicts: duplicateProjects.size,
     truncated,
-    byMember
+    byMember,
+    byBoard
   };
 };
 
@@ -320,7 +351,7 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
     : DEFAULT_CARD_HOURS;
   const hasThroughputEvidence = performances.some((record) => Number(record.metrics?.cardsCompleted || 0) > 0);
   const utilization = utilizationSummary({ signals: utilizationSignals, members: activeMembers, now, truncated: utilizationTruncated });
-  const allocation = allocationSummary({ signals: allocationSignals, members: activeMembers, profilesByMember, now, truncated: allocationTruncated });
+  const allocation = allocationSummary({ signals: allocationSignals, boards, members: activeMembers, profilesByMember, now, truncated: allocationTruncated });
   const calendar = calendarSummary({ signals: calendarSignals, members: activeMembers, profilesByMember, now, truncated: calendarTruncated });
 
   const memberCapacity = activeMembers.map((member) => {
@@ -380,6 +411,7 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
     const calendarMembers = usableCapacity.filter((member) => member.calendarEventsNext28Days > 0);
     const meetingHeavyMembers = calendarMembers.filter((member) => member.calendarBusyWeeklyHours > member.weeklyAvailableHours * 0.75);
     const calendarCoverage = usableCapacity.length === 0 ? 0 : calendarMembers.length / usableCapacity.length;
+    const boardSchedule = boardId ? allocation.byBoard.get(boardId) || { entries: 0, hours: 0 } : { entries: allocation.mappedProjectEntries, hours: allocation.mappedProjectHours };
     const uncertaintyMultiplier = 1
       + (unassigned > 0 ? 0.12 : 0)
       + (highRisk / Math.max(1, scopeCards.length)) * 0.25
@@ -414,6 +446,7 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
       `Open cards use ${round(teamCardHours)} hours each when a personal historical estimate is unavailable.`,
       ...(utilizationMembers.length > 0 ? [`Harvest time-entry metadata covers ${utilizationMembers.length}/${usableCapacity.length} assigned contributors over the last ${UTILIZATION_WINDOW_DAYS} days and calibrates forecast confidence only.`] : []),
       ...(allocationMembers.length > 0 ? [`Explicit Float or Resource Guru member mappings cover ${allocationMembers.length}/${usableCapacity.length} assigned contributors over the next ${ALLOCATION_WINDOW_DAYS} days and calibrate forecast confidence only.`] : []),
+      ...(boardId && boardSchedule.entries > 0 ? [`${round(boardSchedule.hours / (ALLOCATION_WINDOW_DAYS / 7))} scheduled hours per week map explicitly to this board and remain confidence-only evidence.`] : []),
       ...(calendarMembers.length > 0 ? [`Explicit Google Workspace or Microsoft 365 organizer mappings cover ${calendarMembers.length}/${usableCapacity.length} assigned contributors over the next ${CALENDAR_WINDOW_DAYS} days and calibrate forecast confidence only.`] : []),
       `P80 adds ${Math.round((uncertaintyMultiplier - 1) * 100)}% delivery uncertainty for ownership, risk, and evidence gaps.`
     ];
@@ -424,6 +457,10 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
       workHours: round(workHours),
       weeklyAvailableHours: round(weeklyHours),
       utilizationPercent: weeklyHours > 0 ? round(Math.min(999, workHours / weeklyHours * 100)) : null,
+      mappedProjectScheduleEntriesNext28Days: boardSchedule.entries,
+      mappedProjectScheduleHoursNext28Days: round(boardSchedule.hours),
+      mappedProjectScheduleWeeklyHours: round(boardSchedule.hours / (ALLOCATION_WINDOW_DAYS / 7)),
+      externalProjectMappings: boardId ? (boards.find((board) => asId(board) === boardId)?.externalProjectMappings || []) : [],
       p50: p50BusinessDays === null ? null : { businessDays: p50BusinessDays, date: addBusinessDays(now, p50BusinessDays) },
       p80: p80BusinessDays === null ? null : { businessDays: p80BusinessDays, date: p80Date },
       nearestDueDate,
@@ -487,6 +524,11 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
         unmatchedHours: allocation.unmatchedHours,
         matchedMembers: allocation.matchedMembers,
         mappingConflicts: allocation.mappingConflicts,
+        mappedProjectEntries: allocation.mappedProjectEntries,
+        mappedProjectHours: allocation.mappedProjectHours,
+        mappedProjectWeeklyHours: allocation.mappedProjectWeeklyHours,
+        mappedBoards: allocation.mappedBoards,
+        projectMappingConflicts: allocation.projectMappingConflicts,
         truncated: allocation.truncated
       },
       calendar: {
