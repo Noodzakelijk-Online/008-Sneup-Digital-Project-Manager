@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -41,6 +41,7 @@ const codaWorkSignalClient = require('./codaWorkSignalClient');
 const teamworkWorkSignalClient = require('./teamworkWorkSignalClient');
 const basecampWorkSignalClient = require('./basecampWorkSignalClient');
 const redmineWorkSignalClient = require('./redmineWorkSignalClient');
+const microsoftPlannerWorkSignalClient = require('./microsoftPlannerWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -761,6 +762,18 @@ redmineAdapter.capabilities.credentialBackedSync = true;
 redmineAdapter.list = async account => (await redmineWorkSignalClient.fetchDelta(account, null)).records;
 redmineAdapter.fetchDelta = (account, cursor) => redmineWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('redmine', redmineAdapter);
+
+const microsoftPlannerAdapter = buildAdapter('microsoft_planner', 'Microsoft Planner assigned-task metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: 'task', title: titleFromText(item.title, 'Microsoft Planner task'), description: '',
+  status: Number(item.percentComplete) >= 100 ? 'done' : Number(item.percentComplete) > 0 ? 'in_progress' : 'open', priority: priorityFromText(item.priority), owners: [],
+  labels: compact(['microsoft_planner', item.planId ? `plan:${item.planId}` : undefined, item.bucketId ? `bucket:${item.bucketId}` : undefined, Number(item.percentComplete) >= 100 ? 'completed' : undefined]),
+  dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.completedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Microsoft Planner task metadata'),
+  raw: { id: item.id, taskId: item.taskId, planId: item.planId, bucketId: item.bucketId, percentComplete: item.percentComplete, priority: item.priority, assigneeIds: item.assigneeIds, dueAt: item.dueAt, completedAt: item.completedAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+microsoftPlannerAdapter.capabilities.credentialBackedSync = true;
+microsoftPlannerAdapter.list = async account => (await microsoftPlannerWorkSignalClient.fetchDelta(account, null)).records;
+microsoftPlannerAdapter.fetchDelta = (account, cursor) => microsoftPlannerWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('microsoft_planner', microsoftPlannerAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

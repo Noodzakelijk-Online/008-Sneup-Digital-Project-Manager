@@ -74,6 +74,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/teamworkWorkSignalClient');
     jest.dontMock('../src/services/basecampWorkSignalClient');
     jest.dontMock('../src/services/redmineWorkSignalClient');
+    jest.dontMock('../src/services/microsoftPlannerWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1907,6 +1908,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('redmine').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Microsoft Planner adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'planner_task:1' }] });
+    jest.doMock('../src/services/microsoftPlannerWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'microsoft_planner' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('microsoft_planner').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3383,6 +3396,60 @@ describe('work signal normalization', () => {
     });
     expect(normalized.raw.blocks).toEqual([{ externalId: 'issue:19', relationship: 'blocks' }]);
     expect(JSON.stringify(normalized.raw)).not.toMatch(/Private detail|Private journal|Private field/);
+  });
+
+  test('Microsoft Planner sync reads bounded assigned-task metadata with no content endpoints or provider writes', async () => {
+    jest.dontMock('../src/services/microsoftPlannerWorkSignalClient');
+    jest.resetModules();
+    const { MicrosoftPlannerWorkSignalClient } = require('../src/services/microsoftPlannerWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { value: [{
+        id: 'task-18', title: 'Ship Planner connector', planId: 'plan-9', bucketId: 'bucket-4', percentComplete: 50, priority: 5,
+        assignments: { 'user-1': { orderHint: '!' } }, dueDateTime: { dateTime: '2026-07-15T12:00:00.000Z' },
+        createdDateTime: '2026-07-10T10:00:00.000Z', lastModifiedDateTime: '2026-07-12T12:00:00.000Z',
+        description: 'Private description', checklist: { secret: true }, attachments: [{ name: 'secret.pdf' }]
+      }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/planner/tasks?$skiptoken=next' } })
+      .mockResolvedValueOnce({ data: { value: [{ id: 'task-19', title: 'Close rollout', planId: 'plan-9', bucketId: 'bucket-4', percentComplete: 100, createdDateTime: '2026-07-11T10:00:00.000Z', lastModifiedDateTime: '2026-07-13T12:00:00.000Z' }] } }) };
+    const client = new MicrosoftPlannerWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'planner-token' })) } });
+    const result = await client.fetchDelta({ connectorId: 'microsoft_planner' }, '2026-07-10T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://graph.microsoft.com/v1.0/me/planner/tasks', expect.objectContaining({
+      params: expect.objectContaining({ '$top': 100, '$select': expect.stringContaining('title') }), headers: expect.objectContaining({ Authorization: 'Bearer planner-token' }), maxRedirects: 0, proxy: false
+    }));
+    expect(http.get).toHaveBeenCalledWith('https://graph.microsoft.com/v1.0/me/planner/tasks?$skiptoken=next', expect.objectContaining({ maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private description|secret\.pdf|checklist/);
+    expect(result).toMatchObject({ metadata: { source: 'microsoft_planner_graph', tasks: 2, contentPolicy: 'assigned_task_metadata_only_no_descriptions_checklists_or_attachments' }, hasMore: false, nextCursor: '2026-07-13T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'planner_task:task-18', planId: 'plan-9', assigneeIds: ['user-1'] })]));
+  });
+
+  test('Microsoft Planner sync fails closed at a provider cap and rejects untrusted pagination', async () => {
+    jest.dontMock('../src/services/microsoftPlannerWorkSignalClient');
+    jest.resetModules();
+    const { MicrosoftPlannerWorkSignalClient } = require('../src/services/microsoftPlannerWorkSignalClient');
+    const previousLimit = process.env.SNEUP_PLANNER_MAX_TASKS;
+    process.env.SNEUP_PLANNER_MAX_TASKS = '1';
+    const cappedHttp = { get: jest.fn().mockResolvedValue({ data: { value: [{ id: 'task-1', title: 'One' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/planner/tasks?$skiptoken=next' } }) };
+    const cappedClient = new MicrosoftPlannerWorkSignalClient({ http: cappedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'planner-token' })) } });
+    try {
+      await expect(cappedClient.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 });
+      expect(cappedHttp.get).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_PLANNER_MAX_TASKS;
+      else process.env.SNEUP_PLANNER_MAX_TASKS = previousLimit;
+    }
+    const client = new MicrosoftPlannerWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'planner-token' })) } });
+    expect(() => client.validateNextUrl('https://example.com/v1.0/me/planner/tasks?$skiptoken=next', client.getConfig())).toThrow(/untrusted pagination/i);
+  });
+
+  test('Microsoft Planner normalization preserves task progress without private task content', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'microsoft_planner' }, {
+      id: 'planner_task:task-18', taskId: 'task-18', title: 'Ship Planner connector', planId: 'plan-9', bucketId: 'bucket-4', percentComplete: 50,
+      assigneeIds: ['user-1'], updatedAt: '2026-07-12T12:00:00.000Z', description: 'Private task detail', checklist: { secret: true }
+    });
+    expect(normalized).toMatchObject({ externalId: 'planner_task:task-18', sourceType: 'task', title: 'Ship Planner connector', description: '', status: 'in_progress', labels: ['microsoft_planner', 'plan:plan-9', 'bucket:bucket-4'] });
+    expect(JSON.stringify(normalized.raw)).not.toMatch(/Private task detail|checklist/);
   });
 
   test('projects provider signals into normalized work graph records', () => {
