@@ -103,6 +103,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/boxWorkSignalClient');
     jest.dontMock('../src/services/rallyWorkSignalClient');
     jest.dontMock('../src/services/gmailWorkSignalClient');
+    jest.dontMock('../src/services/outlookWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -1175,6 +1176,9 @@ describe('connector registry', () => {
     expect(byId.gmail.auth.scopes).toEqual(['https://www.googleapis.com/auth/gmail.metadata']);
     expect(byId.gmail.auth.scopes).not.toEqual(expect.arrayContaining(['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/gmail.send']));
     expect(byId.gmail.sync).toEqual(['inbox_threads']);
+    expect(byId.outlook.auth.scopes).toEqual(['offline_access', 'Mail.ReadBasic']);
+    expect(byId.outlook.auth.scopes).not.toEqual(expect.arrayContaining(['Mail.Read', 'Mail.ReadWrite', 'Mail.Send', 'Mail.ReadBasic.Shared']));
+    expect(byId.outlook.sync).toEqual(['inbox_conversations']);
     expect(byId.zoom.auth.scopes).toEqual(['meeting:read']);
     expect(byId.zoom.auth.scopes).not.toEqual(expect.arrayContaining(['meeting:write', 'recording:read', 'user:read']));
     expect(byId.miro.auth.scopes).toEqual(['boards:read']);
@@ -1723,6 +1727,7 @@ describe('work signal normalization', () => {
       'gitlab',
       'google_workspace',
       'gmail',
+      'outlook',
       'microsoft_365',
       'linear',
       'notion',
@@ -2373,6 +2378,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('gmail').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Outlook adapter delegates bounded inbox-conversation metadata reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'conversation:AAQkADY' }] });
+    jest.doMock('../src/services/outlookWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'outlook' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('outlook').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -4908,6 +4924,35 @@ describe('work signal normalization', () => {
     const invalidPagination = new GmailWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { threads: [], nextPageToken: 'https://127.0.0.1/steal' } }) }, accountConnectorService: accountConnector }); await expect(invalidPagination.fetchDelta({ connectorId: 'gmail' })).rejects.toMatchObject({ statusCode: 502 });
     const previous = process.env.SNEUP_GMAIL_MAX_THREADS; process.env.SNEUP_GMAIL_MAX_THREADS = '1'; const capped = new GmailWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { threads: [{ id: '17ab1234cdef5678' }], nextPageToken: 'page_2' } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ connectorId: 'gmail' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_GMAIL_MAX_THREADS; else process.env.SNEUP_GMAIL_MAX_THREADS = previous; }
+  });
+
+  test('Outlook sync pages bounded inbox conversation metadata without bodies, previews, attachments, people, message IDs, labels, or provider writes', async () => {
+    jest.dontMock('../src/services/outlookWorkSignalClient');
+    jest.resetModules();
+    const { OutlookWorkSignalClient } = require('../src/services/outlookWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@'); const firstConversation = 'AAQkADY123456789'; const secondConversation = 'AAQkADY123456790';
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { value: [{ id: 'private-message-id', conversationId: firstConversation, subject: `Launch ${privateEmail}`, receivedDateTime: '2026-07-11T12:00:00Z', lastModifiedDateTime: '2026-07-12T12:00:00Z', isRead: false, importance: 'high', body: { content: 'private body' }, bodyPreview: 'private preview', attachments: [{ id: 'private' }], from: { emailAddress: { address: privateEmail } }, toRecipients: [{ emailAddress: { address: privateEmail } }], categories: ['private'] }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?%24skiptoken=page_2' } })
+      .mockResolvedValueOnce({ data: { value: [{ id: 'another-private-message-id', conversationId: secondConversation, subject: 'Delivery handoff', receivedDateTime: '2026-07-12T12:00:00Z', lastModifiedDateTime: '2026-07-13T12:00:00Z', isRead: true, importance: 'normal', bodyPreview: 'private preview' }] } }) };
+    const client = new OutlookWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'outlook-token' })) } });
+    const previous = { max: process.env.SNEUP_OUTLOOK_MAX_MESSAGES, page: process.env.SNEUP_OUTLOOK_PAGE_SIZE }; process.env.SNEUP_OUTLOOK_MAX_MESSAGES = '2'; process.env.SNEUP_OUTLOOK_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'outlook' }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages', expect.objectContaining({ params: { '$top': 1, '$orderby': 'lastModifiedDateTime desc', '$select': 'conversationId,subject,receivedDateTime,lastModifiedDateTime,isRead,importance' }, headers: expect.objectContaining({ Authorization: 'Bearer outlook-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages', expect.objectContaining({ params: expect.objectContaining({ '$skiptoken': 'page_2' }) }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'outlook_inbox_conversation_metadata', conversations: 2, scannedMessages: 2, pages: 2 }, nextCursor: '2026-07-13T12:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/private|message-id|bodyPreview|attachments|from|toRecipients|categories/); expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_OUTLOOK_MAX_MESSAGES; else process.env.SNEUP_OUTLOOK_MAX_MESSAGES = previous.max; if (previous.page === undefined) delete process.env.SNEUP_OUTLOOK_PAGE_SIZE; else process.env.SNEUP_OUTLOOK_PAGE_SIZE = previous.page; }
+  });
+
+  test('Outlook sync rejects invalid cursors, conversation metadata, pagination locations, and collection caps', async () => {
+    jest.dontMock('../src/services/outlookWorkSignalClient'); jest.resetModules(); const { OutlookWorkSignalClient } = require('../src/services/outlookWorkSignalClient'); const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) };
+    const invalid = new OutlookWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ connectorId: 'outlook' }, 'bad-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new OutlookWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { value: [{ conversationId: 'https://127.0.0.1/steal' }] } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ connectorId: 'outlook' })).rejects.toMatchObject({ statusCode: 502 });
+    const invalidPagination = new OutlookWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { value: [], '@odata.nextLink': 'https://127.0.0.1/steal?$skiptoken=page_2' } }) }, accountConnectorService: accountConnector }); await expect(invalidPagination.fetchDelta({ connectorId: 'outlook' })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_OUTLOOK_MAX_MESSAGES; process.env.SNEUP_OUTLOOK_MAX_MESSAGES = '1'; const capped = new OutlookWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { value: [{ conversationId: 'AAQkADY123456789' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?%24skiptoken=page_2' } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'outlook' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_OUTLOOK_MAX_MESSAGES; else process.env.SNEUP_OUTLOOK_MAX_MESSAGES = previous; }
   });
 
   test('Calendly sync reads bounded event-type metadata without profile, links, availability, invitees, or provider writes', async () => {
