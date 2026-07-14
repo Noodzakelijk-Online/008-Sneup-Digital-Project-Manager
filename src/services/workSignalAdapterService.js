@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -51,6 +51,7 @@ const ahaWorkSignalClient = require('./ahaWorkSignalClient');
 const productboardWorkSignalClient = require('./productboardWorkSignalClient');
 const togglTrackWorkSignalClient = require('./togglTrackWorkSignalClient');
 const clockifyWorkSignalClient = require('./clockifyWorkSignalClient');
+const floatWorkSignalClient = require('./floatWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -849,6 +850,12 @@ clockifyAdapter.capabilities.credentialBackedSync = true;
 clockifyAdapter.list = async account => (await clockifyWorkSignalClient.fetchDelta(account, null)).records;
 clockifyAdapter.fetchDelta = (account, cursor) => clockifyWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('clockify', clockifyAdapter);
+
+const floatAdapter = buildAdapter('float', 'Float project and allocation schedule metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'allocation'), title: item.sourceType === 'project' ? titleFromText(item.name, 'Float project') : `Float allocation ${item.allocationId || item.id}`, description: '', status: item.sourceType === 'project' ? Number(item.active) === 1 ? 'open' : 'archived' : 'in_progress', priority: 'unknown', owners: [], labels: compact(['float', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.assigneeId ? `assignee:${item.assigneeId}` : undefined, item.status]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt, item.startedAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt, item.startedAt), evidenceRefs: baseEvidence(account, item, 'Float schedule metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, allocationId: item.allocationId, assigneeId: item.assigneeId, active: item.active, status: item.status, startedAt: item.startedAt, dueAt: item.dueAt, scheduledHours: item.scheduledHours, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+floatAdapter.capabilities.credentialBackedSync = true;
+floatAdapter.list = async account => (await floatWorkSignalClient.fetchDelta(account, null)).records;
+floatAdapter.fetchDelta = (account, cursor) => floatWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('float', floatAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

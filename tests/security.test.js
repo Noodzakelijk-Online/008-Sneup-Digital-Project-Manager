@@ -84,6 +84,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/productboardWorkSignalClient');
     jest.dontMock('../src/services/togglTrackWorkSignalClient');
     jest.dontMock('../src/services/clockifyWorkSignalClient');
+    jest.dontMock('../src/services/floatWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2030,6 +2031,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('clockify').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Float adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'allocation:18' }] });
+    jest.doMock('../src/services/floatWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'float' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('float').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3862,6 +3874,33 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_CLOCKIFY_MAX_ENTRIES; process.env.SNEUP_CLOCKIFY_MAX_ENTRIES = '1';
     const capped = new ClockifyWorkSignalClient({ http: { get: jest.fn().mockResolvedValueOnce({ data: { id: 'user-1' } }).mockResolvedValueOnce({ data: [], headers: { 'last-page': 'true' } }).mockResolvedValueOnce({ data: [{ id: 'entry-1', workspaceId: 'workspace-1', timeInterval: { start: '2026-07-12T10:00:00.000Z' } }], headers: { 'last-page': 'false' } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'clockify-key' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { workspaceId: 'workspace-1' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_CLOCKIFY_MAX_ENTRIES; else process.env.SNEUP_CLOCKIFY_MAX_ENTRIES = previous; }
+  });
+
+  test('Float sync uses bounded allocation fields without people profiles, rich content, or provider writes', async () => {
+    jest.dontMock('../src/services/floatWorkSignalClient');
+    jest.resetModules();
+    const { FloatWorkSignalClient } = require('../src/services/floatWorkSignalClient');
+    const headers = { 'x-pagination-total-count': '1', 'x-pagination-current-page': '1', 'x-pagination-page-count': '1' };
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: [{ project_id: 9, name: 'Sneup release', active: 1, status: 2, start_date: '2026-07-01', end_date: '2026-08-01', created: '2026-07-01T10:00:00.000Z', modified: '2026-07-11T12:00:00.000Z', notes: 'Private project notes', tags: ['private'], client_id: 3, default_hourly_rate: 220 }], headers })
+      .mockResolvedValueOnce({ data: [{ task_id: 18, project_id: 9, people_id: 7, start_date: '2026-07-12', end_date: '2026-07-15', hours: '12.5', created: '2026-07-10T10:00:00.000Z', modified: '2026-07-12T12:00:00.000Z', name: 'Private allocation name', notes: 'Private allocation notes', people_name: 'Private person' }], headers }) };
+    const client = new FloatWorkSignalClient({ http, now: () => new Date('2026-07-12T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'float-token' })) } });
+    const result = await client.fetchDelta({}, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://api.float.com/v3/tasks', expect.objectContaining({ params: expect.objectContaining({ start_date: '2026-07-09', end_date: '2026-10-10', fields: 'task_id,project_id,people_id,start_date,end_date,hours,created,modified', page: 1, 'per-page': 200 }), headers: expect.objectContaining({ Authorization: 'Bearer float-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private allocation name|Private allocation notes|Private person|Private project notes|private|220/);
+    expect(result).toMatchObject({ metadata: { source: 'float_api', projects: 1, allocations: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('Float sync fails closed at collection caps and malformed pagination', async () => {
+    jest.dontMock('../src/services/floatWorkSignalClient');
+    jest.resetModules();
+    const { FloatWorkSignalClient } = require('../src/services/floatWorkSignalClient');
+    const malformed = new FloatWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [] }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'float-token' })) } });
+    await expect(malformed.fetchDelta({})).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_FLOAT_MAX_PROJECTS; process.env.SNEUP_FLOAT_MAX_PROJECTS = '1';
+    const capped = new FloatWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ project_id: 1, name: 'One' }, { project_id: 2, name: 'Two' }], headers: { 'x-pagination-total-count': '2', 'x-pagination-current-page': '1', 'x-pagination-page-count': '1' } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'float-token' })) } });
+    try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_FLOAT_MAX_PROJECTS; else process.env.SNEUP_FLOAT_MAX_PROJECTS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

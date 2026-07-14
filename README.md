@@ -224,6 +224,8 @@ Toggl Track uses an API token with HTTP Basic authentication and requires one nu
 
 Clockify uses an API key and requires one workspace ID. It reads only the authenticated user's bounded, paginated project and time-entry metadata with `GET`, validates the provider pagination signal, excludes descriptions, tags, clients, people, rates, custom fields, and provider writes, and fails visibly at configured collection caps.
 
+Float uses a bearer API token. It reads bounded paginated project and date-filtered allocation metadata with server-side field allowlists, excludes people profiles and names, notes, clients, tags, rates, budgets, time off, logged time, and provider writes, and fails visibly at configured collection caps.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations
