@@ -17,6 +17,7 @@ const analyticsService = require('./services/analyticsService');
 const connectorSyncService = require('./services/connectorSyncService');
 const workspaceScopeService = require('./services/workspaceScopeService');
 const responseTimingService = require('./services/responseTimingService');
+const { validateRuntimeSecurityConfiguration } = require('./utils/securityConfiguration');
 
 // Import routes
 const boardRoutes = require('./routes/boards');
@@ -174,6 +175,7 @@ app.use((req, res) => {
 const initApp = async () => {
   try {
     logger.info('Starting Sneup...');
+    validateRuntimeSecurityConfiguration();
     
     let databaseConnected = false;
 

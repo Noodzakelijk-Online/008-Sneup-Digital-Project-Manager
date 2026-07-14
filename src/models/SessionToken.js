@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const mongoose = require('mongoose');
+const { getTokenPepper } = require('../utils/securityConfiguration');
 
 const TOKEN_STATUSES = ['active', 'revoked', 'expired'];
 
@@ -58,11 +59,10 @@ const sessionTokenSchema = new mongoose.Schema({
   timestamps: true
 });
 
-const tokenPepper = () =>
-  process.env.SNEUP_SESSION_TOKEN_PEPPER ||
-  process.env.SNEUP_API_TOKEN_PEPPER ||
-  process.env.SNEUP_API_KEY ||
-  'sneup-development-session-pepper';
+const tokenPepper = () => getTokenPepper(
+  'SNEUP_SESSION_TOKEN_PEPPER',
+  'sneup-development-session-pepper'
+);
 
 sessionTokenSchema.index({ workspaceId: 1, userId: 1, status: 1 });
 sessionTokenSchema.index({ tokenPrefix: 1, status: 1 });

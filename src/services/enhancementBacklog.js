@@ -329,6 +329,22 @@ const enhancements = [
       'Opening a navigation view loads its data exactly when needed.',
       'Refresh and workspace changes invalidate cached view data.'
     ]
+  },
+  {
+    id: 'ENH-021',
+    priority: 'P0',
+    area: 'security',
+    title: 'Reject predictable token-hashing secrets in live production',
+    evidence: 'Live production startup now requires separate, non-placeholder 32+ character peppers for database API tokens, desktop sessions, and workspace invitations. Each token model also rejects an absent or weak production pepper at hash time, while loopback-only demo mode remains credential-free.',
+    impact: 'Prevents persisted access and invitation tokens from depending on shared or predictable development fallback values.',
+    effort: 'S',
+    status: 'done',
+    nextStep: 'Add release-environment checks that verify these secrets are supplied by the deployment platform without exposing their values.',
+    acceptanceCriteria: [
+      'A non-demo production runtime refuses missing, weak, or placeholder token peppers.',
+      'API token, session token, and invitation token hashing each use an independent configured secret.',
+      'Demo mode remains usable without production secrets.'
+    ]
   }
 ];
 

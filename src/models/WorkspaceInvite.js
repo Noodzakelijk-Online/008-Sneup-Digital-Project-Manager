@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const mongoose = require('mongoose');
+const { getTokenPepper } = require('../utils/securityConfiguration');
 
 const INVITE_STATUSES = ['pending', 'accepted', 'revoked', 'expired'];
 
@@ -81,12 +82,10 @@ const workspaceInviteSchema = new mongoose.Schema({
   timestamps: true
 });
 
-const tokenPepper = () =>
-  process.env.SNEUP_INVITE_TOKEN_PEPPER ||
-  process.env.SNEUP_SESSION_TOKEN_PEPPER ||
-  process.env.SNEUP_API_TOKEN_PEPPER ||
-  process.env.SNEUP_API_KEY ||
-  'sneup-development-invite-pepper';
+const tokenPepper = () => getTokenPepper(
+  'SNEUP_INVITE_TOKEN_PEPPER',
+  'sneup-development-invite-pepper'
+);
 
 workspaceInviteSchema.index({ workspaceId: 1, userId: 1, status: 1 });
 workspaceInviteSchema.index({ workspaceId: 1, email: 1, status: 1 });
