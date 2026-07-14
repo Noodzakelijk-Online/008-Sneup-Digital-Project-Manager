@@ -112,6 +112,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/workfrontWorkSignalClient');
     jest.dontMock('../src/services/serviceNowWorkSignalClient');
     jest.dontMock('../src/services/zohoProjectsWorkSignalClient');
+    jest.dontMock('../src/services/newRelicWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -1209,6 +1210,8 @@ describe('connector registry', () => {
     expect(byId.servicenow.sync).toEqual(['active_incidents']);
     expect(byId.zoho_projects.auth.fields.map(field => field.name)).toEqual(['portalId', 'token']);
     expect(byId.zoho_projects.sync).toEqual(['active_projects']);
+    expect(byId.new_relic.auth.fields.map(field => field.name)).toEqual(['token']);
+    expect(byId.new_relic.sync).toEqual(['open_violations']);
     expect(byId.rally.auth.fields.map(field => field.name)).toEqual(['apiKey']);
     expect(byId.rally.sync).toEqual(['user_stories', 'defects']);
   });
@@ -2448,6 +2451,11 @@ describe('work signal normalization', () => {
   test('Zoho Projects adapter delegates bounded active project metadata reads to the credential-backed client', async () => {
     jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'project:170876000003686000' }] }); jest.doMock('../src/services/zohoProjectsWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'zoho_projects' };
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('zoho_projects').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('New Relic adapter delegates bounded open violation metadata reads to the credential-backed client', async () => {
+    jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'violation:1234' }] }); jest.doMock('../src/services/newRelicWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'new_relic' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('new_relic').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -5302,6 +5310,50 @@ describe('work signal normalization', () => {
 
   test('Zoho Projects sync rejects invalid cursors, portal identifiers, malformed projects, and collection caps', async () => {
     jest.dontMock('../src/services/zohoProjectsWorkSignalClient'); jest.resetModules(); const { ZohoProjectsWorkSignalClient } = require('../src/services/zohoProjectsWorkSignalClient'); const accountConnector = { getAccountCredentials: jest.fn(() => ({ token: 'token' })) }; const invalid = new ZohoProjectsWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ metadata: { fields: { portalId: '2063927' } } }, 'bad-date')).rejects.toMatchObject({ statusCode: 400 }); await expect(invalid.fetchDelta({ metadata: { fields: { portalId: 'not-a-number' } } })).rejects.toMatchObject({ statusCode: 400 }); const malformed = new ZohoProjectsWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { projects: [{ id: 'https://127.0.0.1/steal', name: 'Private', status: 'active' }] } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ metadata: { fields: { portalId: '2063927' } } })).rejects.toMatchObject({ statusCode: 502 }); const previous = process.env.SNEUP_ZOHO_PROJECTS_MAX_PROJECTS; process.env.SNEUP_ZOHO_PROJECTS_MAX_PROJECTS = '1'; const capped = new ZohoProjectsWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { projects: [{ id: '170876000003686000', name: 'First', status: 'active' }] } }) }, accountConnectorService: accountConnector }); try { await expect(capped.fetchDelta({ metadata: { fields: { portalId: '2063927' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_ZOHO_PROJECTS_MAX_PROJECTS; else process.env.SNEUP_ZOHO_PROJECTS_MAX_PROJECTS = previous; }
+  });
+
+  test('New Relic sync pages bounded open violation metadata without alert payloads, conditions, services, users, links, descriptions, or provider writes', async () => {
+    jest.dontMock('../src/services/newRelicWorkSignalClient');
+    jest.resetModules();
+    const { NewRelicWorkSignalClient } = require('../src/services/newRelicWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { violations: [{ id: '1234', label: `Launch ${privateEmail}`, priority: 'critical', opened_at: '2026-07-12T12:00:00.000Z', condition: { name: 'Private condition' }, entity: { name: 'Private service' }, links: { ui: 'https://private.example.test' }, description: 'Private description', owner: { name: 'Private user' } }] }, headers: { link: '<https://api.newrelic.com/v2/alerts_violations.json?page=2>; rel="next"' } })
+      .mockResolvedValueOnce({ data: { violations: [] }, headers: {} }) };
+    const client = new NewRelicWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'new-relic-user-key' })) } });
+    const previous = { max: process.env.SNEUP_NEW_RELIC_MAX_OPEN_VIOLATIONS, pages: process.env.SNEUP_NEW_RELIC_MAX_PAGES };
+    process.env.SNEUP_NEW_RELIC_MAX_OPEN_VIOLATIONS = '2';
+    process.env.SNEUP_NEW_RELIC_MAX_PAGES = '2';
+    try {
+      const result = await client.fetchDelta({}, '2026-07-12T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://api.newrelic.com/v2/alerts_violations.json', expect.objectContaining({ params: { only_open: 'true', page: 1 }, headers: expect.objectContaining({ 'Api-Key': 'new-relic-user-key' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({ params: { only_open: 'true', page: 2 } }));
+      expect(result).toMatchObject({ metadata: { source: 'new_relic_open_violation_metadata', violations: 1, pages: 2 }, hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private condition|Private service|Private description|Private user|private\.example/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally {
+      if (previous.max === undefined) delete process.env.SNEUP_NEW_RELIC_MAX_OPEN_VIOLATIONS; else process.env.SNEUP_NEW_RELIC_MAX_OPEN_VIOLATIONS = previous.max;
+      if (previous.pages === undefined) delete process.env.SNEUP_NEW_RELIC_MAX_PAGES; else process.env.SNEUP_NEW_RELIC_MAX_PAGES = previous.pages;
+    }
+  });
+
+  test('New Relic sync rejects invalid cursors, malformed violation identifiers, and collection caps', async () => {
+    jest.dontMock('../src/services/newRelicWorkSignalClient');
+    jest.resetModules();
+    const { NewRelicWorkSignalClient } = require('../src/services/newRelicWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ token: 'token' })) };
+    const invalid = new NewRelicWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector });
+    await expect(invalid.fetchDelta({}, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new NewRelicWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { violations: [{ id: 'https://127.0.0.1/steal', label: 'Private', opened_at: '2026-07-12T12:00:00.000Z' }] } }) }, accountConnectorService: accountConnector });
+    await expect(malformed.fetchDelta({})).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_NEW_RELIC_MAX_OPEN_VIOLATIONS;
+    process.env.SNEUP_NEW_RELIC_MAX_OPEN_VIOLATIONS = '1';
+    const capped = new NewRelicWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { violations: [{ id: '1234', label: 'First', opened_at: '2026-07-12T12:00:00.000Z' }, { id: '1235', label: 'Second', opened_at: '2026-07-12T12:00:00.000Z' }] } }) }, accountConnectorService: accountConnector });
+    try {
+      await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 });
+    } finally {
+      if (previous === undefined) delete process.env.SNEUP_NEW_RELIC_MAX_OPEN_VIOLATIONS; else process.env.SNEUP_NEW_RELIC_MAX_OPEN_VIOLATIONS = previous;
+    }
   });
 
   test('Discord sync reads one bounded server metadata collection without channels, people, permissions, invites, icons, messages, or provider writes', async () => {

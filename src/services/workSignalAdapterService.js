@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost'
@@ -81,6 +81,7 @@ const mattermostWorkSignalClient = require('./mattermostWorkSignalClient');
 const workfrontWorkSignalClient = require('./workfrontWorkSignalClient');
 const serviceNowWorkSignalClient = require('./serviceNowWorkSignalClient');
 const zohoProjectsWorkSignalClient = require('./zohoProjectsWorkSignalClient');
+const newRelicWorkSignalClient = require('./newRelicWorkSignalClient');
 const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
@@ -1110,6 +1111,12 @@ zohoProjectsAdapter.capabilities.credentialBackedSync = true;
 zohoProjectsAdapter.list = async account => (await zohoProjectsWorkSignalClient.fetchDelta(account, null)).records;
 zohoProjectsAdapter.fetchDelta = (account, cursor) => zohoProjectsWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('zoho_projects', zohoProjectsAdapter);
+
+const newRelicAdapter = buildAdapter('new_relic', 'New Relic open violation metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'violation'), title: titleFromText(item.name, 'New Relic violation'), description: '', status: item.status || 'open', priority: item.priority || 'unknown', url: undefined, owners: [], labels: compact(['new_relic', item.sourceType]), dueAt: undefined, providerCreatedAt: item.openedAt, providerUpdatedAt: item.updatedAt, evidenceRefs: baseEvidence(account, item, 'New Relic open violation metadata'), raw: { id: item.id, sourceType: item.sourceType, violationId: item.violationId, status: item.status, priority: item.priority, openedAt: item.openedAt, updatedAt: item.updatedAt } }));
+newRelicAdapter.capabilities.credentialBackedSync = true;
+newRelicAdapter.list = async account => (await newRelicWorkSignalClient.fetchDelta(account, null)).records;
+newRelicAdapter.fetchDelta = (account, cursor) => newRelicWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('new_relic', newRelicAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
