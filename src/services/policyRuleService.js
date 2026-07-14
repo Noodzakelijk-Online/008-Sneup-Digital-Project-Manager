@@ -69,7 +69,7 @@ class PolicyRuleService {
       configured: true,
       baselineRiskLevel: basePolicy.riskLevel,
       baselineOwnerType: basePolicy.ownerType,
-      policyRuleId: String(rule._id),
+      policyRuleId: rule._id ? String(rule._id) : null,
       updatedAt: rule.updatedAt,
       updatedBy: rule.updatedBy || 'system',
       reason: rule.reason || ''
@@ -171,6 +171,8 @@ class PolicyRuleService {
       throw error;
     }
 
+    const beforePolicy = this.serializePolicy(actionType, this.mergePolicy(base, existing));
+
     const rule = await PolicyRule.findOneAndUpdate(
       { workspaceId, actionType },
       {
@@ -202,7 +204,11 @@ class PolicyRuleService {
         actor,
         source: 'api',
         riskLevel: effectivePolicy.riskLevel,
-        afterState: this.serializePolicy(actionType, effectivePolicy)
+        beforeState: beforePolicy,
+        afterState: {
+          ...this.serializePolicy(actionType, effectivePolicy),
+          relaxationConfirmed: isRelaxingExistingPolicy
+        }
       });
     } catch (error) {
       logger.error('Action policy audit write failed:', error);

@@ -4056,6 +4056,7 @@ describe('operations ledger intervention policy', () => {
       ownerType: 'robert',
       enabled: false
     });
+    expect(service.serializePolicy('comment', service.mergePolicy(base, null)).policyRuleId).toBeNull();
   });
 
   test('intervention execution queues approval instead of writing directly to Trello', async () => {
