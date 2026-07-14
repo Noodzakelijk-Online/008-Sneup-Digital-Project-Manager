@@ -5616,6 +5616,11 @@ describe('operations ledger intervention policy', () => {
     expect(trelloClient.addMemberToCard).not.toHaveBeenCalled();
     expect(trelloClient.moveCardToList).not.toHaveBeenCalled();
     expect(trelloClient.addLabelToCard).not.toHaveBeenCalled();
+    expect(interventionEngine.executeComment).toBeUndefined();
+    expect(interventionEngine.executeReassignment).toBeUndefined();
+    expect(interventionEngine.executeEscalation).toBeUndefined();
+    expect(interventionEngine.executeMoveCard).toBeUndefined();
+    expect(interventionEngine.executeAddLabel).toBeUndefined();
   });
 
   test('intervention engine never falls back to direct Trello writes when a policy result is misconfigured', async () => {

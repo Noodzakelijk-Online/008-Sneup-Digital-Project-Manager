@@ -3,7 +3,6 @@ const Intervention = require('../models/Intervention');
 const Card = require('../models/Card');
 const Member = require('../models/Member');
 const Board = require('../models/Board');
-const trelloClient = require('./trelloClient');
 const operationsLedgerService = require('./operationsLedgerService');
 const policyRuleService = require('./policyRuleService');
 const interventionPolicy = require('./interventionPolicy');
@@ -219,25 +218,9 @@ class InterventionEngine {
       saved.status = 'executing';
       await saved.save();
 
-      switch (intervention.type) {
-        case 'comment':
-          await this.executeComment(saved);
-          break;
-        case 'reassign':
-          await this.executeReassignment(saved);
-          break;
-        case 'escalate':
-          await this.executeEscalation(saved);
-          break;
-        case 'move_card':
-          await this.executeMoveCard(saved);
-          break;
-        case 'add_label':
-          await this.executeAddLabel(saved);
-          break;
-        default:
-          logger.warn(`Unknown intervention type: ${intervention.type}`);
-      }
+      // Only analysis-only interventions can reach this point. Trello writes
+      // are deliberately executable through OperationsLedgerService alone.
+      logger.info(`Completed analysis-only intervention ${saved._id}: ${saved.type}`);
 
       await saved.markExecuted();
       logger.info(`Executed intervention ${saved._id}: ${saved.action}`);
@@ -255,118 +238,6 @@ class InterventionEngine {
         intervention
       };
     }
-  }
-
-  // Execute comment intervention
-  async executeComment(intervention) {
-    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
-    const member = await Member.findOne({ _id: intervention.memberId, workspaceId: intervention.workspaceId });
-
-    if (!card || !member) {
-      throw new Error('Card or member not found');
-    }
-
-    // Post comment to Trello
-    const commentText = `@${member.username} ${intervention.message}`;
-    await trelloClient.addCommentToCard(card.trelloId, commentText);
-
-    logger.info(`Posted comment to card ${card.trelloId}: ${commentText}`);
-  }
-
-  // Execute reassignment intervention
-  async executeReassignment(intervention) {
-    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
-    const member = await Member.findOne({ _id: intervention.memberId, workspaceId: intervention.workspaceId });
-
-    if (!card || !member) {
-      throw new Error('Card or member not found');
-    }
-
-    // Find best member to reassign to
-    const targetMember = await this.findBestReassignmentTarget(card, member);
-
-    if (!targetMember) {
-      logger.warn(`No suitable reassignment target found for card ${card._id}`);
-      return;
-    }
-
-    // Reassign in Trello
-    await trelloClient.removeMemberFromCard(card.trelloId, member.trelloId);
-    await trelloClient.addMemberToCard(card.trelloId, targetMember.trelloId);
-
-    // Post comment explaining reassignment
-    const commentText = `@${member.username} I've reassigned this card to @${targetMember.username} due to workload balancing. You currently have ${member.assignedCards} cards (team avg: ${intervention.metadata.teamAverage.toFixed(1)}).`;
-    await trelloClient.addCommentToCard(card.trelloId, commentText);
-
-    // Update local database
-    card.members = card.members.filter(m => m.toString() !== member._id.toString());
-    card.members.push(targetMember._id);
-    await card.save();
-
-    logger.info(`Reassigned card ${card._id} from ${member.username} to ${targetMember.username}`);
-  }
-
-  // Execute escalation intervention
-  async executeEscalation(intervention) {
-    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
-    const member = await Member.findOne({ _id: intervention.memberId, workspaceId: intervention.workspaceId });
-    const board = await Board.findOne({ _id: intervention.boardId, workspaceId: intervention.workspaceId });
-
-    if (!card || !board) {
-      throw new Error('Card or board not found');
-    }
-
-    // Find team lead (member with role 'admin' or 'lead')
-    const teamLead = await Member.findOne({
-      boards: board._id,
-      workspaceId: intervention.workspaceId,
-      role: { $in: ['admin', 'lead'] }
-    });
-
-    if (!teamLead) {
-      logger.warn(`No team lead found for board ${board._id}`);
-      return;
-    }
-
-    // Post escalation comment
-    const commentText = `@${teamLead.username} ESCALATION: ${intervention.message} ${member ? `@${member.username} ` : ''}has not responded to previous follow-ups. Please review.`;
-    await trelloClient.addCommentToCard(card.trelloId, commentText);
-
-    // Add ESCALATED label
-    await trelloClient.addLabelToCard(card.trelloId, 'ESCALATED');
-
-    // Record escalation
-    await intervention.escalate(teamLead._id, intervention.message);
-
-    logger.info(`Escalated card ${card._id} to ${teamLead.username}`);
-  }
-
-  // Execute move card intervention
-  async executeMoveCard(intervention) {
-    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
-    
-    if (!card) {
-      throw new Error('Card not found');
-    }
-
-    const targetListId = intervention.metadata.targetListId;
-    await trelloClient.moveCardToList(card.trelloId, targetListId);
-
-    logger.info(`Moved card ${card._id} to list ${targetListId}`);
-  }
-
-  // Execute add label intervention
-  async executeAddLabel(intervention) {
-    const card = await Card.findOne({ _id: intervention.cardId, workspaceId: intervention.workspaceId });
-    
-    if (!card) {
-      throw new Error('Card not found');
-    }
-
-    const labelName = intervention.metadata.labelName;
-    await trelloClient.addLabelToCard(card.trelloId, labelName);
-
-    logger.info(`Added label ${labelName} to card ${card._id}`);
   }
 
   // Helper: Check if card is stuck
