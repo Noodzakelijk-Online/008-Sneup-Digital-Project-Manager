@@ -15,6 +15,8 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 - ENH-018: Scheduled intervention cooldowns are workspace-scoped and configurable per signal from 24 to 168 hours. They only suppress duplicate internal candidates, leave manual requests distinct, and never prepare or perform a provider write.
 - ENH-019: Decision queue review windows are bounded from 1 to 168 hours per risk queue. Follow-up and escalation timing is also workspace-scoped, bounded, and auditable; escalation cannot precede follow-up, all scheduled results remain internal approval candidates, and completed actions schedule their follow-up from the same policy.
 
+- ENH-001: TestRail is now the 75th bounded read-only credential-backed connector. It reads selected-project active test-run metadata only, rejects private-network and paginated-overflow targets, and excludes cases, results, descriptions, references, custom fields, attachments, and provider writes.
+
 ## Findings
 
 | ID | Priority | Area | Finding | Next step |

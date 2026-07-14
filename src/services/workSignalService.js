@@ -46,6 +46,7 @@ const TYPE_ALIASES = {
   time_entry: 'time_entry',
   workflow: 'workflow',
   execution: 'execution',
+  test_run: 'test_run',
   risk: 'risk',
   decision: 'decision'
 };

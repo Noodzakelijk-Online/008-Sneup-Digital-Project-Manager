@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const ITEM_TYPES = ['task', 'project', 'issue', 'pull_request', 'document', 'event', 'message', 'risk', 'decision', 'other'];
+const ITEM_TYPES = ['task', 'project', 'issue', 'pull_request', 'document', 'event', 'message', 'test_run', 'risk', 'decision', 'other'];
 const ITEM_STATUSES = ['open', 'in_progress', 'blocked', 'waiting', 'done', 'archived', 'unknown'];
 const ITEM_PRIORITIES = ['low', 'normal', 'high', 'critical', 'unknown'];
 

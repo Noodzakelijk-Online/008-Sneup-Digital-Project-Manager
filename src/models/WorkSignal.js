@@ -14,6 +14,7 @@ const SIGNAL_TYPES = [
   'booking',
   'workflow',
   'execution',
+  'test_run',
   'risk',
   'decision',
   'other'

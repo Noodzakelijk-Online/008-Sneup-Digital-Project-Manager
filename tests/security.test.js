@@ -95,6 +95,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/genericRestApiWorkSignalClient');
     jest.dontMock('../src/services/n8nWorkSignalClient');
     jest.dontMock('../src/services/makeWorkSignalClient');
+    jest.dontMock('../src/services/testRailWorkSignalClient');
     jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
@@ -2558,6 +2559,21 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('make').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
     expect(workSignalService.normalizeProviderRecord(account, { id: 'scenario:18', sourceType: 'workflow', scenarioId: '18', name: 'Release workflow', status: 'in_progress', active: true })).toMatchObject({ sourceType: 'workflow', status: 'in_progress' });
+  });
+
+  test('TestRail adapter delegates bounded run reads and preserves quality state through normalization', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'run:18' }] });
+    jest.doMock('../src/services/testRailWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const workSignalService = require('../src/services/workSignalService');
+    const account = { connectorId: 'testRail', _id: new mongoose.Types.ObjectId() };
+
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('testRail').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+    expect(workSignalService.normalizeProviderRecord(account, { id: 'run:18', sourceType: 'test_run', runId: '18', name: 'Release test run', status: 'blocked', priority: 'high' })).toMatchObject({ sourceType: 'test_run', status: 'blocked', priority: 'high' });
   });
 
   test('Datadog adapter delegates live delta reads to the credential-backed client', async () => {
@@ -5066,6 +5082,54 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_MAKE_MAX_SCENARIOS; process.env.SNEUP_MAKE_MAX_SCENARIOS = '1';
     const capped = new MakeWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: { scenarios: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }], pg: { total: 2 } } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'make-token' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { teamId: '77', zone: 'eu1' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_MAKE_MAX_SCENARIOS; else process.env.SNEUP_MAKE_MAX_SCENARIOS = previous; }
+  });
+
+  test('TestRail sync reads bounded active run metadata without cases, results, descriptions, or provider writes', async () => {
+    jest.dontMock('../src/services/testRailWorkSignalClient');
+    jest.resetModules();
+    const { TestRailWorkSignalClient } = require('../src/services/testRailWorkSignalClient');
+    const http = {
+      get: jest.fn(() => Promise.resolve({
+        data: {
+          runs: [{
+            id: 18,
+            project_id: 7,
+            name: 'Release private@email.test https://private.example/run',
+            is_completed: false,
+            passed_count: 12,
+            failed_count: 1,
+            blocked_count: 0,
+            untested_count: 4,
+            created_on: 1783699200,
+            updated_on: 1783872000,
+            description: 'Private run description',
+            refs: 'private-reference',
+            config: { private: true },
+            custom_release: 'private'
+          }],
+          _links: { next: null }
+        }
+      }))
+    };
+    const client = new TestRailWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ username: 'qa@example.com', apiKey: 'testrail-key' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
+    const result = await client.fetchDelta({ metadata: { fields: { baseUrl: 'https://testrail.example.test', projectId: '7' } } }, '2026-07-10T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://testrail.example.test/index.php?/api/v2/get_runs/7', expect.objectContaining({ params: { is_completed: 0, include_plan_runs: 1, limit: 100, offset: 0 }, auth: { username: 'qa@example.com', password: 'testrail-key' }, maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/private@email\.test|private\.example|Private run description|private-reference|custom_release|testrail-key/);
+    expect(result).toMatchObject({ metadata: { source: 'testrail_api', projectId: '7', activeRuns: 1 }, nextCursor: '2026-07-12T00:00:00.000Z' });
+    expect(result.records).toEqual([expect.objectContaining({ id: 'run:18', sourceType: 'test_run', status: 'blocked', failedCount: 1 })]);
+  });
+
+  test('TestRail sync rejects private-network targets and fails closed at the run cap', async () => {
+    jest.dontMock('../src/services/testRailWorkSignalClient');
+    jest.resetModules();
+    const { TestRailWorkSignalClient } = require('../src/services/testRailWorkSignalClient');
+    const invalid = new TestRailWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ username: 'qa@example.com', apiKey: 'testrail-key' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { baseUrl: 'https://127.0.0.1', projectId: '7' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_TESTRAIL_MAX_RUNS; process.env.SNEUP_TESTRAIL_MAX_RUNS = '1';
+    const capped = new TestRailWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: { runs: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }], _links: { next: null } } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ username: 'qa@example.com', apiKey: 'testrail-key' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://testrail.example.test', projectId: '7' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_TESTRAIL_MAX_RUNS; else process.env.SNEUP_TESTRAIL_MAX_RUNS = previous; }
   });
 
   test('Datadog sync reads bounded monitor and active incident metadata without queries, messages, tags, or provider writes', async () => {
