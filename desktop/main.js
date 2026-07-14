@@ -1,18 +1,43 @@
 const http = require('http');
 const path = require('path');
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const {
+  getDesktopSettingsPath,
+  readDesktopSettings,
+  resolveStartupMode,
+  saveDesktopStartupMode
+} = require('../src/services/desktopRuntimeSettings');
 
 const DESKTOP_PORT = process.env.PORT || '3197';
 const DESKTOP_HOST = '127.0.0.1';
 const DESKTOP_URL = `http://${DESKTOP_HOST}:${DESKTOP_PORT}`;
 
 process.env.SNEUP_DESKTOP = 'true';
-process.env.SNEUP_DEMO_MODE = process.env.SNEUP_DEMO_MODE || 'true';
 process.env.HOST = DESKTOP_HOST;
 process.env.PORT = DESKTOP_PORT;
 process.env.SNEUP_PUBLIC_URL = process.env.SNEUP_PUBLIC_URL || DESKTOP_URL;
 
 let mainWindow;
+
+const getSettingsPath = () => getDesktopSettingsPath(app.getPath('userData'));
+
+const configureRuntime = async () => {
+  const settings = await readDesktopSettings(getSettingsPath());
+  const startupMode = resolveStartupMode({ settings });
+  process.env.SNEUP_DEMO_MODE = startupMode === 'demo' ? 'true' : 'false';
+  return startupMode;
+};
+
+ipcMain.handle('sneup:save-startup-mode', async (_event, startupMode) => {
+  const settings = await saveDesktopStartupMode(getSettingsPath(), startupMode);
+  return { startupMode: settings.startupMode };
+});
+
+ipcMain.handle('sneup:restart', () => {
+  app.relaunch();
+  setImmediate(() => app.exit(0));
+  return { restarting: true };
+});
 
 const waitForSneup = (attempts = 80) => new Promise((resolve, reject) => {
   let remaining = attempts;
@@ -79,6 +104,7 @@ const start = async () => {
   try {
     // Packaged applications are read-only inside app.asar, so logs live with user data.
     process.env.SNEUP_LOG_DIR = process.env.SNEUP_LOG_DIR || path.join(app.getPath('userData'), 'logs');
+    await configureRuntime();
     const sneup = require('../src/index');
     await sneup.initApp();
     await waitForSneup();

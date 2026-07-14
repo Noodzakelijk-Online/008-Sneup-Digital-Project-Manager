@@ -233,7 +233,7 @@ function openFirstRunSetup() {
     },
     live: {
       title: 'Connect workspace',
-      copy: 'Open the connector inventory next, then attach the accounts you choose. Provider writes stay approval-gated.'
+      copy: 'Sneup will restart and attempt your database-backed workspace. If the database is unavailable, it remains safely in catalog/demo mode.'
     }
   };
 
@@ -262,9 +262,9 @@ function openFirstRunSetup() {
         <strong id="setupModeTitle"></strong>
         <p id="setupModeCopy"></p>
       </div>
-      <div class="notice">This choice is stored only on this device. Sneup does not collect credentials during setup.</div>
+      <div class="notice">This device stores only the startup mode. Sneup does not collect credentials during setup.</div>
       <div class="toolbar modal-actions">
-        <button class="button primary" type="button" id="completeSetup">Continue</button>
+        <button class="button primary" type="button" id="completeSetup">${window.sneupDesktop?.saveStartupMode ? 'Save and restart' : 'Continue'}</button>
       </div>
     </div>
   `;
@@ -277,9 +277,26 @@ function openFirstRunSetup() {
       renderSelection();
     });
   });
-  document.getElementById('completeSetup').addEventListener('click', () => {
+  document.getElementById('completeSetup').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
     state.setupMode = selectedMode;
     localStorage.setItem(FIRST_RUN_SETUP_KEY, selectedMode);
+
+    if (window.sneupDesktop?.saveStartupMode && window.sneupDesktop?.restart) {
+      button.disabled = true;
+      button.textContent = 'Restarting...';
+      try {
+        await window.sneupDesktop.saveStartupMode(selectedMode);
+        await window.sneupDesktop.restart();
+        return;
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = 'Save and restart';
+        openNotice('Startup preference failed', error.message || 'Sneup could not save this startup mode.');
+        return;
+      }
+    }
+
     closeModal();
     if (selectedMode === 'live') showView('connectors');
   });

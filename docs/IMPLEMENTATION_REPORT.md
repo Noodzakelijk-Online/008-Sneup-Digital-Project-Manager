@@ -57,7 +57,7 @@ Added:
 - `npm run build:installer` / `npm run dist:win` for Windows NSIS packaging.
 - Generated installer: `release/Sneup-Setup-2.0.0.exe`.
 
-The desktop app starts Sneup on `127.0.0.1`, opens the command center in an app window, and defaults to demo mode when no live database is configured.
+The desktop app starts Sneup on `127.0.0.1` and opens the command center in an app window. On first run it starts in demo mode. The workspace choice stores only the non-secret `demo` or `live` startup preference in the Electron user-data directory, then relaunches before Sneup initializes. Live mode attempts the database-backed workspace and retains the existing safe catalog/demo fallback if the database is unavailable. An explicitly set `SNEUP_DEMO_MODE` environment variable takes precedence over the local preference.
 
 ## Verification
 
