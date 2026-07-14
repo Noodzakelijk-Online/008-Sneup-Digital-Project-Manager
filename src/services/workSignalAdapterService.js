@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'n8n'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -40,6 +40,7 @@ const harvestWorkSignalClient = require('./harvestWorkSignalClient');
 const everhourWorkSignalClient = require('./everhourWorkSignalClient');
 const codaWorkSignalClient = require('./codaWorkSignalClient');
 const teamworkWorkSignalClient = require('./teamworkWorkSignalClient');
+const teamGanttWorkSignalClient = require('./teamganttWorkSignalClient');
 const basecampWorkSignalClient = require('./basecampWorkSignalClient');
 const redmineWorkSignalClient = require('./redmineWorkSignalClient');
 const microsoftPlannerWorkSignalClient = require('./microsoftPlannerWorkSignalClient');
@@ -747,6 +748,26 @@ teamworkAdapter.capabilities.credentialBackedSync = true;
 teamworkAdapter.list = async account => (await teamworkWorkSignalClient.fetchDelta(account, null)).records;
 teamworkAdapter.fetchDelta = (account, cursor) => teamworkWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('teamwork', teamworkAdapter);
+
+const teamGanttAdapter = buildAdapter('teamgantt', 'TeamGantt project and task metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'task'),
+  title: titleFromText(item.name, 'TeamGantt work item'),
+  description: '',
+  status: statusFromText(item.status),
+  priority: priorityFromText(item.priority),
+  owners: [],
+  labels: compact(['teamgantt', item.sourceType, item.project?.name, item.status, item.priority]),
+  dueAt: pick(item.dueAt),
+  providerCreatedAt: pick(item.createdAt),
+  providerUpdatedAt: pick(item.updatedAt, item.createdAt),
+  evidenceRefs: baseEvidence(account, item, 'TeamGantt metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, parentGroupId: item.parentGroupId, project: item.project, status: item.status, priority: item.priority, percentComplete: item.percentComplete, startAt: item.startAt, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+teamGanttAdapter.capabilities.credentialBackedSync = true;
+teamGanttAdapter.list = async account => (await teamGanttWorkSignalClient.fetchDelta(account, null)).records;
+teamGanttAdapter.fetchDelta = (account, cursor) => teamGanttWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('teamgantt', teamGanttAdapter);
 
 const basecampStatus = (item) => item.completedAt || item.status === 'completed' ? 'done' : statusFromText(item.status);
 const basecampAdapter = buildAdapter('basecamp', 'Basecamp project and to-do metadata adapter', (account, item) => ({

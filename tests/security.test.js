@@ -73,6 +73,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/everhourWorkSignalClient');
     jest.dontMock('../src/services/codaWorkSignalClient');
     jest.dontMock('../src/services/teamworkWorkSignalClient');
+    jest.dontMock('../src/services/teamganttWorkSignalClient');
     jest.dontMock('../src/services/basecampWorkSignalClient');
     jest.dontMock('../src/services/redmineWorkSignalClient');
     jest.dontMock('../src/services/microsoftPlannerWorkSignalClient');
@@ -2256,6 +2257,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('teamwork').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('TeamGantt adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'task:1' }] });
+    jest.doMock('../src/services/teamganttWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'teamgantt' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('teamgantt').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('Basecamp adapter delegates live delta reads to the credential-backed client', async () => {
     jest.resetModules();
     const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'todo:1' }] });
@@ -4107,6 +4120,64 @@ describe('work signal normalization', () => {
       externalId: 'task:18', sourceType: 'task', title: 'Ship Teamwork connector', description: '', status: 'in_progress', priority: 'high', labels: ['teamwork', 'task', 'project:9', 'tasklist:4', 'in progress']
     });
     expect(JSON.stringify(normalized.raw)).not.toMatch(/Private detail|Private comment/);
+  });
+
+  test('TeamGantt sync reads bounded selected-company project and task metadata without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/teamganttWorkSignalClient');
+    jest.resetModules();
+    const { TeamGanttWorkSignalClient } = require('../src/services/teamganttWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { data: [{ id: 9, name: 'Sneup release', status: 'active', created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-11T10:00:00.000Z', description: 'Private project detail', resource_ids: [77] }] } })
+      .mockResolvedValueOnce({ data: { data: [{ id: 18, project_id: 9, parent_group_id: 4, name: 'Ship TeamGantt connector', status: 'in_progress', priority: 'high', percent_complete: 60, start_date: '2026-07-10', end_date: '2026-07-15', created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-12T12:00:00.000Z', description: 'Private task detail', comments: [{ body: 'Private comment' }], resources: [{ name: 'Private user' }], timeblocks: [{ hours: 8 }], custom_fields: [{ value: 'Private field' }] }], meta: { total: 1 } } }) };
+    const client = new TeamGanttWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'teamgantt-token' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { companyId: '123' } } }, '2026-07-10T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://api.teamgantt.com/v1/companies/123/projects', expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer teamgantt-token' }), maxRedirects: 0, proxy: false
+    }));
+    expect(http.get).toHaveBeenCalledWith('https://api.teamgantt.com/v1/tasks', expect.objectContaining({
+      params: expect.objectContaining({ 'project_ids[]': ['9'], page: 1, per_page: 100 }), headers: expect.objectContaining({ Authorization: 'Bearer teamgantt-token' }), maxRedirects: 0, proxy: false
+    }));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/description|comment|checklist|resource|timeblock|custom/i);
+    expect(JSON.stringify(result.records)).not.toMatch(/Private project detail|Private task detail|Private comment|Private user|Private field/);
+    expect(result).toMatchObject({ metadata: { source: 'teamgantt_api', companyId: '123', projects: 1, tasks: 1, contentPolicy: 'selected_company_project_and_task_metadata_only_no_descriptions_comments_checklists_resources_time_blocks_custom_fields_or_provider_writes' }, hasMore: false, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'project:9', name: 'Sneup release', status: 'active' }),
+      expect.objectContaining({ id: 'task:18', projectId: '9', name: 'Ship TeamGantt connector', dueAt: '2026-07-15T00:00:00.000Z', percentComplete: 60 })
+    ]));
+  });
+
+  test('TeamGantt sync rejects invalid company IDs and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/teamganttWorkSignalClient');
+    jest.resetModules();
+    const { TeamGanttWorkSignalClient } = require('../src/services/teamganttWorkSignalClient');
+    const invalidHttp = { get: jest.fn() };
+    const invalidClient = new TeamGanttWorkSignalClient({ http: invalidHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'teamgantt-token' })) } });
+    await expect(invalidClient.fetchDelta({ metadata: { fields: { companyId: 'https://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 400 });
+    expect(invalidHttp.get).not.toHaveBeenCalled();
+
+    const previousLimit = process.env.SNEUP_TEAMGANTT_MAX_PROJECTS;
+    process.env.SNEUP_TEAMGANTT_MAX_PROJECTS = '1';
+    const cappedClient = new TeamGanttWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [{ id: 9, name: 'One project' }] } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'teamgantt-token' })) } });
+    try {
+      await expect(cappedClient.fetchDelta({ metadata: { fields: { companyId: '123' } } })).rejects.toMatchObject({ statusCode: 413 });
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_TEAMGANTT_MAX_PROJECTS;
+      else process.env.SNEUP_TEAMGANTT_MAX_PROJECTS = previousLimit;
+    }
+  });
+
+  test('TeamGantt adapter retains only approved project and task metadata in normalized work signals', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'teamgantt' }, {
+      id: 'task:18', sourceType: 'task', taskId: '18', projectId: '9', parentGroupId: '4', project: { id: '9', name: 'Sneup release' }, name: 'Ship TeamGantt connector', status: 'in_progress', priority: 'high', percentComplete: 60, dueAt: '2026-07-15T00:00:00.000Z', updatedAt: '2026-07-12T12:00:00.000Z', description: 'Private task detail', comments: ['Private comment'], resources: [{ name: 'Private user' }]
+    });
+    expect(normalized).toMatchObject({
+      externalId: 'task:18', sourceType: 'task', title: 'Ship TeamGantt connector', description: '', status: 'in_progress', priority: 'high', labels: ['teamgantt', 'task', 'Sneup release', 'in_progress', 'high']
+    });
+    expect(JSON.stringify(normalized.raw)).not.toMatch(/Private task detail|Private comment|Private user/);
   });
 
   test('Basecamp sync reads bounded project and to-do metadata without rich content or provider writes', async () => {
