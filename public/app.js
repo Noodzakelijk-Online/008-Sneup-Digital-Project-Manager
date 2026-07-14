@@ -3725,6 +3725,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-sharepoint-site]').forEach((button) => {
     button.addEventListener('click', () => openSharePointSiteModal(button.dataset.sharepointSite));
   });
+  document.querySelectorAll('[data-xero-tenant]').forEach((button) => {
+    button.addEventListener('click', () => openXeroTenantModal(button.dataset.xeroTenant));
+  });
   document.querySelectorAll('[data-load-more-connectors]').forEach((button) => {
     button.addEventListener('click', () => {
       loadConnectors({ append: true });
@@ -3792,7 +3795,9 @@ function renderConnector(connector, account) {
   const isFigma = connector.id === 'figma';
   const selectedSharePointSiteId = account?.metadata?.fields?.sharePointSiteId;
   const isSharePoint = connector.id === 'sharepoint';
-  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId) && (!isSharePoint || selectedSharePointSiteId));
+  const selectedXeroTenantId = account?.metadata?.fields?.xeroTenantId;
+  const isXero = connector.id === 'xero';
+  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId) && (!isSharePoint || selectedSharePointSiteId) && (!isXero || selectedXeroTenantId));
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
@@ -3812,11 +3817,12 @@ function renderConnector(connector, account) {
                                 : lastSync.source === 'todoist_api' ? 'Todoist API'
                                   : lastSync.source === 'shortcut_api' ? 'Shortcut API'
                                     : lastSync.source === 'bitbucket_api' ? 'Bitbucket API'
-                                      : lastSync.source === 'basecamp_api' ? 'Basecamp API'
-                                        : lastSync.source === 'confluence_page_space_metadata' ? 'Confluence metadata'
+                                        : lastSync.source === 'basecamp_api' ? 'Basecamp API'
+                                        : lastSync.source === 'xero_sales_invoice_metadata' ? 'Xero invoices'
+                                          : lastSync.source === 'confluence_page_space_metadata' ? 'Confluence metadata'
                                           : 'Sync';
   const syncSummary = canSync && lastSync.finishedAt
-    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}${lastSync.workspaces ? `<span>${lastSync.workspaces} Asana workspace${lastSync.workspaces === 1 ? '' : 's'}</span>` : ''}${lastSync.projects ? `<span>${lastSync.projects} projects</span>` : ''}${lastSync.todoLists ? `<span>${lastSync.todoLists} to-do lists</span>` : ''}${lastSync.channels ? `<span>${lastSync.channels} channels</span>` : ''}${lastSync.calendars ? `<span>${lastSync.calendars} calendars</span>` : ''}${lastSync.events ? `<span>${lastSync.events} events</span>` : ''}${lastSync.taskLists ? `<span>${lastSync.taskLists} task lists</span>` : ''}${lastSync.todoTasks ? `<span>${lastSync.todoTasks} To Do tasks</span>` : ''}${lastSync.files ? `<span>${lastSync.files} files</span>` : ''}${lastSync.issues ? `<span>${lastSync.issues} issues</span>` : ''}${lastSync.items ? `<span>${lastSync.items} items</span>` : ''}${lastSync.spaces ? `<span>${lastSync.spaces} spaces</span>` : ''}${lastSync.pages ? `<span>${lastSync.pages} pages</span>` : ''}${lastSync.dataSources ? `<span>${lastSync.dataSources} data sources</span>` : ''}</div>`
+    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}${lastSync.workspaces ? `<span>${lastSync.workspaces} Asana workspace${lastSync.workspaces === 1 ? '' : 's'}</span>` : ''}${lastSync.projects ? `<span>${lastSync.projects} projects</span>` : ''}${lastSync.todoLists ? `<span>${lastSync.todoLists} to-do lists</span>` : ''}${lastSync.channels ? `<span>${lastSync.channels} channels</span>` : ''}${lastSync.calendars ? `<span>${lastSync.calendars} calendars</span>` : ''}${lastSync.events ? `<span>${lastSync.events} events</span>` : ''}${lastSync.taskLists ? `<span>${lastSync.taskLists} task lists</span>` : ''}${lastSync.todoTasks ? `<span>${lastSync.todoTasks} To Do tasks</span>` : ''}${lastSync.files ? `<span>${lastSync.files} files</span>` : ''}${lastSync.issues ? `<span>${lastSync.issues} issues</span>` : ''}${lastSync.items ? `<span>${lastSync.items} items</span>` : ''}${lastSync.salesInvoices ? `<span>${lastSync.salesInvoices} sales invoices</span>` : ''}${lastSync.spaces ? `<span>${lastSync.spaces} spaces</span>` : ''}${lastSync.pages ? `<span>${lastSync.pages} pages</span>` : ''}${lastSync.dataSources ? `<span>${lastSync.dataSources} data sources</span>` : ''}</div>`
     : '';
   const consentSummary = account?.consent?.acknowledgedAt
     ? `<div class="meta"><span>scope review ${escapeHtml(formatDate(account.consent.acknowledgedAt))}</span><span>${escapeHtml(account.consent.acknowledgedBy || 'local user')}</span></div>`
@@ -3847,6 +3853,7 @@ function renderConnector(connector, account) {
         ${isResourceGuru && account ? `<button class="button" data-resource-guru-account="${escapeHtml(account.id)}" type="button">${selectedResourceGuruAccountId ? 'Resource Guru account selected' : 'Select Resource Guru account'}</button>` : ''}
         ${isFigma && account ? `<button class="button" data-figma-team="${escapeHtml(account.id)}" type="button">${selectedFigmaTeamId ? 'Figma team selected' : 'Configure Figma team'}</button>` : ''}
         ${isSharePoint && account ? `<button class="button" data-sharepoint-site="${escapeHtml(account.id)}" type="button">${selectedSharePointSiteId ? 'SharePoint site selected' : 'Select SharePoint site'}</button>` : ''}
+        ${isXero && account ? `<button class="button" data-xero-tenant="${escapeHtml(account.id)}" type="button">${selectedXeroTenantId ? 'Xero organisation selected' : 'Select Xero organisation'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         ${syncReady ? (connected && connector.auth.type !== 'oauth2'
           ? `<button class="button primary" data-rotate-credential="${escapeHtml(account.id)}" type="button">Rotate credential</button>`
@@ -3940,6 +3947,57 @@ async function openSharePointSiteModal(accountId) {
     });
   } catch (error) {
     openNotice('SharePoint site selection', error.message);
+  }
+}
+
+async function openXeroTenantModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  try {
+    const data = await fetchApi(`/api/connectors/accounts/${accountId}/xero-tenants`);
+    const tenants = data.tenants || [];
+    if (tenants.length === 0) {
+      openNotice('Xero organisation selection', 'No Xero organisations are available for this account. Reconnect it with the approved invoice read scope.');
+      return;
+    }
+
+    const selectedTenantId = account.metadata?.fields?.xeroTenantId || (tenants.length === 1 ? tenants[0].xeroTenantId : '');
+    els.modalTitle.textContent = 'Select Xero organisation';
+    els.modalBody.innerHTML = `
+      <form id="xeroTenantForm">
+        <div class="field">
+          <label for="xeroTenantId">Authorized Xero organisation</label>
+          <select id="xeroTenantId" name="xeroTenantId" required>
+            <option value="" ${selectedTenantId ? '' : 'selected'} disabled>Select an organisation</option>
+            ${tenants.map(tenant => `<option value="${escapeHtml(tenant.xeroTenantId)}" ${tenant.xeroTenantId === selectedTenantId ? 'selected' : ''}>${escapeHtml(tenant.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="notice">Sneup reads only capped sales-invoice status and date metadata from this organisation. It does not retain contacts, invoice numbers, amounts, payment details, line items, or links.</div>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelXeroTenant">Cancel</button>
+          <button class="button primary" type="submit">Use this organisation</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelXeroTenant').addEventListener('click', closeModal);
+    document.getElementById('xeroTenantForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target).entries());
+      try {
+        await fetchApi(`/api/connectors/accounts/${accountId}/xero-tenant`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        closeModal();
+        openNotice('Xero organisation selected', 'Sneup will use this organisation for the next read-only invoice metadata sync.');
+        await loadConnectors();
+      } catch (error) {
+        openNotice('Xero organisation selection', error.message);
+      }
+    });
+  } catch (error) {
+    openNotice('Xero organisation selection', error.message);
   }
 }
 

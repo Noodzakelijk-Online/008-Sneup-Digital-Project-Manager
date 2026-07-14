@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -97,6 +97,7 @@ const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
 const tableauWorkSignalClient = require('./tableauWorkSignalClient');
 const sharePointWorkSignalClient = require('./sharePointWorkSignalClient');
+const xeroWorkSignalClient = require('./xeroWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1307,6 +1308,27 @@ sharePointAdapter.capabilities.credentialBackedSync = true;
 sharePointAdapter.list = async account => (await sharePointWorkSignalClient.fetchDelta(account, null)).records;
 sharePointAdapter.fetchDelta = (account, cursor) => sharePointWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('sharepoint', sharePointAdapter);
+
+const xeroAdapter = buildAdapter('xero', 'Xero selected-organisation sales invoice metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: 'sales_invoice',
+  title: 'Xero sales invoice',
+  description: '',
+  status: item.status || 'open',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['xero', 'sales_invoice', item.status]),
+  dueAt: item.dueAt,
+  providerCreatedAt: item.createdAt,
+  providerUpdatedAt: item.updatedAt,
+  evidenceRefs: baseEvidence(account, item, 'Xero selected-organisation sales invoice metadata'),
+  raw: { id: item.id, sourceType: 'sales_invoice', invoiceId: item.invoiceId, tenantId: item.tenantId, status: item.status, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+xeroAdapter.capabilities.credentialBackedSync = true;
+xeroAdapter.list = async account => (await xeroWorkSignalClient.fetchDelta(account, null)).records;
+xeroAdapter.fetchDelta = (account, cursor) => xeroWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('xero', xeroAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),

@@ -286,6 +286,45 @@ class AccountConnectorService {
     return this.sanitizeAccount(account);
   }
 
+  async getXeroTenants(accountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireXeroAccount(account);
+    return this.fetchXeroTenants(account);
+  }
+
+  async selectXeroTenant(accountId, xeroTenantId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireXeroAccount(account);
+    const requestedTenantId = String(xeroTenantId || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(requestedTenantId)) {
+      const error = new Error('A valid Xero organisation ID is required.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const tenants = await this.fetchXeroTenants(account);
+    const tenant = tenants.find(item => item.xeroTenantId === requestedTenantId);
+    if (!tenant) {
+      const error = new Error('That Xero organisation is no longer authorized for this connection.');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: {
+        ...(account.metadata?.fields || {}),
+        xeroTenantId: tenant.xeroTenantId
+      }
+    };
+    account.accountName = account.connectorName;
+    account.externalAccountId = tenant.xeroTenantId;
+    account.status = 'connected';
+    account.lastError = undefined;
+    await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   getCatalog(filters = {}) {
     const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
     const catalogConnectors = getConnectors();
@@ -737,6 +776,14 @@ class AccountConnectorService {
     }
   }
 
+  requireXeroAccount(account) {
+    if (account.connectorId !== 'xero') {
+      const error = new Error('Xero organisation selection is only available for Xero connector accounts.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   async fetchJiraSites(account) {
     const credentials = this.getAccountCredentials(account);
     const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
@@ -847,6 +894,33 @@ class AccountConnectorService {
       .map(site => ({
         sharePointSiteId: String(site.id),
         name: String(site.displayName || 'SharePoint site').replace(/\s+/g, ' ').trim().slice(0, 160) || 'SharePoint site'
+      }));
+  }
+
+  async fetchXeroTenants(account) {
+    const credentials = this.getAccountCredentials(account);
+    const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
+    if (!accessToken) {
+      const error = new Error('Xero access token is missing. Reconnect this account to continue.');
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const response = await this.http.get('https://api.xero.com/connections', {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`
+      },
+      timeout: 15000,
+      maxRedirects: 0,
+      proxy: false
+    });
+
+    return (Array.isArray(response.data) ? response.data : [])
+      .filter(tenant => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(String(tenant?.tenantId || '')))
+      .map(tenant => ({
+        xeroTenantId: String(tenant.tenantId).toLowerCase(),
+        name: String(tenant.tenantName || 'Xero organisation').replace(/\s+/g, ' ').trim().slice(0, 160) || 'Xero organisation'
       }));
   }
 

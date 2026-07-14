@@ -290,6 +290,30 @@ router.post('/accounts/:accountId/sharepoint-site', requirePermission('connector
   }
 });
 
+router.get('/accounts/:accountId/xero-tenants', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const tenants = await accountConnectorService.getXeroTenants(req.params.accountId, connectorRequestOptions(req));
+    res.json({ success: true, tenants });
+  } catch (error) {
+    logger.error('Failed to list Xero organisations:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/xero-tenant', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.selectXeroTenant(
+      req.params.accountId,
+      req.body.xeroTenantId,
+      connectorRequestOptions(req)
+    );
+    res.json({ success: true, account });
+  } catch (error) {
+    logger.error('Failed to select Xero organisation:', error);
+    sendError(res, error);
+  }
+});
+
 router.get('/:connectorId', (req, res) => {
   try {
     const connector = accountConnectorService.getConnectorDetails(req.params.connectorId);

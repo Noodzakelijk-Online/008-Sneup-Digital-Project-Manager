@@ -201,6 +201,8 @@ Trello writes remain approval-gated regardless of a workspace rule. A rule can p
 - `POST /api/connectors/accounts/:accountId/asana-workspace` - Select the Asana workspace Sneup may read from
 - `GET /api/connectors/accounts/:accountId/sharepoint-sites` - List followed SharePoint sites authorized by a linked SharePoint account
 - `POST /api/connectors/accounts/:accountId/sharepoint-site` - Select the one SharePoint site Sneup may read from
+- `GET /api/connectors/accounts/:accountId/xero-tenants` - List Xero organisations authorized by a linked Xero account
+- `POST /api/connectors/accounts/:accountId/xero-tenant` - Select the one Xero organisation Sneup may read from
 - `DELETE /api/connectors/accounts/:accountId` - Remove a linked connector account
 - `GET /api/work-signals/contracts` - List normalized sync adapter contracts for all connectors
 - `GET /api/work-signals/adapters` - List implemented first-wave read-only provider adapters
@@ -222,6 +224,8 @@ BrowserStack is available with a username and access key. Sneup performs one fix
 OneDrive is available as a separate Microsoft OAuth connection with `Files.Read` only. Sneup makes one bounded GET to the signed-in user's drive root, fails visibly if Graph signals a further page, and retains only redacted item names, type, and created/updated metadata. It excludes file content, web URLs, permissions, versions, shared links, and provider writes.
 
 SharePoint is available as a separate Microsoft OAuth connection. It explicitly presents the delegated `Sites.Read.All` grant for review, lists only sites the signed-in user follows, requires one site to be selected, and then makes one capped root-metadata GET with `Files.Read`. It retains only redacted file or folder names, opaque identifiers, and timestamps; file contents, web URLs, permissions, pages, lists, people, versions, and sharing details are excluded.
+
+Xero is available as a separate OAuth connection with `accounting.invoices.read`. Sneup lists authorized organisations, requires one selection, and makes one capped GET for sales-invoice status and date metadata. It retains only opaque invoice and organisation identifiers, status, and dates; contacts, invoice numbers, amounts, payment data, descriptions, line items, URLs, and provider writes are excluded.
 
 SurveyMonkey is available with a View Surveys access token. Sneup makes one bounded survey-list GET and retains only redacted survey title and ID. It excludes questions, responses, collectors, contacts, links, and provider writes.
 
