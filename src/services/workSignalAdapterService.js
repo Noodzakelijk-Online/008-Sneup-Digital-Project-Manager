@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost'
@@ -80,6 +80,7 @@ const discordWorkSignalClient = require('./discordWorkSignalClient');
 const mattermostWorkSignalClient = require('./mattermostWorkSignalClient');
 const workfrontWorkSignalClient = require('./workfrontWorkSignalClient');
 const serviceNowWorkSignalClient = require('./serviceNowWorkSignalClient');
+const zohoProjectsWorkSignalClient = require('./zohoProjectsWorkSignalClient');
 const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
@@ -1103,6 +1104,12 @@ serviceNowAdapter.capabilities.credentialBackedSync = true;
 serviceNowAdapter.list = async account => (await serviceNowWorkSignalClient.fetchDelta(account, null)).records;
 serviceNowAdapter.fetchDelta = (account, cursor) => serviceNowWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('servicenow', serviceNowAdapter);
+
+const zohoProjectsAdapter = buildAdapter('zoho_projects', 'Zoho Projects active project metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'project'), title: titleFromText(item.name, 'Zoho project'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['zoho_projects', item.sourceType]), dueAt: item.endAt, providerCreatedAt: item.startAt, providerUpdatedAt: item.updatedAt, evidenceRefs: baseEvidence(account, item, 'Zoho Projects active project metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, status: item.status, percentComplete: item.percentComplete, startAt: item.startAt, endAt: item.endAt, updatedAt: item.updatedAt } }));
+zohoProjectsAdapter.capabilities.credentialBackedSync = true;
+zohoProjectsAdapter.list = async account => (await zohoProjectsWorkSignalClient.fetchDelta(account, null)).records;
+zohoProjectsAdapter.fetchDelta = (account, cursor) => zohoProjectsWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('zoho_projects', zohoProjectsAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
