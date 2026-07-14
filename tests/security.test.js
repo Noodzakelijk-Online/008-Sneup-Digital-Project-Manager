@@ -77,6 +77,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/microsoftPlannerWorkSignalClient');
     jest.dontMock('../src/services/youTrackWorkSignalClient');
     jest.dontMock('../src/services/taigaWorkSignalClient');
+    jest.dontMock('../src/services/backlogWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1946,6 +1947,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('taiga').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Backlog adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'issue:18' }] });
+    jest.doMock('../src/services/backlogWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'backlog' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('backlog').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3590,6 +3602,34 @@ describe('work signal normalization', () => {
     });
     expect(normalized).toMatchObject({ externalId: 'user_story:17', sourceType: 'user_story', title: 'Ship Taiga connector', description: '', status: 'blocked', labels: ['taiga', 'user_story', 'Sneup release', '4', 'blocked'] });
     expect(JSON.stringify(normalized.raw)).not.toMatch(/Private story detail|Private comment|secret\.pdf/);
+  });
+
+  test('Backlog sync reads bounded project and issue metadata without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/backlogWorkSignalClient');
+    jest.resetModules();
+    const { BacklogWorkSignalClient } = require('../src/services/backlogWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: [{ id: 9, name: 'Sneup release', projectKey: 'SNP' }] })
+      .mockResolvedValueOnce({ data: { count: 1 } })
+      .mockResolvedValueOnce({ data: [{ id: 18, projectId: 9, issueKey: 'SNP-18', summary: 'Ship Backlog connector', status: { name: 'In Progress' }, priority: { name: 'High' }, issueType: { name: 'Task' }, assignee: { name: 'Alex' }, dueDate: '2026-07-15', created: '2026-07-10T10:00:00.000Z', updated: '2026-07-12T12:00:00.000Z', description: 'Private detail', comments: ['Private comment'], attachments: [{ name: 'secret.pdf' }], customFields: [{ value: 'Private field' }] }] }) };
+    const client = new BacklogWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'backlog-key' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { spaceId: 'https://sneup.backlog.com' } } }, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://sneup.backlog.com/api/v2/projects', expect.objectContaining({ params: expect.objectContaining({ apiKey: 'backlog-key', archived: false }), maxRedirects: 0, proxy: false }));
+    expect(http.get).toHaveBeenCalledWith('https://sneup.backlog.com/api/v2/issues', expect.objectContaining({ params: expect.objectContaining({ 'projectId[]': 9, sort: 'updated', count: 100 }) }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private detail|Private comment|Private field|secret\.pdf/);
+    expect(result).toMatchObject({ metadata: { source: 'backlog_api', projects: 1, issues: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('Backlog sync rejects untrusted space URLs and fails closed at its project cap', async () => {
+    jest.dontMock('../src/services/backlogWorkSignalClient');
+    jest.resetModules();
+    const { BacklogWorkSignalClient } = require('../src/services/backlogWorkSignalClient');
+    const client = new BacklogWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'backlog-key' })) } });
+    await expect(client.fetchDelta({ metadata: { fields: { spaceId: 'https://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_BACKLOG_MAX_PROJECTS; process.env.SNEUP_BACKLOG_MAX_PROJECTS = '1';
+    const capped = new BacklogWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }] }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'backlog-key' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { spaceId: 'sneup' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_BACKLOG_MAX_PROJECTS; else process.env.SNEUP_BACKLOG_MAX_PROJECTS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

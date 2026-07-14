@@ -139,7 +139,7 @@ const CONNECTORS = [
     auth: apiKey({
       docsUrl: 'https://developer.nulab.com/docs/backlog/',
       fields: [
-        { name: 'spaceId', label: 'Nulab space ID', required: true },
+        { name: 'spaceId', label: 'Backlog space URL', required: true },
         { name: 'apiKey', label: 'API key', secret: true, required: true }
       ]
     }),

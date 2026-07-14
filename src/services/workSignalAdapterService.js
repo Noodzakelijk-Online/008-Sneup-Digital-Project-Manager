@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -44,6 +44,7 @@ const redmineWorkSignalClient = require('./redmineWorkSignalClient');
 const microsoftPlannerWorkSignalClient = require('./microsoftPlannerWorkSignalClient');
 const youTrackWorkSignalClient = require('./youTrackWorkSignalClient');
 const taigaWorkSignalClient = require('./taigaWorkSignalClient');
+const backlogWorkSignalClient = require('./backlogWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -800,6 +801,12 @@ taigaAdapter.capabilities.credentialBackedSync = true;
 taigaAdapter.list = async account => (await taigaWorkSignalClient.fetchDelta(account, null)).records;
 taigaAdapter.fetchDelta = (account, cursor) => taigaWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('taiga', taigaAdapter);
+
+const backlogAdapter = buildAdapter('backlog', 'Backlog project and issue metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'issue'), title: titleFromText(item.name, 'Backlog work item'), description: '', status: statusFromText(item.status), priority: priorityFromText(item.priority), url: pick(item.url), owners: userNames(item.owners), labels: compact(['backlog', item.project?.name, item.issueType, item.status, item.priority]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Backlog metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, issueId: item.issueId, issueKey: item.issueKey, project: item.project, status: item.status, priority: item.priority, issueType: item.issueType, owners: item.owners, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt, url: item.url } }));
+backlogAdapter.capabilities.credentialBackedSync = true;
+backlogAdapter.list = async account => (await backlogWorkSignalClient.fetchDelta(account, null)).records;
+backlogAdapter.fetchDelta = (account, cursor) => backlogWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('backlog', backlogAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
