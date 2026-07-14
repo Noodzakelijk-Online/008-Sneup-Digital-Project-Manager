@@ -249,7 +249,8 @@ class AccountConnectorService {
 
   getCatalog(filters = {}) {
     const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
-    const filteredConnectors = this.filterConnectors(category, search);
+    const catalogConnectors = getConnectors();
+    const filteredConnectors = this.filterConnectors(category, search, catalogConnectors);
     const slicedConnectors = typeof limit === 'number' && limit > 0
       ? filteredConnectors.slice(offset || 0, (offset || 0) + limit)
       : filteredConnectors.slice(offset || 0);
@@ -259,8 +260,26 @@ class AccountConnectorService {
       connectors: slicedConnectors.map(connector => this.sanitizeConnector(connector)),
       safety: summarizeConnectorSafety(filteredConnectors),
       total: filteredConnectors.length,
+      catalogTotal: catalogConnectors.length,
+      syncReadiness: this.summarizeCatalogSyncReadiness(catalogConnectors),
       offset,
       limit
+    };
+  }
+
+  summarizeCatalogSyncReadiness(connectors) {
+    const readiness = connectors.reduce((summary, connector) => {
+      if (this.getSyncReadiness(connector).accountConnectionAvailable) {
+        summary.ready += 1;
+      } else {
+        summary.catalogOnly += 1;
+      }
+      return summary;
+    }, { ready: 0, catalogOnly: 0 });
+
+    return {
+      ...readiness,
+      total: connectors.length
     };
   }
 
@@ -283,8 +302,7 @@ class AccountConnectorService {
     return candidate ? (CATEGORY_LOOKUP.get(candidate) || undefined) : undefined;
   }
 
-  filterConnectors(category, search) {
-    let connectors = getConnectors();
+  filterConnectors(category, search, connectors = getConnectors()) {
 
     if (category) {
       connectors = connectors.filter((connector) => connector.category === category);

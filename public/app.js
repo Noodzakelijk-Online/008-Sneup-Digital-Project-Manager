@@ -1,6 +1,7 @@
 const FIRST_RUN_SETUP_KEY = 'sneup.firstRun.v1';
 const SESSION_TOKEN_KEY = 'sneup.sessionToken.v1';
 const CONNECTOR_PAGE_SIZE = 24;
+let connectorSearchTimer;
 
 const state = {
   snapshot: null,
@@ -12,7 +13,9 @@ const state = {
   categories: [],
   accounts: [],
   connectorSafety: null,
-  connectorDisplayLimit: CONNECTOR_PAGE_SIZE,
+  connectorTotal: 0,
+  connectorCatalogTotal: 0,
+  connectorSyncReadiness: null,
   workSignals: [],
   workGraph: null,
   workGraphCandidates: [],
@@ -177,8 +180,8 @@ els.modal.addEventListener('click', (event) => {
 });
 els.connectorSearch.addEventListener('input', (event) => {
   state.search = event.target.value.toLowerCase();
-  state.connectorDisplayLimit = CONNECTOR_PAGE_SIZE;
-  renderConnectors();
+  clearTimeout(connectorSearchTimer);
+  connectorSearchTimer = setTimeout(() => loadConnectors(), 180);
 });
 document.querySelectorAll('[data-queue-filter]').forEach((button) => {
   button.addEventListener('click', () => {
@@ -728,17 +731,25 @@ async function loadJobDashboard() {
   }
 }
 
-async function loadConnectors() {
+async function loadConnectors({ append = false } = {}) {
   try {
-    const [data, contractsData] = await Promise.all([
-      fetchApi('/api/connectors'),
-      fetchApi('/api/work-signals/contracts')
-    ]);
-    state.connectors = data.connectors || [];
+    const offset = append ? state.connectors.length : 0;
+    const query = new URLSearchParams({
+      limit: String(CONNECTOR_PAGE_SIZE),
+      offset: String(offset)
+    });
+    if (state.category !== 'all') query.set('category', state.category);
+    if (state.search) query.set('search', state.search);
+
+    const data = await fetchApi(`/api/connectors?${query}`);
+    const connectors = data.connectors || [];
+    state.connectors = append ? [...state.connectors, ...connectors] : connectors;
     state.categories = data.categories || [];
     state.accounts = data.accounts || [];
     state.connectorSafety = data.safety || null;
-    state.workSignalContracts = contractsData.contracts || [];
+    state.connectorTotal = data.total || 0;
+    state.connectorCatalogTotal = data.catalogTotal || state.connectorTotal;
+    state.connectorSyncReadiness = data.syncReadiness || null;
     renderConnectors();
   } catch (error) {
     els.connectorGrid.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -3581,7 +3592,7 @@ function renderWorkSignalContract(contract, connected) {
 }
 
 function renderConnectors() {
-  els.connectorCount.textContent = state.connectors.length;
+  els.connectorCount.textContent = state.connectorCatalogTotal || state.connectorTotal || state.connectors.length;
   els.connectedCount.textContent = `${state.accounts.length} connected`;
   renderCategories();
 
@@ -3590,18 +3601,11 @@ function renderConnectors() {
   renderConnectorSafety();
 
   const accountsByConnectorId = new Map(state.accounts.map(account => [account.connectorId, account]));
-  const filtered = state.connectors.filter((connector) => {
-    const categoryMatch = state.category === 'all' || connector.category === state.category;
-    const text = `${connector.name} ${connector.description} ${connector.categoryName}`.toLowerCase();
-    return categoryMatch && (!state.search || text.includes(state.search));
-  });
-  const visibleConnectors = filtered.slice(0, state.connectorDisplayLimit);
-
-  els.connectorGrid.innerHTML = filtered.length === 0
+  els.connectorGrid.innerHTML = state.connectorTotal === 0
     ? '<div class="empty">No connectors match this view.</div>'
-    : visibleConnectors.map(connector => renderConnector(connector, accountsByConnectorId.get(connector.id))).join('');
-  els.connectorPagination.innerHTML = filtered.length > 0
-    ? `<span class="meta">Showing ${visibleConnectors.length} of ${filtered.length} tools</span>${visibleConnectors.length < filtered.length ? '<button class="button" data-load-more-connectors type="button">Show more</button>' : ''}`
+    : state.connectors.map(connector => renderConnector(connector, accountsByConnectorId.get(connector.id))).join('');
+  els.connectorPagination.innerHTML = state.connectorTotal > 0
+    ? `<span class="meta">Showing ${state.connectors.length} of ${state.connectorTotal} tools</span>${state.connectors.length < state.connectorTotal ? '<button class="button" data-load-more-connectors type="button">Show more</button>' : ''}`
     : '';
 
   document.querySelectorAll('[data-connect]').forEach((button) => {
@@ -3636,8 +3640,7 @@ function renderConnectors() {
   });
   document.querySelectorAll('[data-load-more-connectors]').forEach((button) => {
     button.addEventListener('click', () => {
-      state.connectorDisplayLimit += CONNECTOR_PAGE_SIZE;
-      renderConnectors();
+      loadConnectors({ append: true });
     });
   });
 }
@@ -3648,7 +3651,7 @@ function renderConnectorSafety() {
     els.connectorSafety.innerHTML = '';
     return;
   }
-  const liveAdapters = state.workSignalContracts.filter(contract => contract.adapterStatus === 'implemented').length;
+  const liveAdapters = state.connectorSyncReadiness?.ready || 0;
   els.connectorSafety.innerHTML = `
     <div>
       <strong>${safety.providerWritesBlocked} tools are write-blocked</strong>
@@ -3659,7 +3662,7 @@ function renderConnectorSafety() {
 }
 
 function renderCategories() {
-  const allCount = state.connectors.length;
+  const allCount = state.connectorCatalogTotal || state.connectorTotal || state.connectors.length;
   const rows = [{ id: 'all', name: 'All tools', count: allCount }, ...state.categories];
   els.categoryList.innerHTML = rows.map(category => `
     <button class="${state.category === category.id ? 'active' : ''}" data-category="${category.id}" type="button">
@@ -3670,8 +3673,7 @@ function renderCategories() {
   document.querySelectorAll('[data-category]').forEach((button) => {
     button.addEventListener('click', () => {
       state.category = button.dataset.category;
-      state.connectorDisplayLimit = CONNECTOR_PAGE_SIZE;
-      renderConnectors();
+      loadConnectors();
     });
   });
 }
@@ -3682,9 +3684,8 @@ function renderConnector(connector, account) {
   const configured = connector.auth.configured;
   const authLabel = connector.auth.displayType || (connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type.replaceAll('_', ' '));
   const safety = connector.safety || {};
-  const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
   const syncReady = connector.syncReadiness?.accountConnectionAvailable === true;
-  const adapterImplemented = syncReady && contract?.adapterStatus === 'implemented';
+  const adapterImplemented = syncReady;
   const connectionLabel = connected ? (adapterImplemented ? 'connected' : 'linked') : syncReady ? (configured ? 'ready' : 'setup') : 'catalog';
   const connectionStatusClass = connected && adapterImplemented ? 'connected' : connected || (syncReady && configured) ? 'review' : 'high';
   const adapterSummary = syncReady

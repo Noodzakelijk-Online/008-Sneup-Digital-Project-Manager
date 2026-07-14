@@ -1541,6 +1541,13 @@ describe('connector registry', () => {
     expect(pageTwo.total).toBe(aliasResult.total);
     expect(pageTwo.connectors).toHaveLength(3);
     expect(pageTwo.connectors[0]).not.toMatchObject(aliasResult.connectors[0]);
+    expect(result.catalogTotal).toBeGreaterThanOrEqual(result.total);
+    expect(result.syncReadiness).toEqual({
+      ready: expect.any(Number),
+      catalogOnly: expect.any(Number),
+      total: result.catalogTotal
+    });
+    expect(result.syncReadiness.ready + result.syncReadiness.catalogOnly).toBe(result.catalogTotal);
   });
 
   test('exposes sync readiness and blocks catalog-only connector account links', () => {
