@@ -94,6 +94,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
     jest.dontMock('../src/services/pipedriveWorkSignalClient');
+    jest.dontMock('../src/services/hubSpotWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2151,6 +2152,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, 'opaque-cursor');
     expect(fetchDelta).toHaveBeenCalledWith(account, 'opaque-cursor');
     expect(workSignalAdapterService.getAdapter('pipedrive').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('HubSpot adapter delegates read-only search sync to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'deal:19' }] });
+    jest.doMock('../src/services/hubSpotWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'hubspot' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('hubspot').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4324,6 +4336,40 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_PIPEDRIVE_MAX_DEALS; process.env.SNEUP_PIPEDRIVE_MAX_DEALS = '1';
     const capped = new PipedriveWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [{ id: 1, title: 'First deal' }], additional_data: { next_cursor: 'cursor-2' } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { companyDomain: 'sneup-demo' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_PIPEDRIVE_MAX_DEALS; else process.env.SNEUP_PIPEDRIVE_MAX_DEALS = previous; }
+  });
+
+  test('HubSpot sync reads bounded, allowlisted deal metadata through its documented search endpoint', async () => {
+    jest.dontMock('../src/services/hubSpotWorkSignalClient');
+    jest.resetModules();
+    const { HubSpotWorkSignalClient } = require('../src/services/hubSpotWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn(), post: jest.fn()
+      .mockResolvedValueOnce({ data: { results: [{ id: '19', createdAt: '2026-07-10T12:00:00.000Z', updatedAt: '2026-07-12T12:00:00.000Z', properties: { dealname: `Launch plan for ${privateEmail}`, dealstage: 'contractsent', pipeline: 'default', closedate: '2026-07-15T12:00:00.000Z', createdate: '2026-07-10T12:00:00.000Z', hs_lastmodifieddate: '2026-07-12T12:00:00.000Z', amount: '5000', hubspot_owner_id: '7', currency: 'EUR', secret_custom_field: 'private' }, associations: { contacts: { results: [{ id: '8' }] } } }], paging: { next: { after: 'cursor-2' } } } })
+      .mockResolvedValueOnce({ data: { results: [{ id: '20', createdAt: '2026-07-11T12:00:00.000Z', updatedAt: '2026-07-13T12:00:00.000Z', properties: { dealname: 'Confirm delivery handoff', dealstage: 'closedwon', pipeline: 'default', hs_lastmodifieddate: '2026-07-13T12:00:00.000Z' } }] } }) };
+    const client = new HubSpotWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'hubspot-access-token' })) } });
+    const previous = { max: process.env.SNEUP_HUBSPOT_MAX_DEALS, page: process.env.SNEUP_HUBSPOT_PAGE_SIZE };
+    process.env.SNEUP_HUBSPOT_MAX_DEALS = '2'; process.env.SNEUP_HUBSPOT_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'hubspot' }, '2026-07-10T00:00:00.000Z');
+      expect(http.post).toHaveBeenNthCalledWith(1, 'https://api.hubapi.com/crm/objects/2026-03/deals/search', expect.objectContaining({ filterGroups: [{ filters: [{ propertyName: 'hs_lastmodifieddate', operator: 'GTE', value: String(new Date('2026-07-09T23:59:00.000Z').getTime()) }] }], sorts: ['hs_lastmodifieddate'], properties: ['dealname', 'dealstage', 'pipeline', 'closedate', 'createdate', 'hs_lastmodifieddate'], limit: 1 }), expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer hubspot-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.post).toHaveBeenNthCalledWith(2, 'https://api.hubapi.com/crm/objects/2026-03/deals/search', expect.objectContaining({ after: 'cursor-2', limit: 1 }), expect.any(Object));
+      expect(http.get).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ metadata: { source: 'hubspot_deals_search', deals: 2, pages: 2 }, nextCursor: '2026-07-13T12:00:00.000Z', hasMore: false });
+      expect(result.records[1]).toMatchObject({ status: 'done' });
+      expect(JSON.stringify(result.records)).not.toMatch(/5000|EUR|private|secret_custom_field|hubspot_owner_id|contacts/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_HUBSPOT_MAX_DEALS; else process.env.SNEUP_HUBSPOT_MAX_DEALS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_HUBSPOT_PAGE_SIZE; else process.env.SNEUP_HUBSPOT_PAGE_SIZE = previous.page; }
+  });
+
+  test('HubSpot sync rejects invalid cursors and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/hubSpotWorkSignalClient');
+    jest.resetModules();
+    const { HubSpotWorkSignalClient } = require('../src/services/hubSpotWorkSignalClient');
+    const invalid = new HubSpotWorkSignalClient({ http: { post: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) } });
+    await expect(invalid.fetchDelta({ connectorId: 'hubspot' }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_HUBSPOT_MAX_DEALS; process.env.SNEUP_HUBSPOT_MAX_DEALS = '1';
+    const capped = new HubSpotWorkSignalClient({ http: { post: jest.fn().mockResolvedValue({ data: { results: [{ id: '1', properties: { dealname: 'First deal' } }], paging: { next: { after: 'cursor-2' } } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) } });
+    try { await expect(capped.fetchDelta({ connectorId: 'hubspot' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_HUBSPOT_MAX_DEALS; else process.env.SNEUP_HUBSPOT_MAX_DEALS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

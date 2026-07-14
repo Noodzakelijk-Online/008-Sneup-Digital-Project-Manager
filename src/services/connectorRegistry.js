@@ -418,15 +418,15 @@ const CONNECTORS = [
     id: 'hubspot',
     name: 'HubSpot',
     category: 'crm_support',
-    description: 'Deals, companies, contacts, tickets, tasks, notes, timelines, and customer-facing project signals.',
+    description: 'Read-only bounded deal metadata for delivery commitments. Sneup excludes contacts, companies, tickets, tasks, notes, associations, owners, amounts, currencies, custom fields, and provider writes.',
     auth: oauth2({
       envPrefix: 'HUBSPOT',
       authorizationUrl: 'https://app.hubspot.com/oauth/authorize',
       tokenUrl: 'https://api.hubapi.com/oauth/v1/token',
-      scopes: ['crm.objects.contacts.read', 'crm.objects.companies.read', 'crm.objects.deals.read', 'tickets'],
-      docsUrl: 'https://developers.hubspot.com/docs/api/oauth-quickstart-guide'
+      scopes: ['crm.objects.deals.read'],
+      docsUrl: 'https://developers.hubspot.com/docs/api-reference/latest/crm/objects/deals/guide'
     }),
-    sync: ['contacts', 'companies', 'deals', 'tickets', 'tasks']
+    sync: ['deals']
   },
   {
     id: 'salesforce',

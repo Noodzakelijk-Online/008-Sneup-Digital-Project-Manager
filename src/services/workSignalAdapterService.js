@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -61,6 +61,7 @@ const datadogWorkSignalClient = require('./datadogWorkSignalClient');
 const zendeskWorkSignalClient = require('./zendeskWorkSignalClient');
 const freshdeskWorkSignalClient = require('./freshdeskWorkSignalClient');
 const pipedriveWorkSignalClient = require('./pipedriveWorkSignalClient');
+const hubSpotWorkSignalClient = require('./hubSpotWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -919,6 +920,12 @@ pipedriveAdapter.capabilities.credentialBackedSync = true;
 pipedriveAdapter.list = async account => (await pipedriveWorkSignalClient.fetchDelta(account, null)).records;
 pipedriveAdapter.fetchDelta = (account, cursor) => pipedriveWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('pipedrive', pipedriveAdapter);
+
+const hubspotAdapter = buildAdapter('hubspot', 'HubSpot deal metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'deal'), title: titleFromText(item.name, 'HubSpot deal'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['hubspot', item.sourceType, item.status, item.pipeline ? `pipeline:${item.pipeline}` : undefined, item.dealStage ? `stage:${item.dealStage}` : undefined]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'HubSpot deal metadata'), raw: { id: item.id, sourceType: item.sourceType, dealId: item.dealId, status: item.status, dealStage: item.dealStage, pipeline: item.pipeline, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt, archived: item.archived } }));
+hubspotAdapter.capabilities.credentialBackedSync = true;
+hubspotAdapter.list = async account => (await hubSpotWorkSignalClient.fetchDelta(account, null)).records;
+hubspotAdapter.fetchDelta = (account, cursor) => hubSpotWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('hubspot', hubspotAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
