@@ -512,9 +512,9 @@ const CONNECTORS = [
   { id: 'zapier', name: 'Zapier', category: 'automation_data', description: 'Zaps, webhooks, cross-app automations, handoffs, and event triggers.', auth: manual({ docsUrl: 'https://platform.zapier.com/docs' }), sync: ['webhooks', 'automations'] },
   { id: 'make', name: 'Make',
     category: 'automation_data',
-    description: 'Scenarios, webhooks, integrations, automations, and operational workflows.',
-    auth: apiKey({ docsUrl: 'https://www.make.com/en/api-documentation' }),
-    sync: ['scenarios', 'webhooks', 'executions']
+    description: 'Read-only bounded scenario metadata from one explicit Make team. Sneup excludes blueprints, modules, connections, webhooks, execution data, and provider writes.',
+    auth: apiKey({ docsUrl: 'https://developers.make.com/api-documentation/api-reference/scenarios', fields: [{ name: 'apiToken', label: 'API token (scenarios:read)', secret: true, required: true }, { name: 'teamId', label: 'Team ID', placeholder: '123456', required: true }, { name: 'zone', label: 'API zone', placeholder: 'eu1', required: false }] }),
+    sync: ['scenarios']
   },
   { id: 'n8n', name: 'n8n', category: 'automation_data', description: 'Read-only bounded active-workflow and execution metadata from one public HTTPS n8n instance. Sneup excludes workflow definitions, node configuration, credentials, execution data, error payloads, trigger payloads, and provider writes.', auth: apiKey({ docsUrl: 'https://docs.n8n.io/api/', fields: [{ name: 'baseUrl', label: 'n8n instance URL', placeholder: 'https://your-instance.app.n8n.cloud', secret: false, required: true }, { name: 'apiKey', label: 'API key', secret: true, required: true }] }), sync: ['active_workflows', 'recent_executions'] },
   { id: 'power_bi', name: 'Power BI', category: 'automation_data', description: 'Workspaces, datasets, reports, dashboards, and project performance reporting.', auth: manual({ docsUrl: 'https://learn.microsoft.com/en-us/rest/api/power-bi/' }), sync: ['workspaces', 'datasets', 'reports', 'dashboards'] },

@@ -94,6 +94,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/statuspageWorkSignalClient');
     jest.dontMock('../src/services/genericRestApiWorkSignalClient');
     jest.dontMock('../src/services/n8nWorkSignalClient');
+    jest.dontMock('../src/services/makeWorkSignalClient');
     jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
@@ -2542,6 +2543,21 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('n8n').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
     expect(workSignalService.normalizeProviderRecord(account, { id: 'workflow:workflow-1', sourceType: 'workflow', workflowId: 'workflow-1', name: 'Release workflow', active: true })).toMatchObject({ sourceType: 'workflow', status: 'in_progress' });
     expect(workSignalService.normalizeProviderRecord(account, { id: 'execution:execution-1', sourceType: 'execution', executionId: 'execution-1', workflowId: 'workflow-1', name: 'Workflow execution', status: 'error' })).toMatchObject({ sourceType: 'execution', status: 'blocked' });
+  });
+
+  test('Make adapter delegates bounded scenario reads and preserves workflow state through normalization', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'scenario:18' }] });
+    jest.doMock('../src/services/makeWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const workSignalService = require('../src/services/workSignalService');
+    const account = { connectorId: 'make', _id: new mongoose.Types.ObjectId() };
+
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('make').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+    expect(workSignalService.normalizeProviderRecord(account, { id: 'scenario:18', sourceType: 'workflow', scenarioId: '18', name: 'Release workflow', status: 'in_progress', active: true })).toMatchObject({ sourceType: 'workflow', status: 'in_progress' });
   });
 
   test('Datadog adapter delegates live delta reads to the credential-backed client', async () => {
@@ -5006,6 +5022,50 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_N8N_MAX_WORKFLOWS; process.env.SNEUP_N8N_MAX_WORKFLOWS = '1';
     const capped = new N8nWorkSignalClient({ http: { get: jest.fn(url => Promise.resolve({ data: { data: url.endsWith('/workflows') ? [{ id: 'workflow-1', name: 'One', active: true }, { id: 'workflow-2', name: 'Two', active: true }] : [] } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'n8n-key' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
     try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://automation.example.test' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_N8N_MAX_WORKFLOWS; else process.env.SNEUP_N8N_MAX_WORKFLOWS = previous; }
+  });
+
+  test('Make sync reads bounded scenario metadata without blueprints, execution data, or provider writes', async () => {
+    jest.dontMock('../src/services/makeWorkSignalClient');
+    jest.resetModules();
+    const { MakeWorkSignalClient } = require('../src/services/makeWorkSignalClient');
+    const http = {
+      get: jest.fn(() => Promise.resolve({
+        data: {
+          scenarios: [{
+            id: 18,
+            name: 'Release private@email.test https://private.example/run',
+            teamId: 77,
+            folderId: 2,
+            isActive: true,
+            lastEdit: '2026-07-12T12:00:00.000Z',
+            created: '2026-07-10T10:00:00.000Z',
+            blueprint: '{ private: true }',
+            modules: [{ connection: 'secret' }],
+            execution: { data: 'private' }
+          }],
+          pg: { total: 1 }
+        }
+      }))
+    };
+    const client = new MakeWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'make-token' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { teamId: '77', zone: 'eu1' } } }, '2026-07-10T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://eu1.make.com/api/v2/scenarios', expect.objectContaining({ params: expect.objectContaining({ teamId: '77', 'pg[limit]': 251 }), headers: expect.objectContaining({ Authorization: 'Token make-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/private@email\.test|private\.example|private: true|secret/);
+    expect(result).toMatchObject({ metadata: { source: 'make_api', zone: 'eu1', teamId: '77', scenarios: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result.records).toEqual([expect.objectContaining({ id: 'scenario:18', sourceType: 'workflow', status: 'in_progress', active: true })]);
+  });
+
+  test('Make sync rejects unknown zones and fails closed at the scenario cap', async () => {
+    jest.dontMock('../src/services/makeWorkSignalClient');
+    jest.resetModules();
+    const { MakeWorkSignalClient } = require('../src/services/makeWorkSignalClient');
+    const invalid = new MakeWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'make-token' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { teamId: '77', zone: 'private' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_MAKE_MAX_SCENARIOS; process.env.SNEUP_MAKE_MAX_SCENARIOS = '1';
+    const capped = new MakeWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: { scenarios: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }], pg: { total: 2 } } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'make-token' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { teamId: '77', zone: 'eu1' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_MAKE_MAX_SCENARIOS; else process.env.SNEUP_MAKE_MAX_SCENARIOS = previous; }
   });
 
   test('Datadog sync reads bounded monitor and active incident metadata without queries, messages, tags, or provider writes', async () => {
