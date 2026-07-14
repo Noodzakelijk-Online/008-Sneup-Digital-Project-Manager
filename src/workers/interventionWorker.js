@@ -19,7 +19,7 @@ class InterventionWorker {
     this.jobs.processInterventions = schedule.scheduleJob(
       process.env.INTERVENTION_CRON || '*/30 * * * *',
       async () => {
-        await this.runForActiveWorkspaces('interventions.process_all', () => this.processAllInterventions());
+        await this.runForActiveWorkspaces('interventions.process_all', workspaceId => this.processAllInterventions(workspaceId));
       }
     );
 
@@ -27,7 +27,7 @@ class InterventionWorker {
     this.jobs.processFollowUps = schedule.scheduleJob(
       process.env.FOLLOWUP_CRON || '0 * * * *',
       async () => {
-        await this.runForActiveWorkspaces('interventions.follow_ups', () => this.processFollowUps());
+        await this.runForActiveWorkspaces('interventions.follow_ups', workspaceId => this.processFollowUps(workspaceId));
       }
     );
 
@@ -35,7 +35,7 @@ class InterventionWorker {
     this.jobs.processEscalations = schedule.scheduleJob(
       process.env.ESCALATION_CRON || '0 */2 * * *',
       async () => {
-        await this.runForActiveWorkspaces('interventions.escalations', () => this.processEscalations());
+        await this.runForActiveWorkspaces('interventions.escalations', workspaceId => this.processEscalations(workspaceId));
       }
     );
 

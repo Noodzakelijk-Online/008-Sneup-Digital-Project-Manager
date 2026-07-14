@@ -8994,6 +8994,75 @@ describe('autopilot command approval queue', () => {
 });
 
 describe('job observability', () => {
+  test('runs scheduled connector syncs sequentially and records each active workspace', async () => {
+    jest.resetModules();
+    const listActiveWorkspaceIds = jest.fn().mockResolvedValue(['workspace-1', 'workspace-2']);
+    const trackJob = jest.fn(async (context, handler) => handler());
+
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-default'),
+      listActiveWorkspaceIds,
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+    jest.doMock('../src/services/jobObservabilityService', () => ({ trackJob }));
+
+    try {
+      const connectorSyncService = require('../src/services/connectorSyncService');
+      connectorSyncService.syncConnectedAccounts = jest.fn(async ({ workspaceId }) => ({ workspaceId }));
+
+      await expect(connectorSyncService.runScheduledSyncs()).resolves.toEqual([
+        { workspaceId: 'workspace-1' },
+        { workspaceId: 'workspace-2' }
+      ]);
+      expect(connectorSyncService.syncConnectedAccounts.mock.calls.map(([options]) => options.workspaceId)).toEqual([
+        'workspace-1',
+        'workspace-2'
+      ]);
+      expect(trackJob.mock.calls.map(([context]) => context.workspaceId)).toEqual([
+        'workspace-1',
+        'workspace-2'
+      ]);
+    } finally {
+      jest.dontMock('../src/services/workspaceScopeService');
+      jest.dontMock('../src/services/jobObservabilityService');
+      jest.resetModules();
+    }
+  });
+
+  test('runs scheduled interventions in the workspace attached to each job record', async () => {
+    jest.resetModules();
+    const listActiveWorkspaceIds = jest.fn().mockResolvedValue(['workspace-1', 'workspace-2']);
+    const trackJob = jest.fn(async (context, handler) => handler());
+
+    jest.doMock('../src/services/workspaceScopeService', () => ({ listActiveWorkspaceIds }));
+    jest.doMock('../src/services/jobObservabilityService', () => ({ trackJob }));
+    jest.doMock('../src/services/interventionEngine', () => ({}));
+    jest.doMock('../src/services/operationsLedgerService', () => ({}));
+    jest.doMock('../src/models/Board', () => ({}));
+
+    try {
+      const interventionWorker = require('../src/workers/interventionWorker');
+      const handledWorkspaceIds = [];
+      await interventionWorker.runForActiveWorkspaces('interventions.process_all', async workspaceId => {
+        handledWorkspaceIds.push(workspaceId);
+        return { processedCount: 0, successCount: 0, failureCount: 0 };
+      });
+
+      expect(handledWorkspaceIds).toEqual(['workspace-1', 'workspace-2']);
+      expect(trackJob.mock.calls.map(([context]) => context.workspaceId)).toEqual([
+        'workspace-1',
+        'workspace-2'
+      ]);
+    } finally {
+      jest.dontMock('../src/services/workspaceScopeService');
+      jest.dontMock('../src/services/jobObservabilityService');
+      jest.dontMock('../src/services/interventionEngine');
+      jest.dontMock('../src/services/operationsLedgerService');
+      jest.dontMock('../src/models/Board');
+      jest.resetModules();
+    }
+  });
+
   test('redacts provider query credentials from connector sync errors', () => {
     const connectorSyncService = require('../src/services/connectorSyncService');
     const message = connectorSyncService.safeErrorMessage(new Error('Request failed: https://api.trello.com/1?key=api-secret&token=token-secret'));

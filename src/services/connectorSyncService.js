@@ -7,7 +7,11 @@ const workGraphService = require('./workGraphService');
 const workSignalAdapterService = require('./workSignalAdapterService');
 const workSignalService = require('./workSignalService');
 const logger = require('../utils/logger');
-const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
+const {
+  getDefaultWorkspaceObjectId,
+  listActiveWorkspaceIds,
+  normalizeWorkspaceObjectId
+} = require('./workspaceScopeService');
 
 class ConnectorSyncService {
   constructor() {
@@ -17,9 +21,7 @@ class ConnectorSyncService {
   init() {
     if (this.job) return this.job;
     const cron = process.env.CONNECTOR_SYNC_CRON || '*/30 * * * *';
-    this.job = schedule.scheduleJob(cron, () => this.runTrackedSync({
-      triggerType: 'scheduled'
-    }));
+    this.job = schedule.scheduleJob(cron, () => this.runScheduledSyncs());
     logger.info('Connector sync service initialized');
     return this.job;
   }
@@ -36,10 +38,25 @@ class ConnectorSyncService {
       jobName: 'connectors.work_signals_sync',
       jobType: 'sync',
       triggerType: options.triggerType || 'scheduled',
+      workspaceId: options.workspaceId,
       metadata: {
         actor: options.actor || 'connector-sync'
       }
     }, () => this.syncConnectedAccounts(options));
+  }
+
+  async runScheduledSyncs() {
+    const workspaceIds = await listActiveWorkspaceIds();
+    const results = [];
+
+    for (const workspaceId of workspaceIds) {
+      results.push(await this.runTrackedSync({
+        triggerType: 'scheduled',
+        workspaceId
+      }));
+    }
+
+    return results;
   }
 
   async syncConnectedAccounts(options = {}) {
