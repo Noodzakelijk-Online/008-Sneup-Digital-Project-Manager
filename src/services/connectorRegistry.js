@@ -446,7 +446,7 @@ const CONNECTORS = [
     id: 'intercom',
     name: 'Intercom',
     category: 'crm_support',
-    description: 'Companies, contacts, conversations, tickets, SLAs, and customer escalation context.',
+    description: 'Read-only bounded conversation-list metadata. Sneup excludes conversation bodies and parts, contacts, companies, teammates, tags, URLs, attachments, tickets, SLAs, and provider writes.',
     auth: oauth2({
       envPrefix: 'INTERCOM',
       authorizationUrl: 'https://app.intercom.com/oauth',
@@ -454,7 +454,7 @@ const CONNECTORS = [
       scopes: [],
       docsUrl: 'https://developers.intercom.com/docs/references/rest-api/api.intercom.io/authentication/'
     }),
-    sync: ['contacts', 'companies', 'conversations', 'tickets']
+    sync: ['conversations']
   },
 
   // High-value token/API-key connectors used by project managers across 2015-2026.
