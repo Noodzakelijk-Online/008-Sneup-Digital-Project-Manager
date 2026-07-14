@@ -347,16 +347,16 @@ const CONNECTORS = [
     id: 'zoom',
     name: 'Zoom',
     category: 'communication',
-    description: 'Meetings, recordings, webinars, users, transcripts, and stakeholder meeting cadence.',
+    description: 'Read-only bounded scheduled-meeting metadata through Zoom OAuth. Sneup excludes agendas, join URLs, passwords, hosts, attendees, recordings, transcripts, webinars, and provider writes.',
     auth: oauth2({
       envPrefix: 'ZOOM',
       authorizationUrl: 'https://zoom.us/oauth/authorize',
       tokenUrl: 'https://zoom.us/oauth/token',
       tokenAuth: 'basic',
-      scopes: ['meeting:read', 'recording:read', 'user:read'],
+      scopes: ['meeting:read'],
       docsUrl: 'https://developers.zoom.us/docs/integrations/'
     }),
-    sync: ['meetings', 'recordings', 'webinars', 'users']
+    sync: ['scheduled_meetings']
   },
   {
     id: 'figma',

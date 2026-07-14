@@ -97,6 +97,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/hubSpotWorkSignalClient');
     jest.dontMock('../src/services/typeformWorkSignalClient');
     jest.dontMock('../src/services/salesforceWorkSignalClient');
+    jest.dontMock('../src/services/zoomWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1160,8 +1161,8 @@ describe('connector registry', () => {
 
     expect(byId.google_workspace.auth.scopes).toContain('https://www.googleapis.com/auth/calendar.readonly');
     expect(byId.google_workspace.auth.scopes).not.toContain('https://www.googleapis.com/auth/calendar');
-    expect(byId.zoom.auth.scopes).toEqual(expect.arrayContaining(['meeting:read', 'recording:read', 'user:read']));
-    expect(byId.zoom.auth.scopes).not.toContain('meeting:write');
+    expect(byId.zoom.auth.scopes).toEqual(['meeting:read']);
+    expect(byId.zoom.auth.scopes).not.toEqual(expect.arrayContaining(['meeting:write', 'recording:read', 'user:read']));
     expect(byId.miro.auth.scopes).toEqual(['boards:read', 'identity:read']);
     expect(byId.google_chat.auth.scopes).toEqual(['https://www.googleapis.com/auth/chat.messages.readonly']);
   });
@@ -2205,6 +2206,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('salesforce').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Zoom adapter delegates bounded scheduled-meeting reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'meeting:98765432101' }] });
+    jest.doMock('../src/services/zoomWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'zoom' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('zoom').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4486,6 +4498,42 @@ describe('work signal normalization', () => {
     try { await expect(capped.fetchDelta({ metadata: { fields: { instanceUrl: 'https://acme.my.salesforce.com' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES; else process.env.SNEUP_SALESFORCE_MAX_OPPORTUNITIES = previous; }
     const unsafeCursor = new SalesforceWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { records: [], done: false, nextRecordsUrl: 'https://127.0.0.1/steal' } }) }, accountConnectorService: accountConnector });
     await expect(unsafeCursor.fetchDelta({ metadata: { fields: { instanceUrl: 'https://acme.my.salesforce.com' } } })).rejects.toMatchObject({ statusCode: 502 });
+  });
+
+  test('Zoom sync pages bounded scheduled-meeting metadata without rich meeting content or provider writes', async () => {
+    jest.dontMock('../src/services/zoomWorkSignalClient');
+    jest.resetModules();
+    const { ZoomWorkSignalClient } = require('../src/services/zoomWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { meetings: [{ id: 98765432101, topic: `Client review for ${privateEmail}`, type: 2, start_time: '2026-07-12T12:00:00Z', created_at: '2026-07-10T12:00:00Z', agenda: 'Private discussion notes', join_url: 'https://zoom.us/j/private', password: 'secret', host_email: privateEmail, host_id: 'private-host', settings: { host_video: true } }], next_page_token: 'page-token_2+=' } })
+      .mockResolvedValueOnce({ data: { meetings: [{ id: 98765432102, topic: 'Delivery handoff', type: 8, start_time: '2026-07-15T12:00:00Z', created_at: '2026-07-11T12:00:00Z' }] } }) };
+    const client = new ZoomWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'zoom-access-token' })) } });
+    const previous = { max: process.env.SNEUP_ZOOM_MAX_MEETINGS, page: process.env.SNEUP_ZOOM_PAGE_SIZE };
+    process.env.SNEUP_ZOOM_MAX_MEETINGS = '2'; process.env.SNEUP_ZOOM_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'zoom' }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://api.zoom.us/v2/users/me/meetings', expect.objectContaining({ params: { type: 'scheduled', page_size: 1 }, headers: expect.objectContaining({ Authorization: 'Bearer zoom-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://api.zoom.us/v2/users/me/meetings', expect.objectContaining({ params: { type: 'scheduled', page_size: 1, next_page_token: 'page-token_2+=' } }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'zoom_scheduled_meetings', meetings: 2, pages: 2 }, nextCursor: '2026-07-10T00:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private discussion|zoom\.us\/j|secret|private-host|agenda|join_url|password|host_email|settings/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_ZOOM_MAX_MEETINGS; else process.env.SNEUP_ZOOM_MAX_MEETINGS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_ZOOM_PAGE_SIZE; else process.env.SNEUP_ZOOM_PAGE_SIZE = previous.page; }
+  });
+
+  test('Zoom sync rejects invalid cursors and malformed pagination and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/zoomWorkSignalClient');
+    jest.resetModules();
+    const { ZoomWorkSignalClient } = require('../src/services/zoomWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) };
+    const invalid = new ZoomWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector });
+    await expect(invalid.fetchDelta({ connectorId: 'zoom' }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new ZoomWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { meetings: [], next_page_token: 'https://127.0.0.1/steal' } }) }, accountConnectorService: accountConnector });
+    await expect(malformed.fetchDelta({ connectorId: 'zoom' })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_ZOOM_MAX_MEETINGS; process.env.SNEUP_ZOOM_MAX_MEETINGS = '1';
+    const capped = new ZoomWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { meetings: [{ id: 98765432101, topic: 'First meeting' }], next_page_token: 'page-token_2' } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'zoom' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_ZOOM_MAX_MEETINGS; else process.env.SNEUP_ZOOM_MAX_MEETINGS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

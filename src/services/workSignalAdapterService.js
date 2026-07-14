@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -64,6 +64,7 @@ const pipedriveWorkSignalClient = require('./pipedriveWorkSignalClient');
 const hubSpotWorkSignalClient = require('./hubSpotWorkSignalClient');
 const typeformWorkSignalClient = require('./typeformWorkSignalClient');
 const salesforceWorkSignalClient = require('./salesforceWorkSignalClient');
+const zoomWorkSignalClient = require('./zoomWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -940,6 +941,12 @@ salesforceAdapter.capabilities.credentialBackedSync = true;
 salesforceAdapter.list = async account => (await salesforceWorkSignalClient.fetchDelta(account, null)).records;
 salesforceAdapter.fetchDelta = (account, cursor) => salesforceWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('salesforce', salesforceAdapter);
+
+const zoomAdapter = buildAdapter('zoom', 'Zoom scheduled-meeting metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'scheduled_meeting'), title: titleFromText(item.name, 'Zoom meeting'), description: '', status: item.status || 'scheduled', priority: 'unknown', owners: [], labels: compact(['zoom', item.sourceType, item.meetingType ? `type:${item.meetingType}` : undefined]), dueAt: pick(item.startAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.startAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Zoom scheduled-meeting metadata'), raw: { id: item.id, sourceType: item.sourceType, meetingId: item.meetingId, meetingType: item.meetingType, startAt: item.startAt, createdAt: item.createdAt } }));
+zoomAdapter.capabilities.credentialBackedSync = true;
+zoomAdapter.list = async account => (await zoomWorkSignalClient.fetchDelta(account, null)).records;
+zoomAdapter.fetchDelta = (account, cursor) => zoomWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('zoom', zoomAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
