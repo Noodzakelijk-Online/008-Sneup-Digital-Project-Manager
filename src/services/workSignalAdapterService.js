@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -95,6 +95,7 @@ const newRelicWorkSignalClient = require('./newRelicWorkSignalClient');
 const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
+const tableauWorkSignalClient = require('./tableauWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1200,6 +1201,27 @@ makeAdapter.capabilities.credentialBackedSync = true;
 makeAdapter.list = async account => (await makeWorkSignalClient.fetchDelta(account, null)).records;
 makeAdapter.fetchDelta = (account, cursor) => makeWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('make', makeAdapter);
+
+const tableauAdapter = buildAdapter('tableau', 'Tableau Cloud project and workbook metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'workbook'),
+  title: titleFromText(item.name, 'Tableau work item'),
+  description: '',
+  status: item.status || 'unknown',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['tableau', item.sourceType]),
+  dueAt: undefined,
+  providerCreatedAt: item.createdAt,
+  providerUpdatedAt: item.updatedAt || item.createdAt,
+  evidenceRefs: baseEvidence(account, item, 'Tableau Cloud metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, projectName: item.projectName, workbookId: item.workbookId, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+tableauAdapter.capabilities.credentialBackedSync = true;
+tableauAdapter.list = async account => (await tableauWorkSignalClient.fetchDelta(account, null)).records;
+tableauAdapter.fetchDelta = (account, cursor) => tableauWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('tableau', tableauAdapter);
 
 const testRailAdapter = buildAdapter('testRail', 'TestRail active test-run metadata adapter', (account, item) => ({
   externalId: pick(item.id),

@@ -221,6 +221,8 @@ SurveyMonkey is available with a View Surveys access token. Sneup makes one boun
 
 Google Drive is available as a separate metadata-only Google OAuth connection. Sneup reads one bounded user-Drive page, rejects incomplete pagination, and retains only redacted file or folder names plus timestamps. It excludes file content, web URLs, permissions, owners, shared drives, and provider writes.
 
+Tableau Cloud is available with a pod URL, site content URL, and personal access token. Sneup signs in only to establish a short-lived API session, reads one bounded project page and one bounded workbook page with GET, then invalidates the session. It retains only redacted names, opaque identifiers, project linkage, and timestamps; descriptions, views, dashboards, data sources, owners, permissions, URLs, tags, content, and provider content writes are excluded.
+
 Businessmap (formerly Kanbanize) is additionally available with its API-v2 account endpoint and API key. Sneup accepts one public `https://account.kanbanize.com` URL, uses GET-only bounded active-board and paginated active-card reads, and excludes descriptions, comments, custom fields, files, dependencies, users, time data, workflow configuration, and provider writes.
 
 Microsoft Planner uses a dedicated Microsoft OAuth account with `Tasks.Read` only. It reads bounded assigned-task metadata from `/me/planner/tasks`, excludes descriptions, checklists, attachments, labels, comments, and provider writes, and retains only plan/bucket identifiers for work-graph context.
