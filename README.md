@@ -212,6 +212,8 @@ Taiga uses a bearer access token and a public HTTPS base URL. It reads only the 
 
 Backlog uses a project-member API key and a public `*.backlog.com` or `*.backlogtool.com` space URL. It reads bounded active-project and issue metadata with `GET`, checks provider counts before paging, excludes descriptions, comments, attachments, and custom fields, and never makes provider writes.
 
+Freedcamp uses an account API key in the `X-API-KEY` header and reads bounded project, task, and milestone metadata with `GET`. It validates the provider's pagination signal, excludes descriptions, comments, files, custom fields, and tags, and never makes provider writes.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations

@@ -78,6 +78,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/youTrackWorkSignalClient');
     jest.dontMock('../src/services/taigaWorkSignalClient');
     jest.dontMock('../src/services/backlogWorkSignalClient');
+    jest.dontMock('../src/services/freedcampWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1958,6 +1959,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('backlog').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Freedcamp adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'task:18' }] });
+    jest.doMock('../src/services/freedcampWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'freedcamp' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('freedcamp').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3630,6 +3642,33 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_BACKLOG_MAX_PROJECTS; process.env.SNEUP_BACKLOG_MAX_PROJECTS = '1';
     const capped = new BacklogWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }] }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'backlog-key' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { spaceId: 'sneup' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_BACKLOG_MAX_PROJECTS; else process.env.SNEUP_BACKLOG_MAX_PROJECTS = previous; }
+  });
+
+  test('Freedcamp sync reads bounded metadata with header credentials and no rich content or provider writes', async () => {
+    jest.dontMock('../src/services/freedcampWorkSignalClient');
+    jest.resetModules();
+    const { FreedcampWorkSignalClient } = require('../src/services/freedcampWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { data: { projects: [{ project_id: '9', project_name: 'Sneup release', project_description: 'Private project detail', f_active: true }] } } })
+      .mockResolvedValueOnce({ data: { data: { tasks: [{ id: '18', project_id: '9', title: 'Ship Freedcamp connector', status: 2, status_title: 'In progress', priority: 3, priority_title: 'High', assigned_to_fullname: 'Alex', due_ts: 1784073600, created_ts: 1783687200, description: 'Private task detail', comments: ['Private comment'], files: [{ name: 'secret.pdf' }], custom_fields: [{ value: 'Private field' }], tags: ['private'] }], meta: { has_more: false } } } })
+      .mockResolvedValueOnce({ data: { data: { milestones: [{ id: '31', project_id: '9', title: 'Connector milestone', status: 2, status_title: 'In progress', priority: 3, priority_title: 'High', assigned_to_fullname: 'Alex', due_ts: 1784073600, created_ts: 1783687200, updated_ts: 1783893600, description: 'Private milestone detail', comments: ['Private comment'], files: [{ name: 'secret.pdf' }] }], meta: { has_more: false } } } }) };
+    const client = new FreedcampWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'freedcamp-key' })) } });
+    const result = await client.fetchDelta({}, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://freedcamp.com/api/v1/tasks', expect.objectContaining({ params: { limit: 200, offset: 0 }, headers: expect.objectContaining({ 'X-API-KEY': 'freedcamp-key' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private task detail|Private milestone detail|Private project detail|Private comment|Private field|secret\.pdf|private/);
+    expect(result).toMatchObject({ metadata: { source: 'freedcamp_api', projects: 1, tasks: 1, milestones: 1 }, nextCursor: '2026-07-12T22:00:00.000Z' });
+  });
+
+  test('Freedcamp sync fails closed when a collection cap or pagination signal is unsafe', async () => {
+    jest.dontMock('../src/services/freedcampWorkSignalClient');
+    jest.resetModules();
+    const { FreedcampWorkSignalClient } = require('../src/services/freedcampWorkSignalClient');
+    const previous = process.env.SNEUP_FREEDCAMP_MAX_PROJECTS; process.env.SNEUP_FREEDCAMP_MAX_PROJECTS = '1';
+    const capped = new FreedcampWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: { projects: [{ project_id: '1', project_name: 'One' }, { project_id: '2', project_name: 'Two' }] } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'freedcamp-key' })) } });
+    try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_FREEDCAMP_MAX_PROJECTS; else process.env.SNEUP_FREEDCAMP_MAX_PROJECTS = previous; }
+    const ambiguous = new FreedcampWorkSignalClient({ http: { get: jest.fn().mockResolvedValueOnce({ data: { data: { projects: [] } } }).mockResolvedValueOnce({ data: { data: { tasks: [] } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'freedcamp-key' })) } });
+    await expect(ambiguous.fetchDelta({})).rejects.toMatchObject({ statusCode: 502 });
   });
 
   test('projects provider signals into normalized work graph records', () => {

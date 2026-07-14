@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -45,6 +45,7 @@ const microsoftPlannerWorkSignalClient = require('./microsoftPlannerWorkSignalCl
 const youTrackWorkSignalClient = require('./youTrackWorkSignalClient');
 const taigaWorkSignalClient = require('./taigaWorkSignalClient');
 const backlogWorkSignalClient = require('./backlogWorkSignalClient');
+const freedcampWorkSignalClient = require('./freedcampWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -807,6 +808,12 @@ backlogAdapter.capabilities.credentialBackedSync = true;
 backlogAdapter.list = async account => (await backlogWorkSignalClient.fetchDelta(account, null)).records;
 backlogAdapter.fetchDelta = (account, cursor) => backlogWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('backlog', backlogAdapter);
+
+const freedcampAdapter = buildAdapter('freedcamp', 'Freedcamp project, task, and milestone metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'Freedcamp work item'), description: '', status: statusFromText(item.status), priority: priorityFromText(item.priority), url: pick(item.url), owners: userNames(item.owners), labels: compact(['freedcamp', item.sourceType, item.project?.name, item.status, item.priority]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Freedcamp metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, milestoneId: item.milestoneId, listId: item.listId, project: item.project, status: item.status, priority: item.priority, owners: item.owners, dueAt: item.dueAt, completedAt: item.completedAt, createdAt: item.createdAt, updatedAt: item.updatedAt, url: item.url } }));
+freedcampAdapter.capabilities.credentialBackedSync = true;
+freedcampAdapter.list = async account => (await freedcampWorkSignalClient.fetchDelta(account, null)).records;
+freedcampAdapter.fetchDelta = (account, cursor) => freedcampWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('freedcamp', freedcampAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
