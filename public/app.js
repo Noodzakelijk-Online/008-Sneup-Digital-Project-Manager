@@ -661,13 +661,15 @@ async function loadJobDashboard() {
 
 async function loadConnectors() {
   try {
-    const response = await apiFetch('/api/connectors');
-    const data = await response.json();
-    if (!data.success) throw new Error(data.error || 'Connectors unavailable');
+    const [data, contractsData] = await Promise.all([
+      fetchApi('/api/connectors'),
+      fetchApi('/api/work-signals/contracts')
+    ]);
     state.connectors = data.connectors || [];
     state.categories = data.categories || [];
     state.accounts = data.accounts || [];
     state.connectorSafety = data.safety || null;
+    state.workSignalContracts = contractsData.contracts || [];
     renderConnectors();
   } catch (error) {
     els.connectorGrid.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -3268,7 +3270,13 @@ function renderConnector(connector, account) {
   const authLabel = connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type.replaceAll('_', ' ');
   const safety = connector.safety || {};
   const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
-  const canSync = Boolean(account && contract?.adapterStatus === 'implemented');
+  const adapterImplemented = contract?.adapterStatus === 'implemented';
+  const canSync = Boolean(account && adapterImplemented);
+  const connectionLabel = connected ? (adapterImplemented ? 'connected' : 'linked') : configured ? 'ready' : 'setup';
+  const connectionStatusClass = connected && adapterImplemented ? 'connected' : connected || configured ? 'review' : 'high';
+  const adapterSummary = adapterImplemented
+    ? 'Read-only sync adapter available.'
+    : 'Account link only. Work-signal sync is not available yet.';
   const isJira = connector.id === 'jira_software' || connector.id === 'jira_service_management';
   const isAsana = connector.id === 'asana';
   const selectedJiraCloudId = account?.metadata?.fields?.cloudId;
@@ -3312,10 +3320,11 @@ function renderConnector(connector, account) {
             <div class="meta"><span>${escapeHtml(connector.categoryName)}</span><span>${escapeHtml(authLabel)}</span><span>${safety.scopeRisk === 'review' ? 'scope review' : 'read-only'}</span></div>
           </div>
         </div>
-        <span class="pill ${connected ? 'connected' : configured ? 'review' : 'high'}">${connected ? 'connected' : configured ? 'ready' : 'setup'}</span>
+        <span class="pill ${connectionStatusClass}">${connectionLabel}</span>
       </div>
       <p>${escapeHtml(connector.description)}</p>
       <div class="connector-policy ${safety.scopeRisk === 'review' ? 'review' : ''}">${escapeHtml(safety.summary || 'Read-only ingestion only.')}</div>
+      <div class="meta"><span>${escapeHtml(adapterSummary)}</span></div>
       ${consentSummary}
       ${syncSummary}
       <div class="connector-actions">
