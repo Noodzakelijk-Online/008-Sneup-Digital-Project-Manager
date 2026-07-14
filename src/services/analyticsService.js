@@ -6,7 +6,7 @@ const Member = require('../models/Member');
 const Analytics = require('../models/Analytics');
 const schedule = require('node-schedule');
 const jobObservabilityService = require('./jobObservabilityService');
-const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
+const { getDefaultWorkspaceObjectId, listActiveWorkspaceIds, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 /**
  * Analytics Service
@@ -22,11 +22,15 @@ const initAnalytics = () => {
     const analyticsCron = process.env.ANALYTICS_CRON || '0 * * * *';
     schedule.scheduleJob(analyticsCron, async () => {
       logger.info('Running scheduled analytics generation');
-      await jobObservabilityService.trackJob({
-        jobName: 'analytics.generate_all',
-        jobType: 'analytics',
-        triggerType: 'scheduled'
-      }, () => generateAllAnalytics());
+      const workspaceIds = await listActiveWorkspaceIds();
+      for (const workspaceId of workspaceIds) {
+        await jobObservabilityService.trackJob({
+          jobName: 'analytics.generate_all',
+          jobType: 'analytics',
+          triggerType: 'scheduled',
+          workspaceId
+        }, () => generateAllAnalytics({ workspaceId }));
+      }
     });
     
     logger.info('Analytics service initialized');
