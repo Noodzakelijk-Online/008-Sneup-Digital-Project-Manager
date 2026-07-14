@@ -90,6 +90,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/pagerDutyWorkSignalClient');
     jest.dontMock('../src/services/statuspageWorkSignalClient');
     jest.dontMock('../src/services/genericRestApiWorkSignalClient');
+    jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2102,6 +2103,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('rest_api_generic').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Datadog adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'incident:abc-123' }] });
+    jest.doMock('../src/services/datadogWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'datadog' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('datadog').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -4099,6 +4111,32 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_GENERIC_REST_MAX_RECORDS; process.env.SNEUP_GENERIC_REST_MAX_RECORDS = '1';
     const capped = new GenericRestApiWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: [{ id: 'task-1', name: 'One' }, { id: 'task-2', name: 'Two' }] })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'generic-token' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
     try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://api.example.test', endpointPath: '/v1/tasks' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_GENERIC_REST_MAX_RECORDS; else process.env.SNEUP_GENERIC_REST_MAX_RECORDS = previous; }
+  });
+
+  test('Datadog sync reads bounded monitor and active incident metadata without queries, messages, tags, or provider writes', async () => {
+    jest.dontMock('../src/services/datadogWorkSignalClient');
+    jest.resetModules();
+    const { DatadogWorkSignalClient } = require('../src/services/datadogWorkSignalClient');
+    const http = { get: jest.fn((url) => Promise.resolve(url.endsWith('/api/v1/monitor')
+      ? { data: [{ id: 18, name: 'Sneup API', overall_state: 'Alert', type: 'metric alert', message: 'Private query and message', tags: ['private:tag'], modified: '2026-07-12T12:00:00.000Z' }] }
+      : { data: { data: [{ id: 'incident-18', attributes: { title: 'Payment failure with private@email.test', created: '2026-07-10T10:00:00.000Z', modified: '2026-07-12T12:00:00.000Z', fields: { state: { value: 'active' }, severity: { value: 'SEV-2' } }, customer_impact_scope: 'Private impact', timeline: [{ body: 'Private response' }] } }] } })) };
+    const client = new DatadogWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'dd-api-key', appKey: 'dd-app-key' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { site: 'datadoghq.com' } } }, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://api.datadoghq.com/api/v2/incidents/search', expect.objectContaining({ params: { query: 'state:(active OR stable)' }, headers: expect.objectContaining({ 'DD-API-KEY': 'dd-api-key', 'DD-APPLICATION-KEY': 'dd-app-key' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private query and message|private:tag|Private impact|Private response|private@email\.test/);
+    expect(result).toMatchObject({ metadata: { source: 'datadog_api', site: 'datadoghq.com', monitors: 1, activeIncidents: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('Datadog sync rejects unsafe sites and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/datadogWorkSignalClient');
+    jest.resetModules();
+    const { DatadogWorkSignalClient } = require('../src/services/datadogWorkSignalClient');
+    const invalid = new DatadogWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'api', appKey: 'app' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { site: 'example.test' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_DATADOG_MAX_MONITORS; process.env.SNEUP_DATADOG_MAX_MONITORS = '1';
+    const capped = new DatadogWorkSignalClient({ http: { get: jest.fn((url) => Promise.resolve(url.endsWith('/api/v1/monitor') ? { data: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }] } : { data: { data: [] } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'api', appKey: 'app' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { site: 'datadoghq.com' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_DATADOG_MAX_MONITORS; else process.env.SNEUP_DATADOG_MAX_MONITORS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

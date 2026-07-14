@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -57,6 +57,7 @@ const sentryWorkSignalClient = require('./sentryWorkSignalClient');
 const pagerDutyWorkSignalClient = require('./pagerDutyWorkSignalClient');
 const statuspageWorkSignalClient = require('./statuspageWorkSignalClient');
 const genericRestApiWorkSignalClient = require('./genericRestApiWorkSignalClient');
+const datadogWorkSignalClient = require('./datadogWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -891,6 +892,12 @@ genericRestApiAdapter.capabilities.credentialBackedSync = true;
 genericRestApiAdapter.list = async account => (await genericRestApiWorkSignalClient.fetchDelta(account, null)).records;
 genericRestApiAdapter.fetchDelta = (account, cursor) => genericRestApiWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('rest_api_generic', genericRestApiAdapter);
+
+const datadogAdapter = buildAdapter('datadog', 'Datadog monitor and active incident metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'incident'), title: item.sourceType === 'monitor' ? titleFromText(item.name, 'Datadog monitor') : titleFromText(item.name, 'Datadog incident'), description: '', status: item.status || 'unknown', priority: item.severity === 'SEV-1' ? 'critical' : item.severity === 'SEV-2' ? 'high' : item.status === 'Alert' ? 'high' : item.status === 'Warn' ? 'normal' : 'unknown', owners: [], labels: compact(['datadog', item.sourceType, item.monitorType, item.severity, item.status]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.resolvedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Datadog incident metadata'), raw: { id: item.id, sourceType: item.sourceType, monitorId: item.monitorId, incidentId: item.incidentId, monitorType: item.monitorType, status: item.status, severity: item.severity, createdAt: item.createdAt, updatedAt: item.updatedAt, resolvedAt: item.resolvedAt } }));
+datadogAdapter.capabilities.credentialBackedSync = true;
+datadogAdapter.list = async account => (await datadogWorkSignalClient.fetchDelta(account, null)).records;
+datadogAdapter.fetchDelta = (account, cursor) => datadogWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('datadog', datadogAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

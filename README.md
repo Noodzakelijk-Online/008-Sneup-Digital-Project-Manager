@@ -236,6 +236,8 @@ Atlassian Statuspage uses a page-scoped API key and explicit page ID. It reads b
 
 Generic REST API connects one configured public HTTPS JSON collection with a bearer token. It resolves the configured host before each sync, rejects private-network targets and redirects, pins the request to vetted public addresses, enforces response and record caps, stores only normalized ID/title/status/priority/timestamp metadata, and never makes provider writes or guesses pagination.
 
+Datadog uses an API key plus an application key limited to `monitors_read` and `incident_read`, and an explicit documented Datadog site. It reads bounded monitor and active/stable incident metadata with GET only, excludes monitor queries/messages/tags, downtimes, dashboards, services, SLOs, incident timelines/responders, and provider writes.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations
