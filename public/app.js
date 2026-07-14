@@ -3725,6 +3725,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-sharepoint-site]').forEach((button) => {
     button.addEventListener('click', () => openSharePointSiteModal(button.dataset.sharepointSite));
   });
+  document.querySelectorAll('[data-mural-workspace]').forEach((button) => {
+    button.addEventListener('click', () => openMuralWorkspaceModal(button.dataset.muralWorkspace));
+  });
   document.querySelectorAll('[data-xero-tenant]').forEach((button) => {
     button.addEventListener('click', () => openXeroTenantModal(button.dataset.xeroTenant));
   });
@@ -3797,7 +3800,9 @@ function renderConnector(connector, account) {
   const isSharePoint = connector.id === 'sharepoint';
   const selectedXeroTenantId = account?.metadata?.fields?.xeroTenantId;
   const isXero = connector.id === 'xero';
-  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId) && (!isSharePoint || selectedSharePointSiteId) && (!isXero || selectedXeroTenantId));
+  const selectedMuralWorkspaceId = account?.metadata?.fields?.muralWorkspaceId;
+  const isMural = connector.id === 'mural';
+  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId) && (!isSharePoint || selectedSharePointSiteId) && (!isXero || selectedXeroTenantId) && (!isMural || selectedMuralWorkspaceId));
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
@@ -3820,6 +3825,7 @@ function renderConnector(connector, account) {
                                         : lastSync.source === 'basecamp_api' ? 'Basecamp API'
                                         : lastSync.source === 'xero_sales_invoice_metadata' ? 'Xero invoices'
                                         : lastSync.source === 'google_forms_metadata' ? 'Google Forms metadata'
+                                          : lastSync.source === 'mural_active_mural_metadata' ? 'Mural metadata'
                                           : lastSync.source === 'confluence_page_space_metadata' ? 'Confluence metadata'
                                           : 'Sync';
   const syncSummary = canSync && lastSync.finishedAt
@@ -3855,6 +3861,7 @@ function renderConnector(connector, account) {
         ${isFigma && account ? `<button class="button" data-figma-team="${escapeHtml(account.id)}" type="button">${selectedFigmaTeamId ? 'Figma team selected' : 'Configure Figma team'}</button>` : ''}
         ${isSharePoint && account ? `<button class="button" data-sharepoint-site="${escapeHtml(account.id)}" type="button">${selectedSharePointSiteId ? 'SharePoint site selected' : 'Select SharePoint site'}</button>` : ''}
         ${isXero && account ? `<button class="button" data-xero-tenant="${escapeHtml(account.id)}" type="button">${selectedXeroTenantId ? 'Xero organisation selected' : 'Select Xero organisation'}</button>` : ''}
+        ${isMural && account ? `<button class="button" data-mural-workspace="${escapeHtml(account.id)}" type="button">${selectedMuralWorkspaceId ? 'Mural workspace selected' : 'Select Mural workspace'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         ${syncReady ? (connected && connector.auth.type !== 'oauth2'
           ? `<button class="button primary" data-rotate-credential="${escapeHtml(account.id)}" type="button">Rotate credential</button>`
@@ -3948,6 +3955,57 @@ async function openSharePointSiteModal(accountId) {
     });
   } catch (error) {
     openNotice('SharePoint site selection', error.message);
+  }
+}
+
+async function openMuralWorkspaceModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  try {
+    const data = await fetchApi(`/api/connectors/accounts/${accountId}/mural-workspaces`);
+    const workspaces = data.workspaces || [];
+    if (workspaces.length === 0) {
+      openNotice('Mural workspace selection', 'No Mural workspaces are available for this account. Reconnect it with the approved read-only scopes.');
+      return;
+    }
+
+    const selectedWorkspaceId = account.metadata?.fields?.muralWorkspaceId || (workspaces.length === 1 ? workspaces[0].muralWorkspaceId : '');
+    els.modalTitle.textContent = 'Select Mural workspace';
+    els.modalBody.innerHTML = `
+      <form id="muralWorkspaceForm">
+        <div class="field">
+          <label for="muralWorkspaceId">Mural workspace</label>
+          <select id="muralWorkspaceId" name="muralWorkspaceId" required>
+            <option value="" ${selectedWorkspaceId ? '' : 'selected'} disabled>Select a workspace</option>
+            ${workspaces.map(workspace => `<option value="${escapeHtml(workspace.muralWorkspaceId)}" ${workspace.muralWorkspaceId === selectedWorkspaceId ? 'selected' : ''}>${escapeHtml(workspace.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="notice">Sneup reads active mural metadata from this selected workspace only. It does not read mural content, widgets, comments, templates, rooms, people, URLs, or sharing details.</div>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelMuralWorkspace">Cancel</button>
+          <button class="button primary" type="submit">Use this workspace</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelMuralWorkspace').addEventListener('click', closeModal);
+    document.getElementById('muralWorkspaceForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target).entries());
+      try {
+        await fetchApi(`/api/connectors/accounts/${accountId}/mural-workspace`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        closeModal();
+        openNotice('Mural workspace selected', 'Sneup will use this workspace for the next read-only metadata sync.');
+        await loadConnectors();
+      } catch (error) {
+        openNotice('Mural workspace selection', error.message);
+      }
+    });
+  } catch (error) {
+    openNotice('Mural workspace selection', error.message);
   }
 }
 

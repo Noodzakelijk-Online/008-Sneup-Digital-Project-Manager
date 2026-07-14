@@ -203,6 +203,8 @@ Trello writes remain approval-gated regardless of a workspace rule. A rule can p
 - `POST /api/connectors/accounts/:accountId/sharepoint-site` - Select the one SharePoint site Sneup may read from
 - `GET /api/connectors/accounts/:accountId/xero-tenants` - List Xero organisations authorized by a linked Xero account
 - `POST /api/connectors/accounts/:accountId/xero-tenant` - Select the one Xero organisation Sneup may read from
+- `GET /api/connectors/accounts/:accountId/mural-workspaces` - List Mural workspaces authorized by a linked Mural account
+- `POST /api/connectors/accounts/:accountId/mural-workspace` - Select the one Mural workspace Sneup may read from
 - `DELETE /api/connectors/accounts/:accountId` - Remove a linked connector account
 - `GET /api/work-signals/contracts` - List normalized sync adapter contracts for all connectors
 - `GET /api/work-signals/adapters` - List implemented first-wave read-only provider adapters
@@ -228,6 +230,8 @@ SharePoint is available as a separate Microsoft OAuth connection. It explicitly 
 Xero is available as a separate OAuth connection with `accounting.invoices.read`. Sneup lists authorized organisations, requires one selection, and makes one capped GET for sales-invoice status and date metadata. It retains only opaque invoice and organisation identifiers, status, and dates; contacts, invoice numbers, amounts, payment data, descriptions, line items, URLs, and provider writes are excluded.
 
 Google Forms is available as a separate Google OAuth connection with `drive.metadata.readonly`. Sneup makes one capped Drive metadata request for Google Forms owned by or shared to the signed-in user and retains only redacted form names, opaque identifiers, and timestamps. It excludes form bodies, questions, responses, owners, URLs, collaborators, sharing details, shared drives, and provider writes.
+
+Mural is available as a separate OAuth connection with `workspaces:read` and `murals:read`. Sneup requires the user to select one currently authorized workspace, then makes one capped request for active mural metadata. It retains only redacted mural names, opaque identifiers, and timestamps; mural content, widgets, comments, templates, rooms, people, URLs, sharing details, and provider writes are excluded.
 
 SurveyMonkey is available with a View Surveys access token. Sneup makes one bounded survey-list GET and retains only redacted survey title and ID. It excludes questions, responses, collectors, contacts, links, and provider writes.
 

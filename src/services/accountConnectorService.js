@@ -253,6 +253,29 @@ class AccountConnectorService {
     return this.fetchSharePointSites(account);
   }
 
+  async getMuralWorkspaces(accountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    if (account.connectorId !== 'mural') { const error = new Error('Mural workspace selection is only available for Mural connector accounts.'); error.statusCode = 400; throw error; }
+    const credentials = this.getAccountCredentials(account);
+    const token = credentials.accessToken || credentials.token || credentials.apiKey;
+    if (!token) { const error = new Error('Mural access token is missing. Reconnect this account to continue.'); error.statusCode = 503; throw error; }
+    const maxResponseBytes = Number.parseInt(process.env.SNEUP_MURAL_MAX_RESPONSE_BYTES, 10);
+    const response = await this.http.get('https://app.mural.co/api/public/v1/workspaces', { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, timeout: 15000, maxContentLength: Number.isFinite(maxResponseBytes) ? Math.max(1024, Math.min(10000000, maxResponseBytes)) : 2000000, maxBodyLength: Number.isFinite(maxResponseBytes) ? Math.max(1024, Math.min(10000000, maxResponseBytes)) : 2000000, maxRedirects: 0, proxy: false });
+    const values = Array.isArray(response.data?.value) ? response.data.value : Array.isArray(response.data) ? response.data : [];
+    return values.filter(item => /^[A-Za-z0-9_-]{1,128}$/.test(String(item?.id || ''))).map(item => ({ muralWorkspaceId: String(item.id), name: String(item.name || 'Mural workspace').replace(/\s+/g, ' ').trim().slice(0, 160) || 'Mural workspace' }));
+  }
+
+  async selectMuralWorkspace(accountId, muralWorkspaceId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    const requested = String(muralWorkspaceId || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(requested)) { const error = new Error('A valid Mural workspace ID is required.'); error.statusCode = 400; throw error; }
+    const workspaces = await this.getMuralWorkspaces(accountId, options);
+    if (!workspaces.some(item => item.muralWorkspaceId === requested)) { const error = new Error('That Mural workspace is no longer authorized for this connection.'); error.statusCode = 403; throw error; }
+    account.metadata = { ...(account.metadata || {}), fields: { ...(account.metadata?.fields || {}), muralWorkspaceId: requested } };
+    account.accountName = account.connectorName; account.externalAccountId = requested; account.status = 'connected'; account.lastError = undefined; await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   async selectSharePointSite(accountId, sharePointSiteId, options = {}) {
     const account = await this.getManagedAccount(accountId, options);
     this.requireSharePointAccount(account);

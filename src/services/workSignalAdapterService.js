@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -99,6 +99,7 @@ const tableauWorkSignalClient = require('./tableauWorkSignalClient');
 const sharePointWorkSignalClient = require('./sharePointWorkSignalClient');
 const xeroWorkSignalClient = require('./xeroWorkSignalClient');
 const googleFormsWorkSignalClient = require('./googleFormsWorkSignalClient');
+const muralWorkSignalClient = require('./muralWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1351,6 +1352,12 @@ googleFormsAdapter.capabilities.credentialBackedSync = true;
 googleFormsAdapter.list = async account => (await googleFormsWorkSignalClient.fetchDelta(account, null)).records;
 googleFormsAdapter.fetchDelta = (account, cursor) => googleFormsWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('google_forms', googleFormsAdapter);
+
+const muralAdapter = buildAdapter('mural', 'Mural selected-workspace active mural metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: 'mural', title: titleFromText(item.name, 'Mural'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['mural', 'active']), dueAt: undefined, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt, evidenceRefs: baseEvidence(account, item, 'Mural selected-workspace metadata'), raw: { id: item.id, muralId: item.muralId, workspaceId: item.workspaceId, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+muralAdapter.capabilities.credentialBackedSync = true;
+muralAdapter.list = async account => (await muralWorkSignalClient.fetchDelta(account, null)).records;
+muralAdapter.fetchDelta = (account, cursor) => muralWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('mural', muralAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),

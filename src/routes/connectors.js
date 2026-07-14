@@ -290,6 +290,13 @@ router.post('/accounts/:accountId/sharepoint-site', requirePermission('connector
   }
 });
 
+router.get('/accounts/:accountId/mural-workspaces', requirePermission('connectors:manage'), async (req, res) => {
+  try { res.json({ success: true, workspaces: await accountConnectorService.getMuralWorkspaces(req.params.accountId, connectorRequestOptions(req)) }); } catch (error) { logger.error('Failed to list Mural workspaces:', error); sendError(res, error); }
+});
+router.post('/accounts/:accountId/mural-workspace', requirePermission('connectors:manage'), async (req, res) => {
+  try { res.json({ success: true, account: await accountConnectorService.selectMuralWorkspace(req.params.accountId, req.body.muralWorkspaceId, connectorRequestOptions(req)) }); } catch (error) { logger.error('Failed to select Mural workspace:', error); sendError(res, error); }
+});
+
 router.get('/accounts/:accountId/xero-tenants', requirePermission('connectors:manage'), async (req, res) => {
   try {
     const tenants = await accountConnectorService.getXeroTenants(req.params.accountId, connectorRequestOptions(req));
