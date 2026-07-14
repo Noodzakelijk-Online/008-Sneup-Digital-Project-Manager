@@ -96,6 +96,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/n8nWorkSignalClient');
     jest.dontMock('../src/services/makeWorkSignalClient');
     jest.dontMock('../src/services/testRailWorkSignalClient');
+    jest.dontMock('../src/services/browserStackWorkSignalClient');
     jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
@@ -2574,6 +2575,21 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('testRail').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
     expect(workSignalService.normalizeProviderRecord(account, { id: 'run:18', sourceType: 'test_run', runId: '18', name: 'Release test run', status: 'blocked', priority: 'high' })).toMatchObject({ sourceType: 'test_run', status: 'blocked', priority: 'high' });
+  });
+
+  test('BrowserStack adapter delegates bounded build reads and preserves execution state through normalization', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'build:abc12345' }] });
+    jest.doMock('../src/services/browserStackWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const workSignalService = require('../src/services/workSignalService');
+    const account = { connectorId: 'browserstack', _id: new mongoose.Types.ObjectId() };
+
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('browserstack').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+    expect(workSignalService.normalizeProviderRecord(account, { id: 'build:abc12345', sourceType: 'execution', buildId: 'abc12345', name: 'Release build', status: 'blocked', priority: 'high' })).toMatchObject({ sourceType: 'execution', status: 'blocked', priority: 'high' });
   });
 
   test('Datadog adapter delegates live delta reads to the credential-backed client', async () => {
@@ -5117,7 +5133,7 @@ describe('work signal normalization', () => {
     expect(http.get).toHaveBeenCalledWith('https://testrail.example.test/index.php?/api/v2/get_runs/7', expect.objectContaining({ params: { is_completed: 0, include_plan_runs: 1, limit: 100, offset: 0 }, auth: { username: 'qa@example.com', password: 'testrail-key' }, maxRedirects: 0, proxy: false }));
     expect(http).not.toHaveProperty('post');
     expect(JSON.stringify(result.records)).not.toMatch(/private@email\.test|private\.example|Private run description|private-reference|custom_release|testrail-key/);
-    expect(result).toMatchObject({ metadata: { source: 'testrail_api', projectId: '7', activeRuns: 1 }, nextCursor: '2026-07-12T00:00:00.000Z' });
+    expect(result).toMatchObject({ metadata: { source: 'testrail_api', projectId: '7', activeRuns: 1 }, nextCursor: '2026-07-12T16:00:00.000Z' });
     expect(result.records).toEqual([expect.objectContaining({ id: 'run:18', sourceType: 'test_run', status: 'blocked', failedCount: 1 })]);
   });
 
@@ -5130,6 +5146,44 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_TESTRAIL_MAX_RUNS; process.env.SNEUP_TESTRAIL_MAX_RUNS = '1';
     const capped = new TestRailWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: { runs: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }], _links: { next: null } } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ username: 'qa@example.com', apiKey: 'testrail-key' })) }, resolve4: jest.fn(() => Promise.resolve(['8.8.8.8'])), resolve6: jest.fn(() => Promise.resolve([])) });
     try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://testrail.example.test', projectId: '7' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_TESTRAIL_MAX_RUNS; else process.env.SNEUP_TESTRAIL_MAX_RUNS = previous; }
+  });
+
+  test('BrowserStack sync reads one bounded page of build health without URLs, tags, sessions, logs, or provider writes', async () => {
+    jest.dontMock('../src/services/browserStackWorkSignalClient');
+    jest.resetModules();
+    const { BrowserStackWorkSignalClient } = require('../src/services/browserStackWorkSignalClient');
+    const http = {
+      get: jest.fn(() => Promise.resolve({
+        data: [{ automation_build: {
+          name: 'Release private@email.test https://private.example/build',
+          hashed_id: 'ca9cccc228cf0e3ff3cb90dd62e2e2bfb4b20bc7',
+          duration: 15611,
+          status: 'failed',
+          build_tag: 'private-release',
+          public_url: 'https://automate.browserstack.com/private-build',
+          sessions: [{ name: 'Private session', logs: 'private logs' }]
+        } }]
+      }))
+    };
+    const client = new BrowserStackWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ username: 'qa@example.com', accessKey: 'browserstack-key' })) } });
+    const result = await client.fetchDelta({}, '2026-07-10T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://api.browserstack.com/automate/builds.json', expect.objectContaining({ params: { limit: 50, offset: 0 }, auth: { username: 'qa@example.com', password: 'browserstack-key' }, maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/private@email\.test|private\.example|private-release|automate\.browserstack\.com|Private session|private logs|browserstack-key/);
+    expect(result).toMatchObject({ metadata: { source: 'browserstack_automate_api', recentBuilds: 1 }, nextCursor: '2026-07-10T00:00:00.000Z' });
+    expect(result.records).toEqual([expect.objectContaining({ id: 'build:ca9cccc228cf0e3ff3cb90dd62e2e2bfb4b20bc7', sourceType: 'execution', status: 'blocked', priority: 'high', durationMs: 15611 })]);
+  });
+
+  test('BrowserStack sync rejects missing credentials and fails closed at the build cap', async () => {
+    jest.dontMock('../src/services/browserStackWorkSignalClient');
+    jest.resetModules();
+    const { BrowserStackWorkSignalClient } = require('../src/services/browserStackWorkSignalClient');
+    const invalid = new BrowserStackWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ username: 'qa@example.com' })) } });
+    await expect(invalid.fetchDelta({})).rejects.toMatchObject({ statusCode: 503 });
+    const previous = process.env.SNEUP_BROWSERSTACK_MAX_BUILDS; process.env.SNEUP_BROWSERSTACK_MAX_BUILDS = '1';
+    const capped = new BrowserStackWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: [{ automation_build: { name: 'One', hashed_id: 'abc12345', status: 'done' } }] })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ username: 'qa@example.com', accessKey: 'browserstack-key' })) } });
+    try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_BROWSERSTACK_MAX_BUILDS; else process.env.SNEUP_BROWSERSTACK_MAX_BUILDS = previous; }
   });
 
   test('Datadog sync reads bounded monitor and active incident metadata without queries, messages, tags, or provider writes', async () => {

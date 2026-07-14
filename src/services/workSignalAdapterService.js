@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'make', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -63,6 +63,7 @@ const genericRestApiWorkSignalClient = require('./genericRestApiWorkSignalClient
 const n8nWorkSignalClient = require('./n8nWorkSignalClient');
 const makeWorkSignalClient = require('./makeWorkSignalClient');
 const testRailWorkSignalClient = require('./testRailWorkSignalClient');
+const browserStackWorkSignalClient = require('./browserStackWorkSignalClient');
 const datadogWorkSignalClient = require('./datadogWorkSignalClient');
 const zendeskWorkSignalClient = require('./zendeskWorkSignalClient');
 const freshdeskWorkSignalClient = require('./freshdeskWorkSignalClient');
@@ -1217,6 +1218,27 @@ testRailAdapter.capabilities.credentialBackedSync = true;
 testRailAdapter.list = async account => (await testRailWorkSignalClient.fetchDelta(account, null)).records;
 testRailAdapter.fetchDelta = (account, cursor) => testRailWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('testRail', testRailAdapter);
+
+const browserStackAdapter = buildAdapter('browserstack', 'BrowserStack Automate recent build metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'execution'),
+  title: titleFromText(item.name, 'BrowserStack test build'),
+  description: '',
+  status: item.status || 'unknown',
+  priority: item.priority || 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['browserstack', item.sourceType, item.completed ? 'completed' : 'running']),
+  dueAt: undefined,
+  providerCreatedAt: undefined,
+  providerUpdatedAt: undefined,
+  evidenceRefs: baseEvidence(account, item, 'BrowserStack Automate build metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, buildId: item.buildId, status: item.status, priority: item.priority, durationMs: item.durationMs, completed: item.completed }
+}));
+browserStackAdapter.capabilities.credentialBackedSync = true;
+browserStackAdapter.list = async account => (await browserStackWorkSignalClient.fetchDelta(account, null)).records;
+browserStackAdapter.fetchDelta = (account, cursor) => browserStackWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('browserstack', browserStackAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

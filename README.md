@@ -209,6 +209,8 @@ Live credential-backed ingestion is available for Trello, Jira, Asana, Slack, Gi
 
 TestRail is available for one explicit public HTTPS tenant, username, API key, and numeric project ID. Sneup uses one bounded GET request for active test-run metadata, rejects paginated overflow, pins DNS to public addresses, and excludes cases, results, descriptions, references, custom fields, attachments, and provider writes.
 
+BrowserStack is available with a username and access key. Sneup performs one fixed-host, bounded Automate build-list GET, fails closed when its page cap is reached, and retains only build ID, redacted name, status, priority, completion state, and bounded duration. It excludes public URLs, tags, sessions, logs, browser and device data, and provider writes.
+
 Businessmap (formerly Kanbanize) is additionally available with its API-v2 account endpoint and API key. Sneup accepts one public `https://account.kanbanize.com` URL, uses GET-only bounded active-board and paginated active-card reads, and excludes descriptions, comments, custom fields, files, dependencies, users, time data, workflow configuration, and provider writes.
 
 Microsoft Planner uses a dedicated Microsoft OAuth account with `Tasks.Read` only. It reads bounded assigned-task metadata from `/me/planner/tasks`, excludes descriptions, checklists, attachments, labels, comments, and provider writes, and retains only plan/bucket identifiers for work-graph context.

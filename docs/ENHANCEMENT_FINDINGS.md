@@ -16,6 +16,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 - ENH-019: Decision queue review windows are bounded from 1 to 168 hours per risk queue. Follow-up and escalation timing is also workspace-scoped, bounded, and auditable; escalation cannot precede follow-up, all scheduled results remain internal approval candidates, and completed actions schedule their follow-up from the same policy.
 
 - ENH-001: TestRail is now the 75th bounded read-only credential-backed connector. It reads selected-project active test-run metadata only, rejects private-network and paginated-overflow targets, and excludes cases, results, descriptions, references, custom fields, attachments, and provider writes.
+- ENH-001: BrowserStack is now the 76th bounded read-only credential-backed connector. It reads one capped Automate build page from BrowserStack's fixed API host and excludes public URLs, tags, sessions, logs, browser/device data, and provider writes.
 
 ## Findings
 
