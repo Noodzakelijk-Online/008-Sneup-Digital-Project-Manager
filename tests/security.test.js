@@ -80,6 +80,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/backlogWorkSignalClient');
     jest.dontMock('../src/services/freedcampWorkSignalClient');
     jest.dontMock('../src/services/meisterTaskWorkSignalClient');
+    jest.dontMock('../src/services/ahaWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1982,6 +1983,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('meistertask').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Aha adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'feature:18' }] });
+    jest.doMock('../src/services/ahaWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'aha' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('aha').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3708,6 +3720,32 @@ describe('work signal normalization', () => {
     try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_MEISTERTASK_MAX_PROJECTS; else process.env.SNEUP_MEISTERTASK_MAX_PROJECTS = previous; }
     const malformed = new MeisterTaskWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { projects: [] } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'meister-token' })) } });
     await expect(malformed.fetchDelta({})).rejects.toMatchObject({ statusCode: 502 });
+  });
+
+  test('Aha sync uses bounded allowlisted metadata reads without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/ahaWorkSignalClient');
+    jest.resetModules();
+    const { AhaWorkSignalClient } = require('../src/services/ahaWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { products: [{ id: '9', reference_prefix: 'SNP', name: 'Sneup', workspace_type: 'product_workspace', created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-11T12:00:00.000Z', url: 'https://sneup.aha.io/projects/SNP', description: 'Private product description', custom_fields: { secret: 'value' } }], pagination: { total_records: 1, total_pages: 1, current_page: 1 } } })
+      .mockResolvedValueOnce({ data: { features: [{ id: '18', reference_num: 'SNP-18', product_id: '9', name: 'Ship Aha connector', workflow_status: { name: 'In progress' }, due_date: '2026-07-15', created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-12T12:00:00.000Z', url: 'https://sneup.aha.io/features/SNP-18', description: 'Private feature description', notes: 'Private notes', comments: ['Private comment'], attachments: [{ name: 'secret.pdf' }], custom_fields: { secret: 'value' } }], pagination: { total_records: 1, total_pages: 1, current_page: 1 } } }) };
+    const client = new AhaWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'aha-token' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { accountUrl: 'https://sneup.aha.io' } } }, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://sneup.aha.io/api/v1/features', expect.objectContaining({ params: expect.objectContaining({ page: 1, per_page: 200, fields: expect.stringContaining('workflow_status') }), headers: expect.objectContaining({ Authorization: 'Bearer aha-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private product description|Private feature description|Private notes|Private comment|secret\.pdf|value/);
+    expect(result).toMatchObject({ metadata: { source: 'aha_api', products: 1, features: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('Aha sync rejects untrusted account URLs and fails closed at its product cap', async () => {
+    jest.dontMock('../src/services/ahaWorkSignalClient');
+    jest.resetModules();
+    const { AhaWorkSignalClient } = require('../src/services/ahaWorkSignalClient');
+    const invalid = new AhaWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'aha-token' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { accountUrl: 'https://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_AHA_MAX_PRODUCTS; process.env.SNEUP_AHA_MAX_PRODUCTS = '1';
+    const capped = new AhaWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { products: [{ id: '1', name: 'One' }, { id: '2', name: 'Two' }], pagination: { total_records: 2, total_pages: 1, current_page: 1 } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'aha-token' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { accountUrl: 'https://sneup.aha.io' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_AHA_MAX_PRODUCTS; else process.env.SNEUP_AHA_MAX_PRODUCTS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

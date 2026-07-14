@@ -216,6 +216,8 @@ Freedcamp uses an account API key in the `X-API-KEY` header and reads bounded pr
 
 MeisterTask uses a personal access token with bearer authorization and reads bounded active project and section metadata plus task metadata with `GET`. It pins pagination to ascending IDs, excludes notes, comments, checklists, attachments, labels, tokens, and tracked-time detail, and never makes provider writes.
 
+Aha! uses a user-scoped API token against one public `*.aha.io` account domain. It makes bounded `GET` requests for product and feature metadata using server-side field allowlists, excludes descriptions, notes, comments, attachments, custom fields, and provider writes, and fails visibly at configured collection caps.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations

@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -47,6 +47,7 @@ const taigaWorkSignalClient = require('./taigaWorkSignalClient');
 const backlogWorkSignalClient = require('./backlogWorkSignalClient');
 const freedcampWorkSignalClient = require('./freedcampWorkSignalClient');
 const meisterTaskWorkSignalClient = require('./meisterTaskWorkSignalClient');
+const ahaWorkSignalClient = require('./ahaWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -821,6 +822,12 @@ meisterTaskAdapter.capabilities.credentialBackedSync = true;
 meisterTaskAdapter.list = async account => (await meisterTaskWorkSignalClient.fetchDelta(account, null)).records;
 meisterTaskAdapter.fetchDelta = (account, cursor) => meisterTaskWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('meistertask', meisterTaskAdapter);
+
+const ahaAdapter = buildAdapter('aha', 'Aha! product and feature metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'feature'), title: titleFromText(item.name, 'Aha! work item'), description: '', status: statusFromText(item.status), priority: 'unknown', url: pick(item.url), owners: [], labels: compact(['aha', item.sourceType, item.product?.name, item.status]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Aha! metadata'), raw: { id: item.id, sourceType: item.sourceType, productId: item.productId, featureId: item.featureId, reference: item.reference, product: item.product, workspaceType: item.workspaceType, status: item.status, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt, url: item.url } }));
+ahaAdapter.capabilities.credentialBackedSync = true;
+ahaAdapter.list = async account => (await ahaWorkSignalClient.fetchDelta(account, null)).records;
+ahaAdapter.fetchDelta = (account, cursor) => ahaWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('aha', ahaAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
