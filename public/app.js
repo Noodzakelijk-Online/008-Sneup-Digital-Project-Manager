@@ -1,5 +1,6 @@
 const FIRST_RUN_SETUP_KEY = 'sneup.firstRun.v1';
 const SESSION_TOKEN_KEY = 'sneup.sessionToken.v1';
+const CONNECTOR_PAGE_SIZE = 24;
 
 const state = {
   snapshot: null,
@@ -11,6 +12,7 @@ const state = {
   categories: [],
   accounts: [],
   connectorSafety: null,
+  connectorDisplayLimit: CONNECTOR_PAGE_SIZE,
   workSignals: [],
   workGraph: null,
   workGraphCandidates: [],
@@ -103,6 +105,7 @@ const els = {
   auditCount: document.getElementById('auditCount'),
   connectorCount: document.getElementById('connectorCount'),
   connectorGrid: document.getElementById('connectorGrid'),
+  connectorPagination: document.getElementById('connectorPagination'),
   categoryList: document.getElementById('categoryList'),
   connectorSearch: document.getElementById('connectorSearch'),
   connectorHeading: document.getElementById('connectorHeading'),
@@ -174,6 +177,7 @@ els.modal.addEventListener('click', (event) => {
 });
 els.connectorSearch.addEventListener('input', (event) => {
   state.search = event.target.value.toLowerCase();
+  state.connectorDisplayLimit = CONNECTOR_PAGE_SIZE;
   renderConnectors();
 });
 document.querySelectorAll('[data-queue-filter]').forEach((button) => {
@@ -3591,10 +3595,14 @@ function renderConnectors() {
     const text = `${connector.name} ${connector.description} ${connector.categoryName}`.toLowerCase();
     return categoryMatch && (!state.search || text.includes(state.search));
   });
+  const visibleConnectors = filtered.slice(0, state.connectorDisplayLimit);
 
   els.connectorGrid.innerHTML = filtered.length === 0
     ? '<div class="empty">No connectors match this view.</div>'
-    : filtered.map(connector => renderConnector(connector, accountsByConnectorId.get(connector.id))).join('');
+    : visibleConnectors.map(connector => renderConnector(connector, accountsByConnectorId.get(connector.id))).join('');
+  els.connectorPagination.innerHTML = filtered.length > 0
+    ? `<span class="meta">Showing ${visibleConnectors.length} of ${filtered.length} tools</span>${visibleConnectors.length < filtered.length ? '<button class="button" data-load-more-connectors type="button">Show more</button>' : ''}`
+    : '';
 
   document.querySelectorAll('[data-connect]').forEach((button) => {
     button.addEventListener('click', () => startConnection(button.dataset.connect));
@@ -3626,6 +3634,12 @@ function renderConnectors() {
   document.querySelectorAll('[data-figma-team]').forEach((button) => {
     button.addEventListener('click', () => openFigmaTeamModal(button.dataset.figmaTeam));
   });
+  document.querySelectorAll('[data-load-more-connectors]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.connectorDisplayLimit += CONNECTOR_PAGE_SIZE;
+      renderConnectors();
+    });
+  });
 }
 
 function renderConnectorSafety() {
@@ -3656,6 +3670,7 @@ function renderCategories() {
   document.querySelectorAll('[data-category]').forEach((button) => {
     button.addEventListener('click', () => {
       state.category = button.dataset.category;
+      state.connectorDisplayLimit = CONNECTOR_PAGE_SIZE;
       renderConnectors();
     });
   });

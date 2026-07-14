@@ -528,6 +528,14 @@ h1 {
   gap: 12px;
 }
 
+.connector-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .connector-safety {
   border: 1px solid #b8dfd2;
   background: #effaf6;
