@@ -222,6 +222,8 @@ Productboard uses a personal API token with bearer authorization. It reads bound
 
 Toggl Track uses an API token with HTTP Basic authentication and requires one numeric workspace ID. It reads bounded project metadata plus a short, bounded personal time-entry window with `GET`, keeps only workspace-scoped utilization metadata, honors the provider's 1,000-entry ceiling, and excludes descriptions, tags, clients, people, rates, sharing data, notes, and provider writes.
 
+Clockify uses an API key and requires one workspace ID. It reads only the authenticated user's bounded, paginated project and time-entry metadata with `GET`, validates the provider pagination signal, excludes descriptions, tags, clients, people, rates, custom fields, and provider writes, and fails visibly at configured collection caps.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations

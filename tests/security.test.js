@@ -83,6 +83,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/ahaWorkSignalClient');
     jest.dontMock('../src/services/productboardWorkSignalClient');
     jest.dontMock('../src/services/togglTrackWorkSignalClient');
+    jest.dontMock('../src/services/clockifyWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2018,6 +2019,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('toggl_track').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Clockify adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'time_entry:18' }] });
+    jest.doMock('../src/services/clockifyWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'clockify' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('clockify').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3823,6 +3835,33 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_TOGGL_MAX_ENTRIES; process.env.SNEUP_TOGGL_MAX_ENTRIES = '1';
     const capped = new TogglTrackWorkSignalClient({ http: { get: jest.fn().mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [{ id: 1, workspace_id: 77, start: '2026-07-12T10:00:00.000Z' }] }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'toggl-token' })) } });
     try { await expect(capped.fetchDelta({ metadata: { fields: { workspaceId: '77' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_TOGGL_MAX_ENTRIES; else process.env.SNEUP_TOGGL_MAX_ENTRIES = previous; }
+  });
+
+  test('Clockify sync reads bounded personal utilization metadata without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/clockifyWorkSignalClient');
+    jest.resetModules();
+    const { ClockifyWorkSignalClient } = require('../src/services/clockifyWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { id: 'user-1', email: 'private@example.com', name: 'Private user' } })
+      .mockResolvedValueOnce({ data: [{ id: 'project-1', name: 'Sneup release', archived: false, billable: true, clientName: 'Private client', note: 'Private project note', costRate: { amount: 220 } }], headers: { 'last-page': 'true' } })
+      .mockResolvedValueOnce({ data: [{ id: 'entry-1', workspaceId: 'workspace-1', projectId: 'project-1', taskId: 'task-1', description: 'Private entry detail', tagIds: ['private'], userId: 'user-1', customFieldValues: [{ value: 'secret' }], timeInterval: { start: '2026-07-12T10:00:00.000Z', end: '2026-07-12T11:00:00.000Z', duration: '3600' } }], headers: { 'last-page': 'true' } }) };
+    const client = new ClockifyWorkSignalClient({ http, now: () => new Date('2026-07-12T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'clockify-key' })) } });
+    const result = await client.fetchDelta({ metadata: { fields: { workspaceId: 'workspace-1' } } }, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://api.clockify.me/api/v1/workspaces/workspace-1/user/user-1/time-entries', expect.objectContaining({ params: expect.objectContaining({ start: '2026-07-09T23:59:00.000Z', end: '2026-07-12T12:00:00.000Z', hydrated: false, page: 1, 'page-size': 100 }), headers: expect.objectContaining({ 'X-Api-Key': 'clockify-key' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private entry detail|private|Private client|Private project note|220|secret|Private user/);
+    expect(result).toMatchObject({ metadata: { source: 'clockify_api', workspaceId: 'workspace-1', projects: 1, timeEntries: 1 }, nextCursor: '2026-07-12T11:00:00.000Z' });
+  });
+
+  test('Clockify sync rejects unsafe workspace IDs and fails closed at a pagination cap', async () => {
+    jest.dontMock('../src/services/clockifyWorkSignalClient');
+    jest.resetModules();
+    const { ClockifyWorkSignalClient } = require('../src/services/clockifyWorkSignalClient');
+    const invalid = new ClockifyWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'clockify-key' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { workspaceId: '../internal' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_CLOCKIFY_MAX_ENTRIES; process.env.SNEUP_CLOCKIFY_MAX_ENTRIES = '1';
+    const capped = new ClockifyWorkSignalClient({ http: { get: jest.fn().mockResolvedValueOnce({ data: { id: 'user-1' } }).mockResolvedValueOnce({ data: [], headers: { 'last-page': 'true' } }).mockResolvedValueOnce({ data: [{ id: 'entry-1', workspaceId: 'workspace-1', timeInterval: { start: '2026-07-12T10:00:00.000Z' } }], headers: { 'last-page': 'false' } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'clockify-key' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { workspaceId: 'workspace-1' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_CLOCKIFY_MAX_ENTRIES; else process.env.SNEUP_CLOCKIFY_MAX_ENTRIES = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

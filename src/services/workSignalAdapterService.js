@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -50,6 +50,7 @@ const meisterTaskWorkSignalClient = require('./meisterTaskWorkSignalClient');
 const ahaWorkSignalClient = require('./ahaWorkSignalClient');
 const productboardWorkSignalClient = require('./productboardWorkSignalClient');
 const togglTrackWorkSignalClient = require('./togglTrackWorkSignalClient');
+const clockifyWorkSignalClient = require('./clockifyWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -842,6 +843,12 @@ togglTrackAdapter.capabilities.credentialBackedSync = true;
 togglTrackAdapter.list = async account => (await togglTrackWorkSignalClient.fetchDelta(account, null)).records;
 togglTrackAdapter.fetchDelta = (account, cursor) => togglTrackWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('toggl_track', togglTrackAdapter);
+
+const clockifyAdapter = buildAdapter('clockify', 'Clockify project and personal utilization metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'time_entry'), title: item.sourceType === 'project' ? titleFromText(item.name, 'Clockify project') : `Clockify entry ${item.timeEntryId || item.id}`, description: '', status: item.sourceType === 'project' ? item.archived ? 'archived' : 'open' : 'done', priority: 'unknown', owners: [], labels: compact(['clockify', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.taskId ? `task:${item.taskId}` : undefined, item.billable === true ? 'billable' : undefined]), dueAt: undefined, providerCreatedAt: pick(item.startedAt), providerUpdatedAt: pick(item.stoppedAt, item.startedAt), evidenceRefs: baseEvidence(account, item, 'Clockify utilization metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, timeEntryId: item.timeEntryId, taskId: item.taskId, workspaceId: item.workspaceId, archived: item.archived, billable: item.billable, startedAt: item.startedAt, stoppedAt: item.stoppedAt, trackedDuration: item.trackedDuration } }));
+clockifyAdapter.capabilities.credentialBackedSync = true;
+clockifyAdapter.list = async account => (await clockifyWorkSignalClient.fetchDelta(account, null)).records;
+clockifyAdapter.fetchDelta = (account, cursor) => clockifyWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('clockify', clockifyAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
