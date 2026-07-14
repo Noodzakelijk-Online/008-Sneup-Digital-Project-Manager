@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const mongoose = require('mongoose');
 const ConnectorAccount = require('../models/ConnectorAccount');
+const AuditEvent = require('../models/AuditEvent');
 const { CATEGORIES, getCategories, getConnector, getConnectors } = require('./connectorRegistry');
 const { buildConnectorSafetyProfile, summarizeConnectorSafety } = require('./connectorSafetyProfile');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
@@ -202,6 +203,7 @@ class AccountConnectorService {
         connector: this.sanitizeConnector(connector),
         authType: connector.auth.type,
         fields: connector.auth.fields || [],
+        scopeAcknowledged: options.scopeAcknowledged === true,
         message: 'This connector uses a token, API key, webhook, or manual workspace link.'
       };
     }
@@ -236,7 +238,8 @@ class AccountConnectorService {
     const state = this.createState({
       connectorId: connector.id,
       returnTo: this.sanitizeReturnTo(options.returnTo),
-      workspaceId: String(this.resolveWorkspaceId(options.workspaceId))
+      workspaceId: String(this.resolveWorkspaceId(options.workspaceId)),
+      consent: this.createConsentEvidence(connector, options)
     });
 
     const authUrl = new URL(connector.auth.authorizationUrl);
@@ -298,7 +301,8 @@ class AccountConnectorService {
 
     const tokenResponse = await this.exchangeCodeForToken(connector, query.code, options.baseUrl);
     const account = await this.saveOAuthAccount(connector, tokenResponse, {
-      workspaceId: state.workspaceId || options.workspaceId
+      workspaceId: state.workspaceId || options.workspaceId,
+      consent: state.consent
     });
 
     return {
@@ -309,6 +313,7 @@ class AccountConnectorService {
 
   async saveCredentialAccount(connectorId, body = {}, options = {}) {
     const connector = this.requireConnector(connectorId);
+    const safety = buildConnectorSafetyProfile(connector);
 
     if (connector.auth.type === 'oauth2') {
       const error = new Error('Use the OAuth connect endpoint for this connector');
@@ -318,6 +323,11 @@ class AccountConnectorService {
 
     this.requireDatabase();
     this.requireEncryptionKey();
+    if (safety.scopeReviewRequired && body.scopeAcknowledged !== true) {
+      const error = new Error('Review and acknowledge the requested provider scopes before saving credentials');
+      error.statusCode = 400;
+      throw error;
+    }
 
     const fields = connector.auth.fields || [];
     const missing = fields
@@ -352,6 +362,10 @@ class AccountConnectorService {
       accountName,
       externalAccountId: body.externalAccountId || accountName,
       scopes: connector.auth.scopes || [],
+      consent: this.createConsentEvidence(connector, {
+        ...options,
+        scopeAcknowledged: body.scopeAcknowledged === true
+      }),
       credentials: {
         apiKey: Object.keys(secretPayload).length > 0 ? this.encrypt(JSON.stringify(secretPayload)) : undefined
       },
@@ -364,6 +378,7 @@ class AccountConnectorService {
     });
 
     await account.save();
+    await this.recordConnectionAudit(account, options.actorId);
     return this.sanitizeAccount(account);
   }
 
@@ -552,6 +567,7 @@ class AccountConnectorService {
       accountName,
       externalAccountId,
       scopes: this.normalizeScopes(tokenResponse.scope || connector.auth.scopes || []),
+      consent: options.consent || this.createConsentEvidence(connector, options),
       credentials: {
         accessToken: accessToken ? this.encrypt(accessToken) : undefined,
         refreshToken: refreshToken ? this.encrypt(refreshToken) : undefined,
@@ -566,7 +582,47 @@ class AccountConnectorService {
     });
 
     await account.save();
+    await this.recordConnectionAudit(account, options.consent?.acknowledgedBy);
     return account;
+  }
+
+  createConsentEvidence(connector, options = {}) {
+    const safety = buildConnectorSafetyProfile(connector);
+    const acknowledgedAt = options.consent?.acknowledgedAt || new Date().toISOString();
+    const acknowledgedBy = options.consent?.acknowledgedBy || options.actorId || 'local-user';
+    return {
+      version: 'scope-review-v1',
+      acknowledgedAt,
+      acknowledgedBy,
+      requestedScopes: this.normalizeScopes(safety.requestedScopes || connector.auth.scopes || []),
+      scopeReviewRequired: Boolean(safety.scopeReviewRequired)
+    };
+  }
+
+  async recordConnectionAudit(account, actor) {
+    try {
+      await AuditEvent.create({
+        workspaceId: account.workspaceId,
+        entityType: 'connector_account',
+        entityId: account._id,
+        action: 'connector_account_connected',
+        actor: actor || account.connectedBy || 'local-user',
+        source: 'api',
+        riskLevel: account.consent?.scopeReviewRequired ? 'medium' : 'low',
+        afterState: {
+          connectorId: account.connectorId,
+          connectorName: account.connectorName,
+          authType: account.authType,
+          scopes: account.scopes || [],
+          consent: this.sanitizeConsent(account.consent)
+        }
+      });
+    } catch (error) {
+      await account.deleteOne?.();
+      const auditError = new Error('Connector account was not linked because consent evidence could not be recorded');
+      auditError.statusCode = 503;
+      throw auditError;
+    }
   }
 
   sanitizeConnector(connector) {
@@ -601,6 +657,7 @@ class AccountConnectorService {
       accountName: account.accountName,
       externalAccountId: account.externalAccountId,
       scopes: account.scopes || [],
+      consent: this.sanitizeConsent(account.consent),
       metadata: this.sanitizeAccountMetadata(account.metadata),
       lastValidatedAt: account.lastValidatedAt,
       lastSyncAt: account.lastSyncAt,
@@ -631,6 +688,16 @@ class AccountConnectorService {
         channels: Number(lastSync.channels || 0),
         finishedAt: lastSync.finishedAt
       } : undefined
+    };
+  }
+
+  sanitizeConsent(consent = {}) {
+    return {
+      version: consent?.version || 'scope-review-v1',
+      acknowledgedAt: consent?.acknowledgedAt || null,
+      acknowledgedBy: consent?.acknowledgedBy || null,
+      requestedScopes: this.normalizeScopes(consent?.requestedScopes || []),
+      scopeReviewRequired: Boolean(consent?.scopeReviewRequired)
     };
   }
 

@@ -42,6 +42,21 @@ const connectorAccountSchema = new mongoose.Schema({
   scopes: [{
     type: String
   }],
+  consent: {
+    version: {
+      type: String,
+      default: 'scope-review-v1'
+    },
+    acknowledgedAt: Date,
+    acknowledgedBy: String,
+    requestedScopes: [{
+      type: String
+    }],
+    scopeReviewRequired: {
+      type: Boolean,
+      default: false
+    }
+  },
   credentials: {
     accessToken: String,
     refreshToken: String,

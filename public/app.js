@@ -3093,6 +3093,9 @@ function renderConnector(connector, account) {
   const syncSummary = canSync && lastSync.finishedAt
     ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}${lastSync.workspaces ? `<span>${lastSync.workspaces} Asana workspace${lastSync.workspaces === 1 ? '' : 's'}</span>` : ''}${lastSync.projects ? `<span>${lastSync.projects} projects</span>` : ''}${lastSync.channels ? `<span>${lastSync.channels} channels</span>` : ''}${lastSync.calendars ? `<span>${lastSync.calendars} calendars</span>` : ''}${lastSync.events ? `<span>${lastSync.events} events</span>` : ''}${lastSync.taskLists ? `<span>${lastSync.taskLists} task lists</span>` : ''}${lastSync.todoTasks ? `<span>${lastSync.todoTasks} To Do tasks</span>` : ''}${lastSync.files ? `<span>${lastSync.files} files</span>` : ''}${lastSync.issues ? `<span>${lastSync.issues} issues</span>` : ''}${lastSync.items ? `<span>${lastSync.items} items</span>` : ''}${lastSync.pages ? `<span>${lastSync.pages} pages</span>` : ''}${lastSync.dataSources ? `<span>${lastSync.dataSources} data sources</span>` : ''}</div>`
     : '';
+  const consentSummary = account?.consent?.acknowledgedAt
+    ? `<div class="meta"><span>scope review ${escapeHtml(formatDate(account.consent.acknowledgedAt))}</span><span>${escapeHtml(account.consent.acknowledgedBy || 'local user')}</span></div>`
+    : '';
   return `
     <div class="connector-card">
       <div class="connector-top">
@@ -3107,6 +3110,7 @@ function renderConnector(connector, account) {
       </div>
       <p>${escapeHtml(connector.description)}</p>
       <div class="connector-policy ${safety.scopeRisk === 'review' ? 'review' : ''}">${escapeHtml(safety.summary || 'Read-only ingestion only.')}</div>
+      ${consentSummary}
       ${syncSummary}
       <div class="connector-actions">
         <span class="meta">${connector.sync.slice(0, 3).map(escapeHtml).join('  |  ')}</span>
@@ -3311,7 +3315,7 @@ function openCredentialModal(connector, data) {
         <label for="accountName">Account name</label>
         <input id="accountName" name="accountName" type="text" placeholder="${escapeHtml(connector.name)}">
       </div>
-      <div class="notice">Credential storage is locked until MongoDB plus CONNECTOR_ENCRYPTION_KEY are configured.</div>
+      <div class="notice">Credential storage is locked until MongoDB plus CONNECTOR_ENCRYPTION_KEY are configured. Saving records the scope review without storing your credential in the audit ledger.</div>
       <div class="toolbar modal-actions">
         <button class="button" type="button" id="cancelCredential">Cancel</button>
         <button class="button primary" type="submit">Save account</button>
@@ -3322,7 +3326,10 @@ function openCredentialModal(connector, data) {
   document.getElementById('cancelCredential').addEventListener('click', closeModal);
   document.getElementById('credentialForm').addEventListener('submit', async (event) => {
     event.preventDefault();
-    const body = Object.fromEntries(new FormData(event.target).entries());
+    const body = {
+      ...Object.fromEntries(new FormData(event.target).entries()),
+      scopeAcknowledged: data.scopeAcknowledged === true
+    };
     try {
       const response = await apiFetch(`/api/connectors/${connector.id}/accounts`, {
         method: 'POST',

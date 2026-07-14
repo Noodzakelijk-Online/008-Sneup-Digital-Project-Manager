@@ -192,6 +192,7 @@ router.post('/:connectorId/connect', requirePermission('connectors:manage'), (re
       baseUrl: getBaseUrl(req),
       returnTo: req.body.returnTo,
       scopeAcknowledged: req.body.scopeAcknowledged === true,
+      actorId: req.auth?.actorId,
       workspaceId: getRequestWorkspaceObjectId(req)
     });
 

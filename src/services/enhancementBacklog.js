@@ -237,11 +237,11 @@ const enhancements = [
     priority: 'P1',
     area: 'connectors',
     title: 'Require explicit scope review before linking provider accounts',
-    evidence: 'Every connector now exposes a safety profile, signals are read-only, provider writes are blocked, and a user must acknowledge the requested provider scopes before Sneup opens OAuth or accepts provider credentials. Google Calendar, Zoom, Miro, and Google Chat use their documented read-only scopes.',
+    evidence: 'Every connector exposes a safety profile, signals are read-only, provider writes are blocked, and a user must acknowledge requested provider scopes before Sneup opens OAuth or accepts provider credentials. Non-secret consent evidence is retained on the linked account and workspace audit ledger. Google Calendar, Zoom, Miro, and Google Chat use documented read-only scopes.',
     impact: 'Makes account linking legible and prevents a convenience connection flow from silently requesting broad provider permissions.',
     effort: 'M',
     status: 'done',
-    nextStep: 'Record provider consent metadata and workspace-scoped credential rotation evidence in the audit ledger.',
+    nextStep: 'Add workspace-scoped credential rotation controls and consent evidence retention policies.',
     acceptanceCriteria: [
       'Connector catalog displays requested scopes and safety posture.',
       'OAuth and credential flows require an explicit scope-review acknowledgement.',

@@ -1034,9 +1034,17 @@ describe('connector registry', () => {
 
       const approvedReview = accountConnectorService.beginConnection('miro', {
         baseUrl: 'https://sneup.example',
-        scopeAcknowledged: true
+        scopeAcknowledged: true,
+        actorId: 'operator-1'
       });
       expect(approvedReview.authUrl).toContain('https://miro.com/oauth/authorize');
+      const signedState = new URL(approvedReview.authUrl).searchParams.get('state');
+      expect(accountConnectorService.verifyState(signedState).consent).toMatchObject({
+        version: 'scope-review-v1',
+        acknowledgedBy: 'operator-1',
+        requestedScopes: ['boards:read', 'identity:read'],
+        scopeReviewRequired: true
+      });
     } finally {
       process.env.CONNECTOR_STATE_SECRET = original.state;
       process.env.MIRO_CLIENT_ID = original.clientId;
@@ -1143,6 +1151,36 @@ describe('connector registry', () => {
       if (originalEncryptionKey === undefined) delete process.env.CONNECTOR_ENCRYPTION_KEY;
       else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;
     }
+  });
+
+  test('preserves non-secret connector scope consent while redacting credentials', () => {
+    const account = accountConnectorService.sanitizeAccount({
+      _id: 'account-consent-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'miro',
+      connectorName: 'Miro',
+      category: 'collaboration',
+      authType: 'oauth2',
+      status: 'connected',
+      scopes: ['boards:read', 'identity:read'],
+      credentials: { accessToken: 'never-expose-this' },
+      consent: {
+        version: 'scope-review-v1',
+        acknowledgedAt: '2026-07-14T00:00:00.000Z',
+        acknowledgedBy: 'operator-1',
+        requestedScopes: ['boards:read', 'identity:read'],
+        scopeReviewRequired: true
+      }
+    });
+
+    expect(account.consent).toEqual({
+      version: 'scope-review-v1',
+      acknowledgedAt: '2026-07-14T00:00:00.000Z',
+      acknowledgedBy: 'operator-1',
+      requestedScopes: ['boards:read', 'identity:read'],
+      scopeReviewRequired: true
+    });
+    expect(account).not.toHaveProperty('credentials');
   });
 
   test('lists Jira sites with an in-process token and persists only the selected cloud ID', async () => {
