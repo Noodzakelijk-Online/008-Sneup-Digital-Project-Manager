@@ -108,6 +108,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/intercomWorkSignalClient');
     jest.dontMock('../src/services/webexWorkSignalClient');
     jest.dontMock('../src/services/discordWorkSignalClient');
+    jest.dontMock('../src/services/mattermostWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -1197,6 +1198,8 @@ describe('connector registry', () => {
     expect(byId.discord.auth.scopes).toEqual(['identify', 'guilds']);
     expect(byId.discord.auth.scopes).not.toEqual(expect.arrayContaining(['email', 'guilds.join', 'messages.read']));
     expect(byId.discord.sync).toEqual(['guilds']);
+    expect(byId.mattermost.auth.fields.map(field => field.name)).toEqual(['baseUrl', 'token']);
+    expect(byId.mattermost.sync).toEqual(['teams']);
     expect(byId.rally.auth.fields.map(field => field.name)).toEqual(['apiKey']);
     expect(byId.rally.sync).toEqual(['user_stories', 'defects']);
   });
@@ -2416,6 +2419,11 @@ describe('work signal normalization', () => {
   test('Discord adapter delegates bounded guild metadata reads to the credential-backed client', async () => {
     jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'guild:123456789012345678' }] }); jest.doMock('../src/services/discordWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'discord' };
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('discord').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Mattermost adapter delegates bounded team metadata reads to the credential-backed client', async () => {
+    jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'team:team_123' }] }); jest.doMock('../src/services/mattermostWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'mattermost' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('mattermost').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -5162,6 +5170,39 @@ describe('work signal normalization', () => {
       .mockResolvedValueOnce({ data: { results: [{ id: '1001', name: 'One' }, { id: '1002', name: 'Two' }], _links: {} } })
       .mockResolvedValueOnce({ data: { results: [], _links: {} } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ metadata: { fields: { confluenceCloudId: 'cloud-0001' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_CONFLUENCE_MAX_SPACES; else process.env.SNEUP_CONFLUENCE_MAX_SPACES = previous; }
+  });
+
+  test('Mattermost sync pages bounded team metadata without channels, people, permissions, posts, files, or provider writes', async () => {
+    jest.dontMock('../src/services/mattermostWorkSignalClient');
+    jest.resetModules();
+    const { MattermostWorkSignalClient } = require('../src/services/mattermostWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: [{ id: 'team_123', display_name: `Delivery ${privateEmail}`, description: 'Private team context', email: privateEmail, invite_id: 'private-invite', allowed_domains: 'private.example', channels: [{ id: 'private-channel' }], posts: ['private'] }] })
+      .mockResolvedValueOnce({ data: [] }) };
+    const client = new MattermostWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'mattermost-access-token' })) } });
+    const previous = { max: process.env.SNEUP_MATTERMOST_MAX_TEAMS, page: process.env.SNEUP_MATTERMOST_PAGE_SIZE }; process.env.SNEUP_MATTERMOST_MAX_TEAMS = '2'; process.env.SNEUP_MATTERMOST_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'mattermost', metadata: { fields: { baseUrl: 'https://chat.example.test' } } }, '2026-07-12T12:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://chat.example.test/api/v4/users/me/teams', expect.objectContaining({ params: { page: 0, per_page: 1 }, headers: expect.objectContaining({ Authorization: 'Bearer mattermost-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://chat.example.test/api/v4/users/me/teams', expect.objectContaining({ params: { page: 1, per_page: 1 } }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'mattermost_current_user_team_metadata', teams: 1, pages: 2 }, nextCursor: '2026-07-12T12:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private team|private-invite|private\.example|channels|posts|allowed_domains|description/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_MATTERMOST_MAX_TEAMS; else process.env.SNEUP_MATTERMOST_MAX_TEAMS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_MATTERMOST_PAGE_SIZE; else process.env.SNEUP_MATTERMOST_PAGE_SIZE = previous.page; }
+  });
+
+  test('Mattermost sync rejects invalid cursors, unsafe instance URLs, malformed team identifiers, and collection caps', async () => {
+    jest.dontMock('../src/services/mattermostWorkSignalClient');
+    jest.resetModules();
+    const { MattermostWorkSignalClient } = require('../src/services/mattermostWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ token: 'token' })) };
+    const invalid = new MattermostWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ metadata: { fields: { baseUrl: 'https://chat.example.test' } } }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    await expect(invalid.fetchDelta({ metadata: { fields: { baseUrl: 'http://127.0.0.1:8065' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new MattermostWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ id: 'https://127.0.0.1/steal' }] }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ metadata: { fields: { baseUrl: 'https://chat.example.test' } } })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = { max: process.env.SNEUP_MATTERMOST_MAX_TEAMS, page: process.env.SNEUP_MATTERMOST_PAGE_SIZE }; process.env.SNEUP_MATTERMOST_MAX_TEAMS = '1'; process.env.SNEUP_MATTERMOST_PAGE_SIZE = '1'; const capped = new MattermostWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ id: 'team_123' }] }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://chat.example.test' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous.max === undefined) delete process.env.SNEUP_MATTERMOST_MAX_TEAMS; else process.env.SNEUP_MATTERMOST_MAX_TEAMS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_MATTERMOST_PAGE_SIZE; else process.env.SNEUP_MATTERMOST_PAGE_SIZE = previous.page; }
   });
 
   test('Discord sync reads one bounded server metadata collection without channels, people, permissions, invites, icons, messages, or provider writes', async () => {

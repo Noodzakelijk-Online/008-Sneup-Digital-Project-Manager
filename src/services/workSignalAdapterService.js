@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -77,6 +77,7 @@ const podioWorkSignalClient = require('./podioWorkSignalClient');
 const intercomWorkSignalClient = require('./intercomWorkSignalClient');
 const webexWorkSignalClient = require('./webexWorkSignalClient');
 const discordWorkSignalClient = require('./discordWorkSignalClient');
+const mattermostWorkSignalClient = require('./mattermostWorkSignalClient');
 const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
@@ -1052,6 +1053,12 @@ discordAdapter.capabilities.credentialBackedSync = true;
 discordAdapter.list = async account => (await discordWorkSignalClient.fetchDelta(account, null)).records;
 discordAdapter.fetchDelta = (account, cursor) => discordWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('discord', discordAdapter);
+
+const mattermostAdapter = buildAdapter('mattermost', 'Mattermost team metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'team'), title: titleFromText(item.name, 'Mattermost team'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['mattermost', item.sourceType]), dueAt: undefined, providerCreatedAt: undefined, providerUpdatedAt: undefined, evidenceRefs: baseEvidence(account, item, 'Mattermost team metadata'), raw: { id: item.id, sourceType: item.sourceType, teamId: item.teamId, status: item.status } }));
+mattermostAdapter.capabilities.credentialBackedSync = true;
+mattermostAdapter.list = async account => (await mattermostWorkSignalClient.fetchDelta(account, null)).records;
+mattermostAdapter.fetchDelta = (account, cursor) => mattermostWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('mattermost', mattermostAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
