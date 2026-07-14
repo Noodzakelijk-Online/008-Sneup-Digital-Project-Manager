@@ -601,6 +601,24 @@ describe('notification delivery safety', () => {
     expect(JSON.stringify(slack)).not.toContain('never-send-this');
     expect(JSON.stringify(generic)).not.toContain('never-send-this');
   });
+
+  test('defers warning alerts in quiet hours without delaying critical evidence', () => {
+    const policy = {
+      quietHours: { enabled: true, startHourUtc: 18, endHourUtc: 8 }
+    };
+
+    expect(notificationService.isQuietHours(policy, '2026-07-14T19:00:00.000Z')).toBe(true);
+    expect(notificationService.isQuietHours(policy, '2026-07-15T07:00:00.000Z')).toBe(true);
+    expect(notificationService.isQuietHours(policy, '2026-07-15T12:00:00.000Z')).toBe(false);
+    expect(notificationService.nextQuietHoursEnd(policy, '2026-07-14T19:00:00.000Z').toISOString())
+      .toBe('2026-07-15T08:00:00.000Z');
+    expect(() => notificationService.normalizePolicyInput({
+      name: 'Operations alerts',
+      channel: 'generic_webhook',
+      destinationLabel: 'Operations',
+      quietHours: { enabled: true, startHourUtc: 8, endHourUtc: 8 }
+    })).toThrow(/quiet hours/i);
+  });
 });
 
 describe('dashboard content security policy', () => {
