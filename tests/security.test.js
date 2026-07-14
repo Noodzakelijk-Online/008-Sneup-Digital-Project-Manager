@@ -4116,6 +4116,24 @@ describe('operations ledger intervention policy', () => {
     expect(service.serializePolicy('comment', service.mergePolicy(base, null)).policyRuleId).toBeNull();
   });
 
+  test('an expired emergency pause remains blocked and calls for review', () => {
+    const { PolicyRuleService } = require('../src/services/policyRuleService');
+    const interventionPolicy = require('../src/services/interventionPolicy');
+    const service = new PolicyRuleService();
+    const base = interventionPolicy.classifyAction('comment', { severity: 'medium' });
+    const policy = service.mergePolicy(base, {
+      _id: 'rule-expired-pause',
+      enabled: false,
+      pauseExpiresAt: '2026-01-01T00:00:00.000Z'
+    }, new Date('2026-01-02T00:00:00.000Z'));
+
+    expect(service.serializePolicy('comment', policy)).toMatchObject({
+      enabled: false,
+      pauseExpiresAt: '2026-01-01T00:00:00.000Z',
+      pauseReviewOverdue: true
+    });
+  });
+
   test('lists only bounded workspace policy update evidence', async () => {
     jest.resetModules();
     const chain = {

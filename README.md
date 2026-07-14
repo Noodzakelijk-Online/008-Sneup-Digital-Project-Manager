@@ -168,9 +168,9 @@ See `docs/MULTI_WORKSPACE_IDENTITY.md` for workspace selection, session token, a
 
 - `GET /api/policy-rules` - List the effective workspace safety posture for each supported Trello write action
 - `GET /api/policy-rules/history` - List recent workspace action-safety changes from the audit ledger
-- `PUT /api/policy-rules/:actionType` - Pause an action type or raise its risk/decision-owner posture (`policy-rules:manage`)
+- `PUT /api/policy-rules/:actionType` - Pause an action type, optionally set a future `pauseExpiresAt` review time, or raise its risk/decision-owner posture (`policy-rules:manage`)
 
-Trello writes remain approval-gated regardless of a workspace rule. A rule can pause a write action, raise its risk, or route its decision to a stricter owner. Re-enabling a paused action or relaxing a prior workspace rule requires explicit confirmation and creates an audit event. The Workspace command center shows the latest bounded policy history. The executor resolves this policy immediately before its atomic execution claim, so a pause also blocks recommendations approved before the policy changed.
+Trello writes remain approval-gated regardless of a workspace rule. A rule can pause a write action, raise its risk, or route its decision to a stricter owner. An optional future pause review time makes an overdue pause visible, but it never re-enables an action automatically. Re-enabling a paused action or relaxing a prior workspace rule requires explicit confirmation and creates an audit event. The Workspace command center shows the latest bounded policy history. The executor resolves this policy immediately before its atomic execution claim, so a pause also blocks recommendations approved before the policy changed.
 
 ### Connectors and Work Signals
 

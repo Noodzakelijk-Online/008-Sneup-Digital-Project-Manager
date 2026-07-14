@@ -2119,6 +2119,11 @@ function renderPolicyRule(policy) {
   const stateLabel = policy.enabled ? 'active' : 'paused';
   const stateClass = policy.enabled ? 'healthy' : 'critical';
   const riskClass = policy.riskLevel === 'critical' ? 'critical' : policy.riskLevel === 'high' ? 'high' : 'review';
+  const pauseReview = !policy.enabled && policy.pauseReviewOverdue
+    ? '<span>pause review overdue</span>'
+    : !policy.enabled && policy.pauseExpiresAt
+      ? `<span>review by ${escapeHtml(formatDate(policy.pauseExpiresAt))}</span>`
+      : '';
   return `
     <div class="item">
       <div class="item-title">
@@ -2130,6 +2135,7 @@ function renderPolicyRule(policy) {
         <span>${escapeHtml(policy.ownerType)} decides</span>
         <span>approval required</span>
         <span>${policy.configured ? 'workspace rule set' : 'baseline rule'}</span>
+        ${pauseReview}
       </div>
       ${canManage ? `<div class="item-actions"><button class="button" data-policy-rule="${escapeHtml(policy.actionType)}" type="button">Configure</button></div>` : ''}
     </div>
@@ -2188,6 +2194,10 @@ function openPolicyRuleEditor(actionType) {
     <form id="policyRuleForm" class="notice-stack">
       <div class="notice">Every Trello write remains approval-gated. This workspace rule can pause this action type or make its risk and decision owner stricter.</div>
       <label><input name="enabled" type="checkbox" ${policy.enabled ? 'checked' : ''}> Allow approved ${escapeHtml(policy.label)} actions to execute</label>
+      <label>Pause review time
+        <input name="pauseExpiresAt" type="datetime-local" value="${escapeHtml(toDateTimeLocalValue(policy.pauseExpiresAt))}">
+        <small>An expired pause stays paused until a manager reviews it; Sneup never re-enables it automatically.</small>
+      </label>
       <label>Risk level
         <select name="riskLevel">
           ${availableRisks.map(level => `<option value="${escapeHtml(level)}" ${level === policy.riskLevel ? 'selected' : ''}>${escapeHtml(level)}</option>`).join('')}
@@ -2224,6 +2234,7 @@ function openPolicyRuleEditor(actionType) {
           riskLevel: values.get('riskLevel'),
           ownerType: values.get('ownerType'),
           reason: values.get('reason'),
+          pauseExpiresAt: values.get('pauseExpiresAt') || null,
           confirmRelaxation: values.get('confirmRelaxation') === 'on'
         })
       });
@@ -3624,6 +3635,14 @@ function formatDate(value) {
   if (!value) return 'No date';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 'No date' : date.toLocaleString();
+}
+
+function toDateTimeLocalValue(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offset = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
 function unique(values) {

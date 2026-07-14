@@ -14,6 +14,11 @@ const riskRank = (riskLevel) => RISK_LEVELS.indexOf(riskLevel);
 const ownerRank = (ownerType) => OWNER_STRICTNESS[ownerType] ?? -1;
 const actionLabel = (actionType) => String(actionType || '').replaceAll('_', ' ');
 const getPolicyRuleModel = () => require('../models/PolicyRule');
+const toValidDate = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
 class PolicyRuleService {
   isDatabaseReady() {
@@ -40,14 +45,16 @@ class PolicyRuleService {
     }
   }
 
-  mergePolicy(basePolicy, rule) {
+  mergePolicy(basePolicy, rule, now = new Date()) {
     if (!rule) {
       return {
         ...basePolicy,
         enabled: true,
         configured: false,
         baselineRiskLevel: basePolicy.riskLevel,
-        baselineOwnerType: basePolicy.ownerType
+        baselineOwnerType: basePolicy.ownerType,
+        pauseExpiresAt: null,
+        pauseReviewOverdue: false
       };
     }
 
@@ -56,6 +63,8 @@ class PolicyRuleService {
       ? configuredRisk
       : basePolicy.riskLevel;
 
+    const enabled = rule.enabled !== false;
+    const pauseExpiresAt = toValidDate(rule.pauseExpiresAt);
     return {
       ...basePolicy,
       riskLevel,
@@ -65,14 +74,17 @@ class PolicyRuleService {
         ? rule.ownerType
         : basePolicy.ownerType,
       approvalReason: rule.reason || basePolicy.approvalReason,
-      enabled: rule.enabled !== false,
+      enabled,
       configured: true,
       baselineRiskLevel: basePolicy.riskLevel,
       baselineOwnerType: basePolicy.ownerType,
       policyRuleId: rule._id ? String(rule._id) : null,
       updatedAt: rule.updatedAt,
       updatedBy: rule.updatedBy || 'system',
-      reason: rule.reason || ''
+      reason: rule.reason || '',
+      pauseExpiresAt: !enabled && pauseExpiresAt ? pauseExpiresAt.toISOString() : null,
+      // An expiry asks a human to review the pause; it never re-enables provider writes.
+      pauseReviewOverdue: !enabled && Boolean(pauseExpiresAt) && pauseExpiresAt.getTime() <= now.getTime()
     };
   }
 
@@ -91,7 +103,9 @@ class PolicyRuleService {
       policyRuleId: policy.policyRuleId || null,
       updatedAt: policy.updatedAt || null,
       updatedBy: policy.updatedBy || null,
-      reason: policy.reason || ''
+      reason: policy.reason || '',
+      pauseExpiresAt: policy.pauseExpiresAt || null,
+      pauseReviewOverdue: Boolean(policy.pauseReviewOverdue)
     };
   }
 
@@ -172,6 +186,18 @@ class PolicyRuleService {
       error.statusCode = 400;
       throw error;
     }
+    const pauseExpiryValue = body.pauseExpiresAt === undefined ? existing?.pauseExpiresAt : body.pauseExpiresAt;
+    const requestedPauseExpiresAt = requestedEnabled ? null : toValidDate(pauseExpiryValue);
+    if (!requestedEnabled && pauseExpiryValue && !requestedPauseExpiresAt) {
+      const error = new Error('pauseExpiresAt must be a valid date and time');
+      error.statusCode = 400;
+      throw error;
+    }
+    if (requestedPauseExpiresAt && requestedPauseExpiresAt.getTime() <= Date.now()) {
+      const error = new Error('pauseExpiresAt must be in the future; an expired pause remains blocked until reviewed');
+      error.statusCode = 400;
+      throw error;
+    }
 
     const isRelaxingExistingPolicy = Boolean(existing) && (
       riskRank(requestedRisk) < riskRank(existing.riskLevel)
@@ -195,6 +221,7 @@ class PolicyRuleService {
           requiresApproval: true,
           ownerType: requestedOwner,
           enabled: requestedEnabled,
+          pauseExpiresAt: requestedPauseExpiresAt,
           reason: requestedReason || undefined,
           updatedBy: actor,
           conditions: {

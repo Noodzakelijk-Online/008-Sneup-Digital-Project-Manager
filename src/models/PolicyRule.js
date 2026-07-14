@@ -36,6 +36,10 @@ const policyRuleSchema = new mongoose.Schema({
     default: true,
     index: true
   },
+  pauseExpiresAt: {
+    type: Date,
+    default: null
+  },
   conditions: {
     type: mongoose.Schema.Types.Mixed,
     default: {}
