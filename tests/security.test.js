@@ -62,6 +62,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/models/WorkEvent');
     jest.dontMock('../src/models/WorkItem');
     jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/services/operationsLedgerService');
     jest.dontMock('../src/services/policyRuleService');
     jest.dontMock('../src/services/githubWorkSignalClient');
     jest.dontMock('../src/services/trelloWorkSignalClient');
@@ -403,6 +404,28 @@ describe('request security boundaries', () => {
       success: false,
       requiredPermission: 'approvals:decide'
     });
+  });
+
+  test('requires audit read permission before returning ledger history', () => {
+    jest.resetModules();
+    jest.doMock('../src/services/operationsLedgerService', () => ({
+      listAuditEvents: jest.fn()
+    }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getRequestWorkspaceObjectId: jest.fn(() => 'workspace-1')
+    }));
+
+    const auditRoutes = require('../src/routes/audit');
+    const route = auditRoutes.stack.find((layer) => layer.route?.path === '/').route;
+    const guard = route.stack[0].handle;
+    const next = jest.fn();
+    const res = createResponse();
+
+    guard(createRequest({ auth: { authenticated: true, roles: [], permissions: [] } }), res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.body.requiredPermission).toBe('audit:read');
   });
 
   test('verifies Trello webhook signatures', () => {

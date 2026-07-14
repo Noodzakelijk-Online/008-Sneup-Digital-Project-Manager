@@ -3,9 +3,9 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
-const { clampInteger } = require('../utils/requestSecurity');
+const { clampInteger, requirePermission } = require('../utils/requestSecurity');
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('audit:read'), async (req, res) => {
   try {
     const auditEvents = await operationsLedgerService.listAuditEvents({
       workspaceId: getRequestWorkspaceObjectId(req),
