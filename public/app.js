@@ -3223,6 +3223,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-jira-site]').forEach((button) => {
     button.addEventListener('click', () => openJiraSiteModal(button.dataset.jiraSite));
   });
+  document.querySelectorAll('[data-confluence-site]').forEach((button) => {
+    button.addEventListener('click', () => openConfluenceSiteModal(button.dataset.confluenceSite));
+  });
   document.querySelectorAll('[data-asana-workspace]').forEach((button) => {
     button.addEventListener('click', () => openAsanaWorkspaceModal(button.dataset.asanaWorkspace));
   });
@@ -3284,8 +3287,10 @@ function renderConnector(connector, account) {
     ? 'Read-only sync adapter available.'
     : 'Account link only. Work-signal sync is not available yet.';
   const isJira = connector.id === 'jira_software' || connector.id === 'jira_service_management';
+  const isConfluence = connector.id === 'confluence';
   const isAsana = connector.id === 'asana';
   const selectedJiraCloudId = account?.metadata?.fields?.cloudId;
+  const selectedConfluenceCloudId = account?.metadata?.fields?.confluenceCloudId;
   const selectedAsanaWorkspaceGid = account?.metadata?.fields?.asanaWorkspaceGid;
   const selectedBasecampAccountId = account?.metadata?.fields?.basecampAccountId;
   const isBasecamp = connector.id === 'basecamp';
@@ -3293,7 +3298,7 @@ function renderConnector(connector, account) {
   const isResourceGuru = connector.id === 'resource_guru';
   const selectedFigmaTeamId = account?.metadata?.fields?.figmaTeamId;
   const isFigma = connector.id === 'figma';
-  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId));
+  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId));
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
@@ -3314,9 +3319,10 @@ function renderConnector(connector, account) {
                                   : lastSync.source === 'shortcut_api' ? 'Shortcut API'
                                     : lastSync.source === 'bitbucket_api' ? 'Bitbucket API'
                                       : lastSync.source === 'basecamp_api' ? 'Basecamp API'
-                                        : 'Sync';
+                                        : lastSync.source === 'confluence_page_space_metadata' ? 'Confluence metadata'
+                                          : 'Sync';
   const syncSummary = canSync && lastSync.finishedAt
-    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}${lastSync.workspaces ? `<span>${lastSync.workspaces} Asana workspace${lastSync.workspaces === 1 ? '' : 's'}</span>` : ''}${lastSync.projects ? `<span>${lastSync.projects} projects</span>` : ''}${lastSync.todoLists ? `<span>${lastSync.todoLists} to-do lists</span>` : ''}${lastSync.channels ? `<span>${lastSync.channels} channels</span>` : ''}${lastSync.calendars ? `<span>${lastSync.calendars} calendars</span>` : ''}${lastSync.events ? `<span>${lastSync.events} events</span>` : ''}${lastSync.taskLists ? `<span>${lastSync.taskLists} task lists</span>` : ''}${lastSync.todoTasks ? `<span>${lastSync.todoTasks} To Do tasks</span>` : ''}${lastSync.files ? `<span>${lastSync.files} files</span>` : ''}${lastSync.issues ? `<span>${lastSync.issues} issues</span>` : ''}${lastSync.items ? `<span>${lastSync.items} items</span>` : ''}${lastSync.pages ? `<span>${lastSync.pages} pages</span>` : ''}${lastSync.dataSources ? `<span>${lastSync.dataSources} data sources</span>` : ''}</div>`
+    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}${lastSync.workspaces ? `<span>${lastSync.workspaces} Asana workspace${lastSync.workspaces === 1 ? '' : 's'}</span>` : ''}${lastSync.projects ? `<span>${lastSync.projects} projects</span>` : ''}${lastSync.todoLists ? `<span>${lastSync.todoLists} to-do lists</span>` : ''}${lastSync.channels ? `<span>${lastSync.channels} channels</span>` : ''}${lastSync.calendars ? `<span>${lastSync.calendars} calendars</span>` : ''}${lastSync.events ? `<span>${lastSync.events} events</span>` : ''}${lastSync.taskLists ? `<span>${lastSync.taskLists} task lists</span>` : ''}${lastSync.todoTasks ? `<span>${lastSync.todoTasks} To Do tasks</span>` : ''}${lastSync.files ? `<span>${lastSync.files} files</span>` : ''}${lastSync.issues ? `<span>${lastSync.issues} issues</span>` : ''}${lastSync.items ? `<span>${lastSync.items} items</span>` : ''}${lastSync.spaces ? `<span>${lastSync.spaces} spaces</span>` : ''}${lastSync.pages ? `<span>${lastSync.pages} pages</span>` : ''}${lastSync.dataSources ? `<span>${lastSync.dataSources} data sources</span>` : ''}</div>`
     : '';
   const consentSummary = account?.consent?.acknowledgedAt
     ? `<div class="meta"><span>scope review ${escapeHtml(formatDate(account.consent.acknowledgedAt))}</span><span>${escapeHtml(account.consent.acknowledgedBy || 'local user')}</span></div>`
@@ -3341,6 +3347,7 @@ function renderConnector(connector, account) {
       <div class="connector-actions">
         <span class="meta">${connector.sync.slice(0, 3).map(escapeHtml).join('  |  ')}</span>
         ${isJira && account ? `<button class="button" data-jira-site="${escapeHtml(account.id)}" type="button">${selectedJiraCloudId ? 'Jira site selected' : 'Select Jira site'}</button>` : ''}
+        ${isConfluence && account ? `<button class="button" data-confluence-site="${escapeHtml(account.id)}" type="button">${selectedConfluenceCloudId ? 'Confluence site selected' : 'Select Confluence site'}</button>` : ''}
         ${isAsana && account ? `<button class="button" data-asana-workspace="${escapeHtml(account.id)}" type="button">${selectedAsanaWorkspaceGid ? 'Asana workspace selected' : 'Select Asana workspace'}</button>` : ''}
         ${isBasecamp && account ? `<button class="button" data-basecamp-account="${escapeHtml(account.id)}" type="button">${selectedBasecampAccountId ? 'Basecamp account selected' : 'Select Basecamp account'}</button>` : ''}
         ${isResourceGuru && account ? `<button class="button" data-resource-guru-account="${escapeHtml(account.id)}" type="button">${selectedResourceGuruAccountId ? 'Resource Guru account selected' : 'Select Resource Guru account'}</button>` : ''}
@@ -3542,6 +3549,59 @@ async function openAsanaWorkspaceModal(accountId) {
     });
   } catch (error) {
     openNotice('Asana workspace selection', error.message);
+  }
+}
+
+async function openConfluenceSiteModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  try {
+    const data = await fetchApi(`/api/connectors/accounts/${accountId}/confluence-sites`);
+    const sites = data.sites || [];
+    if (sites.length === 0) {
+      openNotice('Confluence site selection', 'No Confluence sites are currently authorized for this account. Reconnect it with page and space read access.');
+      return;
+    }
+
+    const selectedCloudId = account.metadata?.fields?.confluenceCloudId || (sites.length === 1 ? sites[0].cloudId : '');
+    els.modalTitle.textContent = 'Select Confluence site';
+    els.modalBody.innerHTML = `
+      <form id="confluenceSiteForm">
+        <div class="field">
+          <label for="confluenceCloudId">Authorized Confluence site</label>
+          <select id="confluenceCloudId" name="cloudId" required>
+            <option value="" ${selectedCloudId ? '' : 'selected'} disabled>Select a site</option>
+            ${sites.map(site => `<option value="${escapeHtml(site.cloudId)}" ${site.cloudId === selectedCloudId ? 'selected' : ''}>${escapeHtml(site.name)}${site.url ? ` (${escapeHtml(site.url)})` : ''}</option>`).join('')}
+          </select>
+        </div>
+        <div class="notice">Sneup will ingest space and page metadata only. It does not read page bodies, comments, attachments, users, descriptions, URLs, or version messages.</div>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelConfluenceSite">Cancel</button>
+          <button class="button primary" type="submit">Use this site</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelConfluenceSite').addEventListener('click', closeModal);
+    document.getElementById('confluenceSiteForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target).entries());
+      try {
+        await fetchApi(`/api/connectors/accounts/${accountId}/confluence-site`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        closeModal();
+        openNotice('Confluence site selected', 'Sneup will use this site for the next read-only metadata sync.');
+        await loadConnectors();
+      } catch (error) {
+        openNotice('Confluence site selection', error.message);
+      }
+    });
+  } catch (error) {
+    openNotice('Confluence site selection', error.message);
   }
 }
 

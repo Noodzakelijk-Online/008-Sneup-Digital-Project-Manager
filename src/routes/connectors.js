@@ -150,6 +150,30 @@ router.post('/accounts/:accountId/jira-site', requirePermission('connectors:mana
   }
 });
 
+router.get('/accounts/:accountId/confluence-sites', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const sites = await accountConnectorService.getConfluenceSites(req.params.accountId, connectorRequestOptions(req));
+    res.json({ success: true, sites });
+  } catch (error) {
+    logger.error('Failed to list Confluence sites:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/confluence-site', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.selectConfluenceSite(
+      req.params.accountId,
+      req.body.cloudId,
+      connectorRequestOptions(req)
+    );
+    res.json({ success: true, account });
+  } catch (error) {
+    logger.error('Failed to select Confluence site:', error);
+    sendError(res, error);
+  }
+});
+
 router.get('/accounts/:accountId/asana-workspaces', requirePermission('connectors:manage'), async (req, res) => {
   try {
     const workspaces = await accountConnectorService.getAsanaWorkspaces(req.params.accountId, connectorRequestOptions(req));

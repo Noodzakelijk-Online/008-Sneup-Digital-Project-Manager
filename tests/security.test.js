@@ -104,6 +104,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
     jest.dontMock('../src/services/figmaWorkSignalClient');
+    jest.dontMock('../src/services/confluenceWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1174,6 +1175,8 @@ describe('connector registry', () => {
     expect(byId.google_chat.auth.scopes).not.toEqual(expect.arrayContaining(['https://www.googleapis.com/auth/chat.messages.readonly']));
     expect(byId.figma.auth.scopes).toEqual(['projects:read']);
     expect(byId.figma.auth.scopes).not.toEqual(expect.arrayContaining(['files:read', 'file_content:read', 'file_comments:read']));
+    expect(byId.confluence.auth.scopes).toEqual(['read:page:confluence', 'read:space:confluence', 'offline_access']);
+    expect(byId.confluence.auth.scopes).not.toEqual(expect.arrayContaining(['write:page:confluence', 'write:space:confluence', 'read:comment:confluence', 'read:attachment:confluence']));
   });
 
   test('makes provider scope risk explicit and requires acknowledgement before credentials or OAuth leave Sneup', () => {
@@ -1467,6 +1470,45 @@ describe('connector registry', () => {
       expect(account.metadata.fields).toEqual({ cloudId: 'cloud-0001' });
       expect(account.save).toHaveBeenCalledTimes(1);
       expect(selected.metadata.fields).toEqual({ cloudId: 'cloud-0001' });
+      expect(selected).not.toHaveProperty('credentials');
+    } finally {
+      accountSpy.mockRestore();
+      accountConnectorService.http = originalHttp;
+      if (originalEncryptionKey === undefined) delete process.env.CONNECTOR_ENCRYPTION_KEY;
+      else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;
+    }
+  });
+
+  test('lists Confluence sites with an in-process token and persists only the selected cloud ID', async () => {
+    const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
+    process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';
+    const originalHttp = accountConnectorService.http;
+    const get = jest.fn().mockResolvedValue({
+      data: [
+        { id: 'cloud-0001', name: 'Delivery knowledge', url: 'https://delivery.atlassian.net', scopes: ['read:page:confluence', 'read:space:confluence'] },
+        { id: 'cloud-0002', name: 'Incomplete grant', url: 'https://knowledge.atlassian.net', scopes: ['read:page:confluence'] }
+      ]
+    });
+    accountConnectorService.http = { get };
+    const account = {
+      _id: 'account-confluence-1', workspaceId: 'workspace-1', connectorId: 'confluence', connectorName: 'Confluence', category: 'docs_knowledge', authType: 'oauth2', status: 'failed',
+      credentials: { accessToken: accountConnectorService.encrypt('confluence-token-value') }, metadata: { fields: {} }, save: jest.fn().mockResolvedValue(undefined)
+    };
+    const accountSpy = jest.spyOn(accountConnectorService, 'getManagedAccount').mockResolvedValue(account);
+
+    try {
+      const sites = await accountConnectorService.getConfluenceSites('account-confluence-1', { workspaceId: 'workspace-1' });
+      expect(sites).toEqual([{ cloudId: 'cloud-0001', name: 'Delivery knowledge', url: 'https://delivery.atlassian.net' }]);
+      expect(get).toHaveBeenCalledWith(
+        'https://api.atlassian.com/oauth/token/accessible-resources',
+        expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer confluence-token-value' }), maxRedirects: 0, proxy: false })
+      );
+
+      await expect(accountConnectorService.selectConfluenceSite('account-confluence-1', 'bad!', { workspaceId: 'workspace-1' })).rejects.toMatchObject({ statusCode: 400 });
+      const selected = await accountConnectorService.selectConfluenceSite('account-confluence-1', 'cloud-0001', { workspaceId: 'workspace-1' });
+      expect(account.metadata.fields).toEqual({ confluenceCloudId: 'cloud-0001' });
+      expect(account.save).toHaveBeenCalledTimes(1);
+      expect(selected.metadata.fields).toEqual({ confluenceCloudId: 'cloud-0001' });
       expect(selected).not.toHaveProperty('credentials');
     } finally {
       accountSpy.mockRestore();
@@ -2330,6 +2372,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('figma').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Confluence adapter delegates bounded page/space metadata reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'page:1001' }] });
+    jest.doMock('../src/services/confluenceWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'confluence' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('confluence').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4856,6 +4909,53 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_FIGMA_MAX_PROJECTS; process.env.SNEUP_FIGMA_MAX_PROJECTS = '1';
     const capped = new FigmaWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { projects: [{ id: '1', name: 'One' }, { id: '2', name: 'Two' }] } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ metadata: { fields: { figmaTeamId: '1234567890' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_FIGMA_MAX_PROJECTS; else process.env.SNEUP_FIGMA_MAX_PROJECTS = previous; }
+  });
+
+  test('Confluence sync reads bounded space and page metadata without document bodies, comments, attachments, users, descriptions, URLs, or provider writes', async () => {
+    jest.dontMock('../src/services/confluenceWorkSignalClient');
+    jest.resetModules();
+    const { ConfluenceWorkSignalClient } = require('../src/services/confluenceWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { results: [{ id: '1001', name: `Delivery ${privateEmail}`, type: 'global', status: 'current', description: { plain: 'Private space detail' }, _links: { webui: 'https://confluence.example.test/spaces/DEL' } }], _links: {} } })
+      .mockResolvedValueOnce({ data: { results: [{ id: '2001', spaceId: '1001', title: `Launch ${privateEmail}`, status: 'current', createdAt: '2026-07-12T11:00:00Z', version: { createdAt: '2026-07-12T12:00:00Z', message: 'private version note', authorId: 'private-user' }, body: { storage: { value: 'private page body' } }, _links: { webui: 'https://confluence.example.test/pages/2001' } }], _links: { next: '/wiki/api/v2/pages?cursor=next-page' } } })
+      .mockResolvedValueOnce({ data: { results: [{ id: '2002', spaceId: '1001', title: 'Delivery risks', status: 'current', createdAt: '2026-07-13T11:00:00Z', version: { createdAt: '2026-07-13T12:00:00Z' }, comments: ['private'], attachments: ['private'] }], _links: {} } }) };
+    const client = new ConfluenceWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'confluence-access-token' })) } });
+    const previous = { spaces: process.env.SNEUP_CONFLUENCE_MAX_SPACES, pages: process.env.SNEUP_CONFLUENCE_MAX_PAGES, pageSize: process.env.SNEUP_CONFLUENCE_PAGE_SIZE };
+    process.env.SNEUP_CONFLUENCE_MAX_SPACES = '1'; process.env.SNEUP_CONFLUENCE_MAX_PAGES = '2'; process.env.SNEUP_CONFLUENCE_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'confluence', metadata: { fields: { confluenceCloudId: 'cloud-0001' } } }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://api.atlassian.com/ex/confluence/cloud-0001/wiki/api/v2/spaces', expect.objectContaining({ params: { limit: 1 }, headers: expect.objectContaining({ Authorization: 'Bearer confluence-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://api.atlassian.com/ex/confluence/cloud-0001/wiki/api/v2/pages', expect.objectContaining({ params: { limit: 1 } }));
+      expect(http.get).toHaveBeenNthCalledWith(3, 'https://api.atlassian.com/ex/confluence/cloud-0001/wiki/api/v2/pages', expect.objectContaining({ params: { limit: 1, cursor: 'next-page' } }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'confluence_page_space_metadata', cloudId: 'cloud-0001', spaces: 1, pages: 2 }, nextCursor: '2026-07-13T12:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private space|Private page|confluence\.example|body|comments|attachments|description|version|authorId/);
+      expect(result.records[1].name).not.toContain(privateEmail);
+    } finally { if (previous.spaces === undefined) delete process.env.SNEUP_CONFLUENCE_MAX_SPACES; else process.env.SNEUP_CONFLUENCE_MAX_SPACES = previous.spaces; if (previous.pages === undefined) delete process.env.SNEUP_CONFLUENCE_MAX_PAGES; else process.env.SNEUP_CONFLUENCE_MAX_PAGES = previous.pages; if (previous.pageSize === undefined) delete process.env.SNEUP_CONFLUENCE_PAGE_SIZE; else process.env.SNEUP_CONFLUENCE_PAGE_SIZE = previous.pageSize; }
+  });
+
+  test('Confluence sync requires a selected site and rejects invalid cursors, page identifiers, pagination cursors, and collection caps', async () => {
+    jest.dontMock('../src/services/confluenceWorkSignalClient');
+    jest.resetModules();
+    const { ConfluenceWorkSignalClient } = require('../src/services/confluenceWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'confluence-token' })) };
+    const invalid = new ConfluenceWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector });
+    await expect(invalid.fetchDelta({ metadata: { fields: {} } })).rejects.toMatchObject({ statusCode: 409 });
+    await expect(invalid.fetchDelta({ metadata: { fields: { confluenceCloudId: 'cloud-0001' } } }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new ConfluenceWorkSignalClient({ http: { get: jest.fn()
+      .mockResolvedValueOnce({ data: { results: [{ id: 'https://127.0.0.1/steal' }], _links: {} } })
+      .mockResolvedValueOnce({ data: { results: [], _links: {} } }) }, accountConnectorService: accountConnector });
+    await expect(malformed.fetchDelta({ metadata: { fields: { confluenceCloudId: 'cloud-0001' } } })).rejects.toMatchObject({ statusCode: 502 });
+    const invalidPagination = new ConfluenceWorkSignalClient({ http: { get: jest.fn()
+      .mockResolvedValueOnce({ data: { results: [], _links: { next: '/wiki/api/v2/spaces?unexpected=next-space' } } })
+      .mockResolvedValueOnce({ data: { results: [], _links: {} } }) }, accountConnectorService: accountConnector });
+    await expect(invalidPagination.fetchDelta({ metadata: { fields: { confluenceCloudId: 'cloud-0001' } } })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_CONFLUENCE_MAX_SPACES; process.env.SNEUP_CONFLUENCE_MAX_SPACES = '1';
+    const capped = new ConfluenceWorkSignalClient({ http: { get: jest.fn()
+      .mockResolvedValueOnce({ data: { results: [{ id: '1001', name: 'One' }, { id: '1002', name: 'Two' }], _links: {} } })
+      .mockResolvedValueOnce({ data: { results: [], _links: {} } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { confluenceCloudId: 'cloud-0001' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_CONFLUENCE_MAX_SPACES; else process.env.SNEUP_CONFLUENCE_MAX_SPACES = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -71,6 +71,7 @@ const calendlyWorkSignalClient = require('./calendlyWorkSignalClient');
 const teamsWorkSignalClient = require('./teamsWorkSignalClient');
 const googleChatWorkSignalClient = require('./googleChatWorkSignalClient');
 const figmaWorkSignalClient = require('./figmaWorkSignalClient');
+const confluenceWorkSignalClient = require('./confluenceWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -989,6 +990,12 @@ figmaAdapter.capabilities.credentialBackedSync = true;
 figmaAdapter.list = async account => (await figmaWorkSignalClient.fetchDelta(account, null)).records;
 figmaAdapter.fetchDelta = (account, cursor) => figmaWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('figma', figmaAdapter);
+
+const confluenceAdapter = buildAdapter('confluence', 'Confluence page and space metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'page'), title: titleFromText(item.sourceType === 'page' ? `${item.spaceName ? `${item.spaceName}: ` : ''}${item.name}` : item.name, 'Confluence metadata'), description: '', status: item.status || 'current', priority: 'unknown', owners: [], labels: compact(['confluence', item.sourceType, item.spaceId ? `space:${item.spaceId}` : undefined, item.spaceType]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Confluence page/space metadata'), raw: { id: item.id, sourceType: item.sourceType, spaceId: item.spaceId, pageId: item.pageId, parentPageId: item.parentPageId, spaceType: item.spaceType, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+confluenceAdapter.capabilities.credentialBackedSync = true;
+confluenceAdapter.list = async account => (await confluenceWorkSignalClient.fetchDelta(account, null)).records;
+confluenceAdapter.fetchDelta = (account, cursor) => confluenceWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('confluence', confluenceAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

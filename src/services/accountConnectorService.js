@@ -70,6 +70,43 @@ class AccountConnectorService {
     return this.sanitizeAccount(account);
   }
 
+  async getConfluenceSites(accountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireConfluenceAccount(account);
+    return this.fetchConfluenceSites(account);
+  }
+
+  async selectConfluenceSite(accountId, cloudId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireConfluenceAccount(account);
+    const requestedCloudId = String(cloudId || '').trim();
+    if (!/^[A-Za-z0-9-]{8,100}$/.test(requestedCloudId)) {
+      const error = new Error('A valid Confluence cloud ID is required.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const sites = await this.fetchConfluenceSites(account);
+    const site = sites.find(item => item.cloudId === requestedCloudId);
+    if (!site) {
+      const error = new Error('That Confluence site is no longer authorized for this account.');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: {
+        ...(account.metadata?.fields || {}),
+        confluenceCloudId: site.cloudId
+      }
+    };
+    account.status = 'connected';
+    account.lastError = undefined;
+    await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   async getAsanaWorkspaces(accountId, options = {}) {
     const account = await this.getManagedAccount(accountId, options);
     this.requireAsanaAccount(account);
@@ -591,6 +628,14 @@ class AccountConnectorService {
     }
   }
 
+  requireConfluenceAccount(account) {
+    if (account.connectorId !== 'confluence') {
+      const error = new Error('Confluence site selection is only available for Confluence connector accounts.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   requireAsanaAccount(account) {
     if (account.connectorId !== 'asana') {
       const error = new Error('Asana workspace selection is only available for Asana connector accounts.');
@@ -648,6 +693,35 @@ class AccountConnectorService {
         cloudId: site.id,
         name: String(site.name || site.url || site.id),
         url: site.url || undefined
+      }));
+  }
+
+  async fetchConfluenceSites(account) {
+    const credentials = this.getAccountCredentials(account);
+    const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
+    if (!accessToken) {
+      const error = new Error('Confluence access token is missing. Reconnect this account to continue.');
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const response = await this.http.get('https://api.atlassian.com/oauth/token/accessible-resources', {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`
+      },
+      timeout: 15000,
+      maxRedirects: 0,
+      proxy: false
+    });
+
+    return (Array.isArray(response.data) ? response.data : [])
+      .filter(site => /^[A-Za-z0-9-]{8,100}$/.test(String(site?.id || '')))
+      .filter(site => ['read:page:confluence', 'read:space:confluence'].every(scope => (site.scopes || []).includes(scope)))
+      .map(site => ({
+        cloudId: site.id,
+        name: String(site.name || site.id),
+        url: typeof site.url === 'string' && /^https:\/\/[A-Za-z0-9.-]+\.atlassian\.net(?:\/|$)/.test(site.url) ? site.url : undefined
       }));
   }
 
