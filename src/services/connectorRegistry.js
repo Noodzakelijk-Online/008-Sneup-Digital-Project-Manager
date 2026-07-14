@@ -391,15 +391,15 @@ const CONNECTORS = [
     id: 'dropbox',
     name: 'Dropbox',
     category: 'files_assets',
-    description: 'Files, folders, shared links, paper docs, approvals, and client deliverable assets.',
+    description: 'Read-only bounded root-folder metadata through Dropbox OAuth. Sneup excludes file contents, previews, downloads, shared links, Paper docs, revisions, sharing details, paths, and provider writes.',
     auth: oauth2({
       envPrefix: 'DROPBOX',
       authorizationUrl: 'https://www.dropbox.com/oauth2/authorize',
       tokenUrl: 'https://api.dropboxapi.com/oauth2/token',
-      scopes: ['files.metadata.read', 'files.content.read', 'sharing.read'],
+      scopes: ['files.metadata.read'],
       docsUrl: 'https://developers.dropbox.com/oauth-guide'
     }),
-    sync: ['files', 'folders', 'shared_links']
+    sync: ['files', 'folders']
   },
   {
     id: 'box',

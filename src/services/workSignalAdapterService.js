@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -66,6 +66,7 @@ const typeformWorkSignalClient = require('./typeformWorkSignalClient');
 const salesforceWorkSignalClient = require('./salesforceWorkSignalClient');
 const zoomWorkSignalClient = require('./zoomWorkSignalClient');
 const miroWorkSignalClient = require('./miroWorkSignalClient');
+const dropboxWorkSignalClient = require('./dropboxWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -954,6 +955,12 @@ miroAdapter.capabilities.credentialBackedSync = true;
 miroAdapter.list = async account => (await miroWorkSignalClient.fetchDelta(account, null)).records;
 miroAdapter.fetchDelta = (account, cursor) => miroWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('miro', miroAdapter);
+
+const dropboxAdapter = buildAdapter('dropbox', 'Dropbox root file and folder metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'file'), title: titleFromText(item.name, 'Dropbox entry'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['dropbox', item.sourceType]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Dropbox metadata'), raw: { id: item.id, sourceType: item.sourceType, entryId: item.entryId, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+dropboxAdapter.capabilities.credentialBackedSync = true;
+dropboxAdapter.list = async account => (await dropboxWorkSignalClient.fetchDelta(account, null)).records;
+dropboxAdapter.fetchDelta = (account, cursor) => dropboxWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('dropbox', dropboxAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

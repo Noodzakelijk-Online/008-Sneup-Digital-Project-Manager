@@ -99,6 +99,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/salesforceWorkSignalClient');
     jest.dontMock('../src/services/zoomWorkSignalClient');
     jest.dontMock('../src/services/miroWorkSignalClient');
+    jest.dontMock('../src/services/dropboxWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2240,6 +2241,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('miro').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Dropbox adapter delegates bounded metadata reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'file:id:abc12345' }] });
+    jest.doMock('../src/services/dropboxWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'dropbox' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('dropbox').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4595,6 +4607,42 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_MIRO_MAX_BOARDS; process.env.SNEUP_MIRO_MAX_BOARDS = '1';
     const capped = new MiroWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { total: 2, data: [{ id: 'uXjVExample1', name: 'First board' }] } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ metadata: { fields: { miroTeamId: '3074457353169356300' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_MIRO_MAX_BOARDS; else process.env.SNEUP_MIRO_MAX_BOARDS = previous; }
+  });
+
+  test('Dropbox sync pages bounded root metadata without file content, paths, sharing, or provider writes', async () => {
+    jest.dontMock('../src/services/dropboxWorkSignalClient');
+    jest.resetModules();
+    const { DropboxWorkSignalClient } = require('../src/services/dropboxWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { post: jest.fn()
+      .mockResolvedValueOnce({ data: { entries: [{ '.tag': 'file', id: 'id:abc12345', name: `Launch brief ${privateEmail}`, path_display: '/Private/Launch brief', path_lower: '/private/launch brief', server_modified: '2026-07-12T12:00:00Z', client_modified: '2026-07-10T12:00:00Z', size: 5000, sharing_info: { read_only: true }, content_hash: 'private-hash' }], cursor: 'cursor_2', has_more: true } })
+      .mockResolvedValueOnce({ data: { entries: [{ '.tag': 'folder', id: 'id:def67890', name: 'Delivery', path_display: '/Delivery' }], cursor: 'cursor_3', has_more: false } }) };
+    const client = new DropboxWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'dropbox-access-token' })) } });
+    const previous = { max: process.env.SNEUP_DROPBOX_MAX_ENTRIES, page: process.env.SNEUP_DROPBOX_PAGE_SIZE };
+    process.env.SNEUP_DROPBOX_MAX_ENTRIES = '2'; process.env.SNEUP_DROPBOX_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'dropbox' }, '2026-07-10T00:00:00.000Z');
+      expect(http.post).toHaveBeenNthCalledWith(1, 'https://api.dropboxapi.com/2/files/list_folder', { path: '', recursive: false, include_deleted: false, include_media_info: false, include_mounted_folders: false, limit: 1 }, expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer dropbox-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.post).toHaveBeenNthCalledWith(2, 'https://api.dropboxapi.com/2/files/list_folder/continue', { cursor: 'cursor_2' }, expect.any(Object));
+      expect(http).not.toHaveProperty('get');
+      expect(result).toMatchObject({ metadata: { source: 'dropbox_root_metadata', entries: 2, pages: 2 }, nextCursor: '2026-07-10T00:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private\/Launch|private-hash|sharing_info|path_display|content_hash|5000/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_DROPBOX_MAX_ENTRIES; else process.env.SNEUP_DROPBOX_MAX_ENTRIES = previous.max; if (previous.page === undefined) delete process.env.SNEUP_DROPBOX_PAGE_SIZE; else process.env.SNEUP_DROPBOX_PAGE_SIZE = previous.page; }
+  });
+
+  test('Dropbox sync rejects invalid cursors and malformed pagination and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/dropboxWorkSignalClient');
+    jest.resetModules();
+    const { DropboxWorkSignalClient } = require('../src/services/dropboxWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) };
+    const invalid = new DropboxWorkSignalClient({ http: { post: jest.fn() }, accountConnectorService: accountConnector });
+    await expect(invalid.fetchDelta({ connectorId: 'dropbox' }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new DropboxWorkSignalClient({ http: { post: jest.fn().mockResolvedValue({ data: { entries: [], has_more: true, cursor: 'https://127.0.0.1/steal' } }) }, accountConnectorService: accountConnector });
+    await expect(malformed.fetchDelta({ connectorId: 'dropbox' })).rejects.toMatchObject({ statusCode: 413 });
+    const previous = process.env.SNEUP_DROPBOX_MAX_ENTRIES; process.env.SNEUP_DROPBOX_MAX_ENTRIES = '1';
+    const capped = new DropboxWorkSignalClient({ http: { post: jest.fn().mockResolvedValue({ data: { entries: [{ '.tag': 'file', id: 'id:abc12345', name: 'First' }], has_more: true, cursor: 'cursor_2' } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'dropbox' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_DROPBOX_MAX_ENTRIES; else process.env.SNEUP_DROPBOX_MAX_ENTRIES = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {
