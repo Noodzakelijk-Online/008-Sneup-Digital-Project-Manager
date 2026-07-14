@@ -9063,6 +9063,81 @@ describe('job observability', () => {
     }
   });
 
+  test('runs scheduled notification reconciliation in each policy workspace', async () => {
+    jest.resetModules();
+    const listActiveReconciliationWorkspaceIds = jest.fn().mockResolvedValue(['workspace-1', 'workspace-2']);
+    const dispatchReconciliationAlerts = jest.fn(async ({ workspaceId }) => ({ workspaceId }));
+    const trackJob = jest.fn(async (context, handler) => handler());
+
+    jest.doMock('../src/services/notificationService', () => ({
+      listActiveReconciliationWorkspaceIds,
+      dispatchReconciliationAlerts
+    }));
+    jest.doMock('../src/services/jobObservabilityService', () => ({ trackJob }));
+
+    try {
+      const notificationWorker = require('../src/workers/notificationWorker');
+      await expect(notificationWorker.runScheduledReconciliationAlerts()).resolves.toEqual([
+        { workspaceId: 'workspace-1' },
+        { workspaceId: 'workspace-2' }
+      ]);
+      expect(dispatchReconciliationAlerts.mock.calls.map(([options]) => options.workspaceId)).toEqual([
+        'workspace-1',
+        'workspace-2'
+      ]);
+      expect(trackJob.mock.calls.map(([context]) => context.workspaceId)).toEqual([
+        'workspace-1',
+        'workspace-2'
+      ]);
+    } finally {
+      jest.dontMock('../src/services/notificationService');
+      jest.dontMock('../src/services/jobObservabilityService');
+      jest.resetModules();
+    }
+  });
+
+  test('scopes legacy Trello webhook lookup and job history to its configured workspace', async () => {
+    jest.resetModules();
+    const findOne = jest.fn().mockResolvedValue(null);
+    const trackJob = jest.fn(async (context, handler) => handler());
+
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-default'),
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+    jest.doMock('../src/services/jobObservabilityService', () => ({ trackJob }));
+    jest.doMock('../src/services/trelloClient', () => ({}));
+    jest.doMock('../src/models/Board', () => ({ findOne }));
+    jest.doMock('../src/models/List', () => ({}));
+    jest.doMock('../src/models/Card', () => ({}));
+    jest.doMock('../src/models/Member', () => ({}));
+    jest.doMock('../src/models/Comment', () => ({}));
+
+    try {
+      const trelloSync = require('../src/services/trelloSync');
+      await expect(trelloSync.handleWebhookEvent({
+        action: { type: 'updateCard' },
+        model: { id: 'board-1' }
+      })).resolves.toMatchObject({ metadata: { skippedReason: 'board_not_found' } });
+
+      expect(findOne).toHaveBeenCalledWith({ trelloId: 'board-1', workspaceId: 'workspace-default' });
+      expect(trackJob).toHaveBeenCalledWith(expect.objectContaining({
+        jobName: 'trello.webhook_event',
+        workspaceId: 'workspace-default'
+      }), expect.any(Function));
+    } finally {
+      jest.dontMock('../src/services/workspaceScopeService');
+      jest.dontMock('../src/services/jobObservabilityService');
+      jest.dontMock('../src/services/trelloClient');
+      jest.dontMock('../src/models/Board');
+      jest.dontMock('../src/models/List');
+      jest.dontMock('../src/models/Card');
+      jest.dontMock('../src/models/Member');
+      jest.dontMock('../src/models/Comment');
+      jest.resetModules();
+    }
+  });
+
   test('redacts provider query credentials from connector sync errors', () => {
     const connectorSyncService = require('../src/services/connectorSyncService');
     const message = connectorSyncService.safeErrorMessage(new Error('Request failed: https://api.trello.com/1?key=api-secret&token=token-secret'));

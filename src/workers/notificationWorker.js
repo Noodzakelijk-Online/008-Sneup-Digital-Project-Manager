@@ -13,16 +13,26 @@ class NotificationWorker {
 
     this.jobs.reconciliationAlerts = schedule.scheduleJob(
       process.env.SNEUP_NOTIFICATION_CRON || '*/15 * * * *',
-      async () => {
-        await jobObservabilityService.trackJob({
-          jobName: 'notifications.reconciliation_alerts',
-          jobType: 'system',
-          triggerType: 'scheduled'
-        }, () => notificationService.dispatchAllReconciliationAlerts());
-      }
+      async () => this.runScheduledReconciliationAlerts()
     );
 
     logger.info('Notification worker initialized');
+  }
+
+  async runScheduledReconciliationAlerts() {
+    const workspaceIds = await notificationService.listActiveReconciliationWorkspaceIds();
+    const results = [];
+
+    for (const workspaceId of workspaceIds) {
+      results.push(await jobObservabilityService.trackJob({
+        jobName: 'notifications.reconciliation_alerts',
+        jobType: 'system',
+        triggerType: 'scheduled',
+        workspaceId
+      }, () => notificationService.dispatchReconciliationAlerts({ workspaceId })));
+    }
+
+    return results;
   }
 
   stop() {

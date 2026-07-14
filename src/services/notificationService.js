@@ -388,12 +388,16 @@ class NotificationService {
     };
   }
 
-  async dispatchAllReconciliationAlerts() {
+  async listActiveReconciliationWorkspaceIds() {
     this.requireDatabase();
-    const workspaceIds = await NotificationPolicy.distinct('workspaceId', {
+    return NotificationPolicy.distinct('workspaceId', {
       status: 'active',
       eventTypes: 'reconciliation_alert'
     });
+  }
+
+  async dispatchAllReconciliationAlerts() {
+    const workspaceIds = await this.listActiveReconciliationWorkspaceIds();
     const totals = { processedCount: 0, successCount: 0, failureCount: 0, workspaces: workspaceIds.length };
     for (const workspaceId of workspaceIds) {
       const result = await this.dispatchReconciliationAlerts({ workspaceId });

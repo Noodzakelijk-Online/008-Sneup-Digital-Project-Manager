@@ -7,7 +7,7 @@ const Member = require('../models/Member');
 const Comment = require('../models/Comment');
 const schedule = require('node-schedule');
 const jobObservabilityService = require('./jobObservabilityService');
-const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 /**
  * Trello Synchronization Service
@@ -18,6 +18,7 @@ const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId, normalizeWorkspaceOb
 const initSync = async () => {
   try {
     logger.info('Initializing Trello synchronization...');
+    const workspaceId = normalizeWorkspaceObjectId(getDefaultWorkspaceObjectId());
     
     // Initialize Trello client
     trelloClient.initTrelloClient();
@@ -26,14 +27,15 @@ const initSync = async () => {
     await jobObservabilityService.trackJob({
       jobName: 'trello.full_sync',
       jobType: 'sync',
-      triggerType: 'startup'
-    }, () => syncAllBoards());
+      triggerType: 'startup',
+      workspaceId
+    }, () => syncAllBoards({ workspaceId }));
     
     // Schedule regular syncs
-    scheduleSync();
+    scheduleSync(workspaceId);
     
     // Set up webhooks for real-time updates
-    await setupWebhooks();
+    await setupWebhooks(workspaceId);
     
     logger.info('Trello synchronization initialized successfully');
   } catch (error) {
@@ -43,7 +45,7 @@ const initSync = async () => {
 };
 
 // Schedule regular synchronization jobs
-const scheduleSync = () => {
+const scheduleSync = (workspaceId = normalizeWorkspaceObjectId(getDefaultWorkspaceObjectId())) => {
   // Full sync daily at 1 AM
   const fullSyncCron = process.env.FULL_SYNC_CRON || '0 1 * * *';
   schedule.scheduleJob(fullSyncCron, async () => {
@@ -51,8 +53,9 @@ const scheduleSync = () => {
     await jobObservabilityService.trackJob({
       jobName: 'trello.full_sync',
       jobType: 'sync',
-      triggerType: 'scheduled'
-    }, () => syncAllBoards());
+      triggerType: 'scheduled',
+      workspaceId
+    }, () => syncAllBoards({ workspaceId }));
   });
   
   // Incremental sync every 15 minutes
@@ -62,17 +65,19 @@ const scheduleSync = () => {
     await jobObservabilityService.trackJob({
       jobName: 'trello.incremental_sync',
       jobType: 'sync',
-      triggerType: 'scheduled'
-    }, () => syncRecentActivity());
+      triggerType: 'scheduled',
+      workspaceId
+    }, () => syncRecentActivity({ workspaceId }));
   });
   
   logger.info('Sync schedules configured');
 };
 
 // Sync all boards
-const syncAllBoards = async () => {
+const syncAllBoards = async (options = {}) => {
   try {
     logger.info('Starting full sync of all boards');
+    const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
     
     // Get all boards from Trello
     const trelloBoards = await trelloClient.boardApi.getBoards();
@@ -84,7 +89,7 @@ const syncAllBoards = async () => {
 
     for (const trelloBoard of trelloBoards) {
       try {
-        await syncBoard(trelloBoard.id);
+        await syncBoard(trelloBoard.id, { workspaceId });
         successCount += 1;
       } catch (error) {
         failureCount += 1;
@@ -98,7 +103,7 @@ const syncAllBoards = async () => {
       processedCount: trelloBoards.length,
       successCount,
       failureCount,
-      metadata: { trelloBoardCount: trelloBoards.length }
+      metadata: { trelloBoardCount: trelloBoards.length, workspaceId: String(workspaceId) }
     };
   } catch (error) {
     logger.error('Failed to sync all boards:', error);
@@ -551,7 +556,7 @@ const syncRecentActivity = async (options = {}) => {
 };
 
 // Set up webhooks for real-time updates
-const setupWebhooks = async () => {
+const setupWebhooks = async (workspaceId = normalizeWorkspaceObjectId(getDefaultWorkspaceObjectId())) => {
   try {
     const callbackUrl = process.env.WEBHOOK_CALLBACK_URL;
     if (!callbackUrl) {
@@ -566,7 +571,7 @@ const setupWebhooks = async () => {
     logger.info(`Found ${existingWebhooks.length} existing webhooks`);
     
     // Get all boards
-    const boards = await Board.find(defaultWorkspaceQuery({ closed: false }));
+    const boards = await Board.find({ workspaceId, closed: false });
     
     // Set up webhooks for each board
     for (const board of boards) {
@@ -596,15 +601,18 @@ const setupWebhooks = async () => {
 };
 
 // Handle webhook events
-const handleWebhookEvent = async (event) => jobObservabilityService.trackJob({
-  jobName: 'trello.webhook_event',
-  jobType: 'webhook',
-  triggerType: 'webhook',
-  metadata: {
-    actionType: event?.action?.type,
-    modelId: event?.model?.id
-  }
-}, async () => {
+const handleWebhookEvent = async (event) => {
+  const workspaceId = normalizeWorkspaceObjectId(getDefaultWorkspaceObjectId());
+  return jobObservabilityService.trackJob({
+    jobName: 'trello.webhook_event',
+    jobType: 'webhook',
+    triggerType: 'webhook',
+    workspaceId,
+    metadata: {
+      actionType: event?.action?.type,
+      modelId: event?.model?.id
+    }
+  }, async () => {
   try {
     logger.info(`Received webhook event: ${event.action.type}`);
     
@@ -612,7 +620,7 @@ const handleWebhookEvent = async (event) => jobObservabilityService.trackJob({
     const boardId = event.model.id;
     
     // Find the board in database
-    const board = await Board.findOne({ trelloId: boardId });
+    const board = await Board.findOne({ trelloId: boardId, workspaceId });
     
     if (!board) {
       logger.warn(`Board not found for webhook event: ${boardId}`);
@@ -638,7 +646,8 @@ const handleWebhookEvent = async (event) => jobObservabilityService.trackJob({
     logger.error('Failed to handle webhook event:', error);
     throw error;
   }
-});
+  });
+};
 
 module.exports = {
   initSync,
