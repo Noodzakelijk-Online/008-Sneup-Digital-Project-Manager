@@ -8,7 +8,7 @@ Sneup now includes an account connector marketplace for project-management tools
 - Categories: 11
 - Coverage includes work management, software delivery, communication, calendar/email, docs/knowledge, files/assets, whiteboards/design, time/finance/resourcing, CRM/support/stakeholders, automation/data, and incident/quality/monitoring.
 - Major OAuth-ready providers include Jira, Asana, monday.com, ClickUp, Linear, Notion, Microsoft 365, Google Workspace, Slack, GitHub, GitLab, Zoom, Figma, Miro, Dropbox, Box, HubSpot, Salesforce, and Intercom.
-- Token/manual connectors cover Trello, Wrike, Smartsheet, Airtable, Basecamp, Microsoft Project, Planner, Azure DevOps, Bitbucket, Confluence, Coda, Teamwork, Zoho Projects, Shortcut, Pivotal Tracker, Height, Todoist, Zapier, Make, Power BI, Tableau, Sentry, PagerDuty, and more. Coda is now a live, personal-access-token connector, but it requires an explicit document allowlist and reads table metadata only; it deliberately excludes row values, columns, pages, packs, and button actions.
+- Token/manual connectors cover Trello, Wrike, Smartsheet, Airtable, Basecamp, Microsoft Project, Planner, Azure DevOps, Bitbucket, Confluence, Coda, Teamwork, Zoho Projects, Shortcut, Pivotal Tracker, Height, Todoist, Zapier, Make, Power BI, Tableau, Sentry, PagerDuty, and more. Coda is a live personal-access-token connector that requires an explicit document allowlist and reads table metadata only; it deliberately excludes row values, columns, pages, packs, and button actions. Teamwork is a live API-key connector that accepts only one HTTPS `*.teamwork.com` tenant, reads bounded project/task metadata with GET, and excludes private tasks, descriptions, comments, files, time, company, and billing data.
 
 ## Security Work
 

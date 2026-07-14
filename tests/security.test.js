@@ -70,6 +70,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/jiraWorkSignalClient');
     jest.dontMock('../src/services/harvestWorkSignalClient');
     jest.dontMock('../src/services/codaWorkSignalClient');
+    jest.dontMock('../src/services/teamworkWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1867,6 +1868,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('harvest').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Teamwork adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'task:1' }] });
+    jest.doMock('../src/services/teamworkWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'teamwork' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('teamwork').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3100,6 +3113,88 @@ describe('work signal normalization', () => {
       externalId: 'table:Doc-A:grid-1', sourceType: 'document', title: 'Release tracker', description: '', status: 'open', priority: 'normal', labels: ['coda_table', 'Doc-A', 'table']
     });
     expect(JSON.stringify(normalized.raw)).not.toContain('No row data');
+  });
+
+  test('Teamwork sync reads bounded project and task metadata without rich content, private tasks, or provider writes', async () => {
+    jest.dontMock('../src/services/teamworkWorkSignalClient');
+    jest.resetModules();
+    const { TeamworkWorkSignalClient } = require('../src/services/teamworkWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { projects: [{
+          id: 9, name: 'Sneup release', status: 'current', updatedAt: '2026-07-11T10:00:00.000Z',
+          company: { name: 'Private client' }, description: 'Private project description', budgets: { amount: 5000 }
+        }] } })
+        .mockResolvedValueOnce({ data: { tasks: [{
+          id: 18, name: 'Ship Teamwork connector', status: 'in progress', priority: 'high', tasklistId: 4, projectId: 9,
+          startDate: '2026-07-10', dueDate: '2026-07-15', dateUpdated: '2026-07-12T12:00:00.000Z',
+          description: 'Private task description', comments: [{ body: 'Private comment' }], files: [{ name: 'secret.pdf' }]
+        }, {
+          id: 19, name: 'Private client task', isPrivate: true, description: 'Must not enter Sneup'
+        }] } })
+    };
+    const client = new TeamworkWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'teamwork-key' })) }
+    });
+    const result = await client.fetchDelta({ connectorId: 'teamwork', metadata: { fields: { siteUrl: 'https://sneup.teamwork.com' } } }, '2026-07-10T10:00:00.000Z');
+
+    const auth = `Basic ${Buffer.from('teamwork-key:password').toString('base64')}`;
+    expect(http.get).toHaveBeenCalledWith('https://sneup.teamwork.com/projects/api/v3/projects.json', expect.objectContaining({
+      params: expect.objectContaining({ page: 1, pageSize: 100, skipCounts: true, updatedAfter: '2026-07-10T09:59:00.000Z' }),
+      headers: expect.objectContaining({ Authorization: auth })
+    }));
+    expect(http.get).toHaveBeenCalledWith('https://sneup.teamwork.com/projects/api/v3/tasks.json', expect.objectContaining({
+      params: expect.objectContaining({ 'fields[tasks]': expect.stringContaining('name') })
+    }));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/comments|files|description|time|company|billing/i);
+    expect(JSON.stringify(result.records)).not.toMatch(/Private client|Private project description|Private task description|Private comment|secret\.pdf/);
+    expect(result).toMatchObject({ metadata: { source: 'teamwork_api', projects: 1, tasks: 1, contentPolicy: 'project_task_metadata_only_private_tasks_excluded' }, hasMore: false, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'project:9', name: 'Sneup release', status: 'current' }),
+      expect.objectContaining({ id: 'task:18', name: 'Ship Teamwork connector', projectId: 9, dueAt: '2026-07-15' })
+    ]));
+  });
+
+  test('Teamwork sync rejects untrusted site URLs and fails closed at a configured task cap', async () => {
+    jest.dontMock('../src/services/teamworkWorkSignalClient');
+    jest.resetModules();
+    const { TeamworkWorkSignalClient } = require('../src/services/teamworkWorkSignalClient');
+    const untrustedHttp = { get: jest.fn() };
+    const untrustedClient = new TeamworkWorkSignalClient({ http: untrustedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'teamwork-key' })) } });
+    await expect(untrustedClient.fetchDelta({ metadata: { fields: { siteUrl: 'http://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 400 });
+    expect(untrustedHttp.get).not.toHaveBeenCalled();
+
+    const previousLimit = process.env.SNEUP_TEAMWORK_MAX_TASKS;
+    process.env.SNEUP_TEAMWORK_MAX_TASKS = '1';
+    const cappedHttp = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { projects: [] } })
+        .mockResolvedValueOnce({ data: { tasks: [{ id: 1, name: 'One' }] } })
+    };
+    const cappedClient = new TeamworkWorkSignalClient({ http: cappedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'teamwork-key' })) } });
+    try {
+      await expect(cappedClient.fetchDelta({ metadata: { fields: { siteUrl: 'https://sneup.teamwork.com' } } })).rejects.toMatchObject({ statusCode: 413 });
+      expect(cappedHttp.get).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_TEAMWORK_MAX_TASKS;
+      else process.env.SNEUP_TEAMWORK_MAX_TASKS = previousLimit;
+    }
+  });
+
+  test('Teamwork adapter retains only approved task metadata in normalized work signals', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    expect(workSignalAdapterService.getAdapter('teamwork').capabilities.credentialBackedSync).toBe(true);
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'teamwork' }, {
+      id: 'task:18', sourceType: 'task', taskId: 18, projectId: 9, tasklistId: 4, name: 'Ship Teamwork connector',
+      status: 'in progress', priority: 'high', dueAt: '2026-07-15', updatedAt: '2026-07-12T12:00:00.000Z', description: 'Private detail', comments: ['Private comment']
+    });
+    expect(normalized).toMatchObject({
+      externalId: 'task:18', sourceType: 'task', title: 'Ship Teamwork connector', description: '', status: 'in_progress', priority: 'high', labels: ['teamwork', 'task', 'project:9', 'tasklist:4', 'in progress']
+    });
+    expect(JSON.stringify(normalized.raw)).not.toMatch(/Private detail|Private comment/);
   });
 
   test('projects provider signals into normalized work graph records', () => {

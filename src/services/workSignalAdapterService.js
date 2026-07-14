@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -38,6 +38,7 @@ const shortcutWorkSignalClient = require('./shortcutWorkSignalClient');
 const bitbucketWorkSignalClient = require('./bitbucketWorkSignalClient');
 const harvestWorkSignalClient = require('./harvestWorkSignalClient');
 const codaWorkSignalClient = require('./codaWorkSignalClient');
+const teamworkWorkSignalClient = require('./teamworkWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -649,6 +650,49 @@ codaAdapter.capabilities.credentialBackedSync = true;
 codaAdapter.list = async account => (await codaWorkSignalClient.fetchDelta(account, null)).records;
 codaAdapter.fetchDelta = (account, cursor) => codaWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('coda', codaAdapter);
+
+const teamworkStatus = (item) => {
+  const status = String(item.status || '').toLowerCase();
+  if (/(complete|closed|done)/.test(status) || item.completedAt) return 'done';
+  if (/(progress|started|active)/.test(status)) return 'in_progress';
+  if (/(late|overdue|blocked)/.test(status)) return 'blocked';
+  return statusFromText(status);
+};
+const teamworkAdapter = buildAdapter('teamwork', 'Teamwork project and task metadata adapter', (account, item) => ({
+  externalId: pick(item.externalId, item.id),
+  sourceType: pick(item.sourceType, 'task'),
+  title: titleFromText(item.name, 'Teamwork work item'),
+  description: '',
+  status: teamworkStatus(item),
+  priority: priorityFromText(item.priority, item.status),
+  url: undefined,
+  owners: [],
+  labels: compact(['teamwork', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.tasklistId ? `tasklist:${item.tasklistId}` : undefined, item.status]),
+  dueAt: pick(item.dueAt),
+  providerCreatedAt: pick(item.createdAt),
+  providerUpdatedAt: pick(item.updatedAt, item.completedAt, item.createdAt),
+  evidenceRefs: baseEvidence(account, item, 'Teamwork metadata'),
+  raw: {
+    id: item.id,
+    sourceType: item.sourceType,
+    projectId: item.projectId,
+    taskId: item.taskId,
+    tasklistId: item.tasklistId,
+    parentTaskId: item.parentTaskId,
+    name: item.name,
+    status: item.status,
+    priority: item.priority,
+    startAt: item.startAt,
+    dueAt: item.dueAt,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    completedAt: item.completedAt
+  }
+}));
+teamworkAdapter.capabilities.credentialBackedSync = true;
+teamworkAdapter.list = async account => (await teamworkWorkSignalClient.fetchDelta(account, null)).records;
+teamworkAdapter.fetchDelta = (account, cursor) => teamworkWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('teamwork', teamworkAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
