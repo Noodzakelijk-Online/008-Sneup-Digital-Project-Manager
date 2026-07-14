@@ -376,15 +376,16 @@ const CONNECTORS = [
     id: 'miro',
     name: 'Miro',
     category: 'whiteboard_design',
-    description: 'Boards, frames, cards, sticky notes, diagrams, comments, and workshop artifacts.',
+    description: 'Read-only bounded board metadata through Miro OAuth. Sneup excludes board descriptions, content, items, frames, sticky notes, diagrams, comments, members, permissions, board links, and provider writes.',
     auth: oauth2({
       envPrefix: 'MIRO',
       authorizationUrl: 'https://miro.com/oauth/authorize',
       tokenUrl: 'https://api.miro.com/v1/oauth/token',
-      scopes: ['boards:read', 'identity:read'],
+      scopes: ['boards:read'],
+      oauthResponseMetadata: [{ field: 'miroTeamId', responseKey: 'team_id', validator: 'miroTeamId', required: true }],
       docsUrl: 'https://developers.miro.com/docs/getting-started-with-oauth'
     }),
-    sync: ['boards', 'items', 'comments', 'users']
+    sync: ['boards']
   },
   {
     id: 'dropbox',

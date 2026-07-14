@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -65,6 +65,7 @@ const hubSpotWorkSignalClient = require('./hubSpotWorkSignalClient');
 const typeformWorkSignalClient = require('./typeformWorkSignalClient');
 const salesforceWorkSignalClient = require('./salesforceWorkSignalClient');
 const zoomWorkSignalClient = require('./zoomWorkSignalClient');
+const miroWorkSignalClient = require('./miroWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -947,6 +948,12 @@ zoomAdapter.capabilities.credentialBackedSync = true;
 zoomAdapter.list = async account => (await zoomWorkSignalClient.fetchDelta(account, null)).records;
 zoomAdapter.fetchDelta = (account, cursor) => zoomWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('zoom', zoomAdapter);
+
+const miroAdapter = buildAdapter('miro', 'Miro board metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'board'), title: titleFromText(item.name, 'Miro board'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['miro', item.sourceType, item.boardType ? `type:${item.boardType}` : undefined]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Miro board metadata'), raw: { id: item.id, sourceType: item.sourceType, boardId: item.boardId, boardType: item.boardType, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+miroAdapter.capabilities.credentialBackedSync = true;
+miroAdapter.list = async account => (await miroWorkSignalClient.fetchDelta(account, null)).records;
+miroAdapter.fetchDelta = (account, cursor) => miroWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('miro', miroAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

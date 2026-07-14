@@ -98,6 +98,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/typeformWorkSignalClient');
     jest.dontMock('../src/services/salesforceWorkSignalClient');
     jest.dontMock('../src/services/zoomWorkSignalClient');
+    jest.dontMock('../src/services/miroWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1163,7 +1164,7 @@ describe('connector registry', () => {
     expect(byId.google_workspace.auth.scopes).not.toContain('https://www.googleapis.com/auth/calendar');
     expect(byId.zoom.auth.scopes).toEqual(['meeting:read']);
     expect(byId.zoom.auth.scopes).not.toEqual(expect.arrayContaining(['meeting:write', 'recording:read', 'user:read']));
-    expect(byId.miro.auth.scopes).toEqual(['boards:read', 'identity:read']);
+    expect(byId.miro.auth.scopes).toEqual(['boards:read']);
     expect(byId.google_chat.auth.scopes).toEqual(['https://www.googleapis.com/auth/chat.messages.readonly']);
   });
 
@@ -1200,7 +1201,7 @@ describe('connector registry', () => {
       expect(accountConnectorService.verifyState(signedState).consent).toMatchObject({
         version: 'scope-review-v1',
         acknowledgedBy: 'operator-1',
-        requestedScopes: ['boards:read', 'identity:read'],
+        requestedScopes: ['boards:read'],
         scopeReviewRequired: true
       });
     } finally {
@@ -1253,6 +1254,17 @@ describe('connector registry', () => {
     expect(accountConnectorService.extractOAuthMetadata(getConnectors().find(connector => connector.id === 'hubspot'), {
       instance_url: 'https://untrusted.example.test', secret: 'must-not-be-retained'
     })).toEqual({});
+  });
+
+  test('persists only connector-declared valid Miro OAuth team metadata', () => {
+    const miro = getConnectors().find(connector => connector.id === 'miro');
+
+    expect(miro.auth.oauthResponseMetadata).toEqual([
+      { field: 'miroTeamId', responseKey: 'team_id', validator: 'miroTeamId', required: true }
+    ]);
+    expect(accountConnectorService.extractOAuthMetadata(miro, { team_id: '3074457353169356300' })).toEqual({ miroTeamId: '3074457353169356300' });
+    expect(() => accountConnectorService.extractOAuthMetadata(miro, { team_id: 'team-1' })).toThrow(/valid team ID/i);
+    expect(() => accountConnectorService.extractOAuthMetadata(miro, {})).toThrow(/valid team ID/i);
   });
 
   test('supports connector search, category aliases, and pagination', () => {
@@ -2217,6 +2229,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('zoom').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Miro adapter delegates bounded board reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'board:uXjVExample' }] });
+    jest.doMock('../src/services/miroWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'miro' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('miro').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4534,6 +4557,44 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_ZOOM_MAX_MEETINGS; process.env.SNEUP_ZOOM_MAX_MEETINGS = '1';
     const capped = new ZoomWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { meetings: [{ id: 98765432101, topic: 'First meeting' }], next_page_token: 'page-token_2' } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ connectorId: 'zoom' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_ZOOM_MAX_MEETINGS; else process.env.SNEUP_ZOOM_MAX_MEETINGS = previous; }
+  });
+
+  test('Miro sync reads bounded board metadata without board content, members, links, or provider writes', async () => {
+    jest.dontMock('../src/services/miroWorkSignalClient');
+    jest.resetModules();
+    const { MiroWorkSignalClient } = require('../src/services/miroWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { total: 2, data: [{ id: 'uXjVExample1', name: `Client workshop ${privateEmail}`, type: 'freeform', createdAt: '2026-07-10T12:00:00.000Z', modifiedAt: '2026-07-12T12:00:00.000Z', description: 'Private board context', viewLink: 'https://miro.com/app/board/private', owner: { name: 'Private owner' }, team: { id: 'private-team' }, policy: { permissionsPolicy: { collaborationToolsStartAccess: 'all_editors' } } }] } })
+      .mockResolvedValueOnce({ data: { total: 2, data: [{ id: 'uXjVExample2', name: 'Delivery planning', type: 'freeform', createdAt: '2026-07-11T12:00:00.000Z', modifiedAt: '2026-07-13T12:00:00.000Z' }] } }) };
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'miro-access-token' })), validateMiroTeamId: jest.fn(() => '3074457353169356300') };
+    const client = new MiroWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: accountConnector });
+    const previous = { max: process.env.SNEUP_MIRO_MAX_BOARDS, page: process.env.SNEUP_MIRO_PAGE_SIZE };
+    process.env.SNEUP_MIRO_MAX_BOARDS = '2'; process.env.SNEUP_MIRO_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'miro', metadata: { fields: { miroTeamId: '3074457353169356300' } } }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://api.miro.com/v2/boards', expect.objectContaining({ params: { team_id: '3074457353169356300', limit: 1, offset: 0, sort: 'last_modified' }, headers: expect.objectContaining({ Authorization: 'Bearer miro-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://api.miro.com/v2/boards', expect.objectContaining({ params: { team_id: '3074457353169356300', limit: 1, offset: 1, sort: 'last_modified' } }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'miro_boards_api', boards: 2, pages: 2 }, nextCursor: '2026-07-13T12:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private board|miro\.com\/app|Private owner|private-team|policy|description|viewLink|owner/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_MIRO_MAX_BOARDS; else process.env.SNEUP_MIRO_MAX_BOARDS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_MIRO_PAGE_SIZE; else process.env.SNEUP_MIRO_PAGE_SIZE = previous.page; }
+  });
+
+  test('Miro sync rejects invalid cursors, team IDs, malformed pages, and collection caps', async () => {
+    jest.dontMock('../src/services/miroWorkSignalClient');
+    jest.resetModules();
+    const { MiroWorkSignalClient } = require('../src/services/miroWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })), validateMiroTeamId: jest.fn(value => { if (value !== '3074457353169356300') { const error = new Error('invalid team'); error.statusCode = 502; throw error; } return value; }) };
+    const invalid = new MiroWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector });
+    await expect(invalid.fetchDelta({ metadata: { fields: { miroTeamId: '3074457353169356300' } } }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    await expect(invalid.fetchDelta({ metadata: { fields: { miroTeamId: 'bad' } } })).rejects.toMatchObject({ statusCode: 502 });
+    const malformed = new MiroWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { total: 'two', data: [] } }) }, accountConnectorService: accountConnector });
+    await expect(malformed.fetchDelta({ metadata: { fields: { miroTeamId: '3074457353169356300' } } })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_MIRO_MAX_BOARDS; process.env.SNEUP_MIRO_MAX_BOARDS = '1';
+    const capped = new MiroWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { total: 2, data: [{ id: 'uXjVExample1', name: 'First board' }] } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { miroTeamId: '3074457353169356300' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_MIRO_MAX_BOARDS; else process.env.SNEUP_MIRO_MAX_BOARDS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

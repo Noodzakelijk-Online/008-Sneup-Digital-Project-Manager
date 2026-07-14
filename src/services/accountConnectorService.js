@@ -856,6 +856,10 @@ class AccountConnectorService {
         fields[declaration.field] = this.validateSalesforceInstanceUrl(value);
         return fields;
       }
+      if (declaration.validator === 'miroTeamId') {
+        fields[declaration.field] = this.validateMiroTeamId(value);
+        return fields;
+      }
       const error = new Error(`Connector ${connector.id} declared an unsupported OAuth metadata validator`);
       error.statusCode = 500;
       throw error;
@@ -879,6 +883,16 @@ class AccountConnectorService {
       throw error;
     }
     return `https://${hostname}`;
+  }
+
+  validateMiroTeamId(value) {
+    const teamId = String(value || '').trim();
+    if (!/^\d{8,24}$/.test(teamId)) {
+      const error = new Error('Miro OAuth did not return a valid team ID. Reconnect this account to continue.');
+      error.statusCode = 502;
+      throw error;
+    }
+    return teamId;
   }
 
   createConsentEvidence(connector, options = {}) {
