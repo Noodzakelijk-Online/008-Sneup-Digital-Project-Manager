@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -73,6 +73,7 @@ const googleChatWorkSignalClient = require('./googleChatWorkSignalClient');
 const figmaWorkSignalClient = require('./figmaWorkSignalClient');
 const confluenceWorkSignalClient = require('./confluenceWorkSignalClient');
 const boxWorkSignalClient = require('./boxWorkSignalClient');
+const podioWorkSignalClient = require('./podioWorkSignalClient');
 const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
@@ -1024,6 +1025,12 @@ outlookAdapter.capabilities.credentialBackedSync = true;
 outlookAdapter.list = async account => (await outlookWorkSignalClient.fetchDelta(account, null)).records;
 outlookAdapter.fetchDelta = (account, cursor) => outlookWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('outlook', outlookAdapter);
+
+const podioAdapter = buildAdapter('podio', 'Podio app item metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'item'), title: titleFromText(item.name, 'Podio item'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['podio', item.sourceType]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Podio app item metadata'), raw: { id: item.id, sourceType: item.sourceType, itemId: item.itemId, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+podioAdapter.capabilities.credentialBackedSync = true;
+podioAdapter.list = async account => (await podioWorkSignalClient.fetchDelta(account, null)).records;
+podioAdapter.fetchDelta = (account, cursor) => podioWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('podio', podioAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

@@ -176,15 +176,15 @@ const CONNECTORS = [
     id: 'podio',
     name: 'Podio',
     category: 'work_management',
-    description: 'Workspaces, apps, items, tasks, and project workflows from Podio team operations.',
+    description: 'Read-only bounded item metadata from one explicitly selected Podio app. Sneup excludes item field values, comments, files, people, URLs, tags, tasks, workspaces, and provider writes.',
     auth: apiKey({
-      docsUrl: 'https://developers.podio.com/api/',
+      docsUrl: 'https://developers.podio.com/authentication/app_auth',
       fields: [
-        { name: 'baseUrl', label: 'Podio API URL', required: true },
-        { name: 'apiKey', label: 'Client API key', secret: true, required: true }
+        { name: 'appId', label: 'Podio app ID', required: true },
+        { name: 'appToken', label: 'Podio app token', secret: true, required: true }
       ]
     }),
-    sync: ['workspaces', 'apps', 'items', 'tasks', 'users']
+    sync: ['app_items']
   },
   {
     id: 'asana',

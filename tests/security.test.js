@@ -104,6 +104,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/rallyWorkSignalClient');
     jest.dontMock('../src/services/gmailWorkSignalClient');
     jest.dontMock('../src/services/outlookWorkSignalClient');
+    jest.dontMock('../src/services/podioWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -2389,6 +2390,11 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('outlook').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Podio adapter delegates bounded app-item metadata reads to the credential-backed client', async () => {
+    jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'item:1234' }] }); jest.doMock('../src/services/podioWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'podio' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('podio').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
