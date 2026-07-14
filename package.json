@@ -53,6 +53,7 @@
   "build": {
     "appId": "online.noodzakelijk.sneup",
     "productName": "Sneup",
+    "icon": "assets/sneup.ico",
     "directories": {
       "output": "release"
     },
