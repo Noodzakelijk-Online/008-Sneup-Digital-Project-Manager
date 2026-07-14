@@ -14,6 +14,7 @@ const logger = require('../utils/logger');
 const MAX_POLICY_LIMIT = 100;
 const MAX_DELIVERY_LIMIT = 250;
 const MAX_DIGEST_ITEMS = 25;
+const EMAIL_PATTERN = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 const severityRank = { warning: 1, critical: 2 };
 
 const compact = (value, maximum = 4000) => String(value || '').trim().slice(0, maximum);
@@ -72,6 +73,27 @@ class NotificationService {
     return url.toString();
   }
 
+  assertSafeEmailAddress(rawEmail) {
+    const email = compact(rawEmail, 254);
+    if (!EMAIL_PATTERN.test(email) || /[\r\n]/.test(email)) {
+      const invalid = new Error('A valid single email recipient is required');
+      invalid.statusCode = 400;
+      throw invalid;
+    }
+    return email;
+  }
+
+  destinationForChannel(channel, body = {}) {
+    if (channel === 'email') return body.destinationEmail ?? body.destination;
+    return body.destinationUrl ?? body.destination;
+  }
+
+  validateDestination(channel, destination) {
+    return channel === 'email'
+      ? this.assertSafeEmailAddress(destination)
+      : this.assertSafeWebhookUrl(destination);
+  }
+
   normalizeEventTypes(value) {
     const eventTypes = Array.isArray(value) ? value : [value || 'reconciliation_alert'];
     const unique = [...new Set(eventTypes.map(item => String(item || '').trim()).filter(Boolean))];
@@ -94,8 +116,8 @@ class NotificationService {
       error.statusCode = 400;
       throw error;
     }
-    if (!['slack_webhook', 'teams_webhook', 'generic_webhook'].includes(channel)) {
-      const error = new Error('Notification channel must be slack_webhook, teams_webhook, or generic_webhook');
+    if (!['slack_webhook', 'teams_webhook', 'generic_webhook', 'email'].includes(channel)) {
+      const error = new Error('Notification channel must be slack_webhook, teams_webhook, generic_webhook, or email');
       error.statusCode = 400;
       throw error;
     }
@@ -218,7 +240,7 @@ class NotificationService {
   async createPolicy(body = {}, options = {}) {
     this.requireDatabase();
     const input = this.normalizePolicyInput(body);
-    const destination = this.assertSafeWebhookUrl(body.destinationUrl);
+    const destination = this.validateDestination(input.channel, this.destinationForChannel(input.channel, body));
     accountConnectorService.requireEncryptionKey();
     const actor = options.actor || body.createdBy || 'sneup-operator';
     const policy = await NotificationPolicy.create({
@@ -257,14 +279,19 @@ class NotificationService {
     });
     const actor = options.actor || body.updatedBy || 'sneup-operator';
     const statusChangedToActive = input.status === 'active' && policy.status !== 'active';
+    const channelChanged = input.channel !== policy.channel;
     Object.assign(policy, input, {
       updatedBy: actor,
       activatedBy: statusChangedToActive ? actor : policy.activatedBy,
       activatedAt: statusChangedToActive ? new Date() : policy.activatedAt
     });
-    if (body.destinationUrl !== undefined) {
+    const destinationProvided = body.destinationUrl !== undefined || body.destinationEmail !== undefined || body.destination !== undefined;
+    if (destinationProvided || channelChanged) {
       accountConnectorService.requireEncryptionKey();
-      policy.destinationEncrypted = accountConnectorService.encrypt(this.assertSafeWebhookUrl(body.destinationUrl));
+      const destination = destinationProvided
+        ? this.destinationForChannel(input.channel, body)
+        : accountConnectorService.decrypt(policy.destinationEncrypted);
+      policy.destinationEncrypted = accountConnectorService.encrypt(this.validateDestination(input.channel, destination));
     }
     await policy.save();
     await this.recordAudit('notification_policy_updated', policy, actor, { status: policy.status });
@@ -554,6 +581,7 @@ class NotificationService {
   }
 
   async postWebhook(policy, event) {
+    if (policy.channel === 'email') return this.postEmail(policy, event);
     const destination = this.assertSafeWebhookUrl(accountConnectorService.decrypt(policy.destinationEncrypted));
     return this.http.post(destination, this.buildWebhookPayload(policy.channel, event), {
       headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'Sneup-Notification/2.0' },
@@ -562,6 +590,45 @@ class NotificationService {
       proxy: false,
       validateStatus: status => status >= 200 && status < 300
     });
+  }
+
+  emailConfiguration() {
+    const apiKey = compact(process.env.RESEND_API_KEY, 500);
+    const from = compact(process.env.SNEUP_NOTIFICATION_EMAIL_FROM, 254);
+    if (!apiKey || !from) {
+      const error = new Error('Email notifications require RESEND_API_KEY and SNEUP_NOTIFICATION_EMAIL_FROM');
+      error.statusCode = 503;
+      throw error;
+    }
+    return { apiKey, from: this.assertSafeEmailAddress(from) };
+  }
+
+  async postEmail(policy, event) {
+    const recipient = this.assertSafeEmailAddress(accountConnectorService.decrypt(policy.destinationEncrypted));
+    const { apiKey, from } = this.emailConfiguration();
+    return this.http.post('https://api.resend.com/emails', this.buildEmailPayload(event, { from, recipient }), {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'Sneup-Notification/2.0'
+      },
+      timeout: Number(process.env.SNEUP_NOTIFICATION_TIMEOUT_MS || 10000),
+      maxRedirects: 0,
+      proxy: false,
+      validateStatus: status => status >= 200 && status < 300
+    });
+  }
+
+  buildEmailPayload(event, { from, recipient }) {
+    const webhookPayload = this.buildWebhookPayload('generic_webhook', event);
+    const evidenceText = webhookPayload.sourceEvidence.map(item => `Source: ${item.label || 'Evidence'} ${item.url}`).join('\n');
+    return {
+      from,
+      to: [recipient],
+      subject: compact(event.title, 240) || 'Sneup operational alert',
+      text: [event.message, webhookPayload.sourceUrl ? `Source: ${webhookPayload.sourceUrl}` : '', evidenceText].filter(Boolean).join('\n')
+    };
   }
 
   buildWebhookPayload(channel, event) {
@@ -612,9 +679,9 @@ class NotificationService {
   }
 
   sanitizeDeliveryError(error) {
-    if (error?.response?.status) return `Webhook returned HTTP ${error.response.status}`;
-    if (error?.code === 'ECONNABORTED') return 'Webhook request timed out';
-    return 'Webhook delivery failed';
+    if (error?.response?.status) return `Notification provider returned HTTP ${error.response.status}`;
+    if (error?.code === 'ECONNABORTED') return 'Notification delivery timed out';
+    return 'Notification delivery failed';
   }
 
   async recordAudit(action, entity, actor, afterState) {

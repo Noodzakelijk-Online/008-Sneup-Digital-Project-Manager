@@ -575,6 +575,61 @@ describe('notification delivery safety', () => {
     });
   });
 
+  test('accepts one plain email recipient and keeps email policy payloads free of destination secrets', () => {
+    expect(notificationService.assertSafeEmailAddress('operations@example.com')).toBe('operations@example.com');
+    ['Operations <operations@example.com>', 'one@example.com, two@example.com', 'one@example.com\nBCC: two@example.com', 'not-an-email'].forEach((recipient) => {
+      expect(() => notificationService.assertSafeEmailAddress(recipient)).toThrow(/email/i);
+    });
+
+    const emailPolicy = notificationService.normalizePolicyInput({ name: 'Operations email', channel: 'email' });
+    expect(emailPolicy.channel).toBe('email');
+    const payload = notificationService.buildEmailPayload({
+      title: 'Sneup: critical reconciliation evidence gap',
+      message: 'Move action needs operator evidence.',
+      sourceUrl: 'https://trello.com/c/attempt-1',
+      sourceEvidence: [{ label: 'Action evidence', url: 'https://trello.com/c/attempt-1' }]
+    }, { from: 'alerts@example.com', recipient: 'operations@example.com' });
+    expect(payload).toMatchObject({
+      from: 'alerts@example.com',
+      to: ['operations@example.com'],
+      subject: 'Sneup: critical reconciliation evidence gap'
+    });
+    expect(payload.text).toContain('https://trello.com/c/attempt-1');
+    expect(JSON.stringify(payload)).not.toContain('destinationEncrypted');
+  });
+
+  test('sends email through the fixed Resend endpoint with no redirect or proxy support', async () => {
+    const originalApiKey = process.env.RESEND_API_KEY;
+    const originalSender = process.env.SNEUP_NOTIFICATION_EMAIL_FROM;
+    const http = { post: jest.fn().mockResolvedValue({ status: 202 }) };
+    const service = new NotificationService({ http });
+    const decrypt = jest.spyOn(accountConnectorService, 'decrypt').mockReturnValue('operations@example.com');
+    process.env.RESEND_API_KEY = 'resend_test_key_123456789';
+    process.env.SNEUP_NOTIFICATION_EMAIL_FROM = 'alerts@example.com';
+
+    try {
+      await service.postEmail({ destinationEncrypted: 'ciphertext' }, {
+        title: 'Sneup notification test',
+        message: 'This confirms a policy can receive operational alerts.',
+        sourceUrl: 'https://trello.com/c/attempt-1'
+      });
+      expect(http.post).toHaveBeenCalledWith('https://api.resend.com/emails', expect.objectContaining({
+        from: 'alerts@example.com',
+        to: ['operations@example.com']
+      }), expect.objectContaining({
+        maxRedirects: 0,
+        proxy: false,
+        headers: expect.objectContaining({ Authorization: 'Bearer resend_test_key_123456789' })
+      }));
+    } finally {
+      decrypt.mockRestore();
+      if (originalApiKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalApiKey;
+      if (originalSender === undefined) delete process.env.SNEUP_NOTIFICATION_EMAIL_FROM;
+      else process.env.SNEUP_NOTIFICATION_EMAIL_FROM = originalSender;
+    }
+  });
+
   test('keeps destination data out of webhook payloads and uses provider-native payload shapes', () => {
     const event = {
       eventType: 'reconciliation_alert',

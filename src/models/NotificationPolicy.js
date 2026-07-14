@@ -15,7 +15,7 @@ const notificationPolicySchema = new mongoose.Schema({
   },
   channel: {
     type: String,
-    enum: ['slack_webhook', 'teams_webhook', 'generic_webhook'],
+    enum: ['slack_webhook', 'teams_webhook', 'generic_webhook', 'email'],
     required: true
   },
   destinationEncrypted: {

@@ -3572,10 +3572,12 @@ function openNotificationPolicy() {
           <option value="slack_webhook">Slack webhook</option>
           <option value="teams_webhook">Teams webhook</option>
           <option value="generic_webhook">Generic webhook</option>
+          <option value="email">Email (Resend)</option>
         </select>
       </label>
       <label>Destination label<input name="destinationLabel" type="text" maxlength="160" required placeholder="Project operations channel"></label>
-      <label>HTTPS webhook URL<input name="destinationUrl" type="url" inputmode="url" autocomplete="off" required placeholder="https://..."></label>
+      <label id="notificationWebhookDestination">HTTPS webhook URL<input name="destinationUrl" type="url" inputmode="url" autocomplete="off" required placeholder="https://..."></label>
+      <label id="notificationEmailDestination" hidden>Email recipient<input name="destinationEmail" type="email" inputmode="email" autocomplete="email" placeholder="operations@example.com"></label>
       <label>Minimum severity
         <select name="minimumSeverity">
           <option value="warning">Warning and critical</option>
@@ -3601,7 +3603,20 @@ function openNotificationPolicy() {
   `;
   els.modal.classList.add('open');
   document.getElementById('cancelNotificationPolicy').addEventListener('click', closeModal);
-  document.getElementById('notificationPolicyForm').addEventListener('submit', async (event) => {
+  const policyForm = document.getElementById('notificationPolicyForm');
+  const channelInput = policyForm.elements.channel;
+  const webhookDestination = document.getElementById('notificationWebhookDestination');
+  const emailDestination = document.getElementById('notificationEmailDestination');
+  const syncDestinationInput = () => {
+    const emailSelected = channelInput.value === 'email';
+    webhookDestination.hidden = emailSelected;
+    emailDestination.hidden = !emailSelected;
+    policyForm.elements.destinationUrl.required = !emailSelected;
+    policyForm.elements.destinationEmail.required = emailSelected;
+  };
+  channelInput.addEventListener('change', syncDestinationInput);
+  syncDestinationInput();
+  policyForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const submitButton = event.currentTarget.querySelector('button[type="submit"]');
     submitButton.disabled = true;
