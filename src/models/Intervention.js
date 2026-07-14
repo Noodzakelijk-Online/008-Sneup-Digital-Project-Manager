@@ -124,6 +124,7 @@ interventionSchema.index({ boardId: 1, createdAt: -1 });
 interventionSchema.index({ memberId: 1, createdAt: -1 });
 interventionSchema.index({ status: 1, createdAt: -1 });
 interventionSchema.index({ type: 1, trigger: 1 });
+interventionSchema.index({ workspaceId: 1, boardId: 1, cardId: 1, memberId: 1, type: 1, trigger: 1, status: 1, createdAt: -1 });
 
 // Static methods
 

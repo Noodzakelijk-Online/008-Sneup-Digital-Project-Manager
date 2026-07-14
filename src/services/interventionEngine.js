@@ -9,6 +9,8 @@ const policyRuleService = require('./policyRuleService');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const INTERVENTION_COOLDOWN_HOURS = 24;
+const ACTIVE_INTERVENTION_STATUSES = ['pending', 'awaiting_approval', 'executing', 'executed'];
 
 class InterventionEngine {
   constructor() {
@@ -429,9 +431,29 @@ class InterventionEngine {
 
   // Helper: Create intervention
   async createIntervention(data) {
+    const workspaceId = normalizeWorkspaceObjectId(data.workspaceId || getDefaultWorkspaceObjectId());
+    const isScheduledSignal = data.trigger !== 'manual_request';
+    if (isScheduledSignal) {
+      const cooldownStart = new Date(Date.now() - INTERVENTION_COOLDOWN_HOURS * 60 * 60 * 1000);
+      const existing = await Intervention.findOne({
+        workspaceId,
+        boardId: data.boardId,
+        cardId: data.cardId || null,
+        memberId: data.memberId || null,
+        type: data.type,
+        trigger: data.trigger,
+        status: { $in: ACTIVE_INTERVENTION_STATUSES },
+        createdAt: { $gte: cooldownStart }
+      }).sort({ createdAt: -1 });
+      if (existing) {
+        logger.info(`Reusing recent ${data.type} intervention ${existing._id} for ${data.trigger}`);
+        return existing;
+      }
+    }
+
     return new Intervention({
       ...data,
-      workspaceId: normalizeWorkspaceObjectId(data.workspaceId || getDefaultWorkspaceObjectId())
+      workspaceId
     });
   }
 

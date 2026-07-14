@@ -281,6 +281,22 @@ const enhancements = [
       'A paused action type is rejected by the executor before a provider request can start.',
       'Relaxing an existing policy requires an explicit confirmation and produces an audit record.'
     ]
+  },
+  {
+    id: 'ENH-018',
+    priority: 'P1',
+    area: 'autonomy',
+    title: 'Suppress repeated scheduled intervention candidates',
+    evidence: 'Scheduled board scans reuse an equivalent pending, approval-gated, executing, or recently executed intervention for 24 hours before they can create another recommendation or Trello write candidate. Manual requests remain separate.',
+    impact: 'Prevents recurring signals from filling Robert\'s approval queue or repeatedly proposing the same worker communication.',
+    effort: 'S',
+    status: 'done',
+    nextStep: 'Add bounded per-signal cooldown configuration that can only lengthen the default.',
+    acceptanceCriteria: [
+      'Equivalent scheduled card and team signals reuse their active or recent intervention.',
+      'The suppression window never executes a provider write or relaxes approval requirements.',
+      'Manual requests remain distinct from scheduled signal suppression.'
+    ]
   }
 ];
 

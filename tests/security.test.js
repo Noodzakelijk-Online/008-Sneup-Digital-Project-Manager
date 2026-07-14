@@ -4088,6 +4088,7 @@ describe('operations ledger intervention policy', () => {
   afterEach(() => {
     jest.dontMock('mongoose');
     jest.dontMock('../src/models/AuditEvent');
+    jest.dontMock('../src/models/Intervention');
     jest.dontMock('../src/services/workspaceScopeService');
     jest.dontMock('../src/services/policyRuleService');
     jest.dontMock('../src/services/operationsLedgerService');
@@ -4250,6 +4251,45 @@ describe('operations ledger intervention policy', () => {
     expect(trelloClient.addMemberToCard).not.toHaveBeenCalled();
     expect(trelloClient.moveCardToList).not.toHaveBeenCalled();
     expect(trelloClient.addLabelToCard).not.toHaveBeenCalled();
+  });
+
+  test('reuses a recent scheduled intervention instead of creating another approval candidate', async () => {
+    jest.resetModules();
+
+    const existingIntervention = { _id: 'intervention-existing' };
+    const findOneChain = { sort: jest.fn().mockResolvedValue(existingIntervention) };
+    const findOne = jest.fn(() => findOneChain);
+
+    jest.doMock('../src/models/Intervention', () => ({ findOne }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-1'),
+      normalizeWorkspaceObjectId: jest.fn((value) => value || 'workspace-1')
+    }));
+
+    const interventionEngine = require('../src/services/interventionEngine');
+    const result = await interventionEngine.createIntervention({
+      workspaceId: 'workspace-1',
+      boardId: 'board-1',
+      cardId: 'card-1',
+      memberId: 'member-1',
+      type: 'comment',
+      trigger: 'no_activity',
+      severity: 'medium',
+      action: 'Request activity update'
+    });
+
+    expect(result).toBe(existingIntervention);
+    expect(findOne).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'workspace-1',
+      boardId: 'board-1',
+      cardId: 'card-1',
+      memberId: 'member-1',
+      type: 'comment',
+      trigger: 'no_activity',
+      status: { $in: ['pending', 'awaiting_approval', 'executing', 'executed'] },
+      createdAt: { $gte: expect.any(Date) }
+    }));
+    expect(findOneChain.sort).toHaveBeenCalledWith({ createdAt: -1 });
   });
 });
 
