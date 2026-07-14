@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'n8n'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -37,6 +37,7 @@ const todoistWorkSignalClient = require('./todoistWorkSignalClient');
 const shortcutWorkSignalClient = require('./shortcutWorkSignalClient');
 const bitbucketWorkSignalClient = require('./bitbucketWorkSignalClient');
 const harvestWorkSignalClient = require('./harvestWorkSignalClient');
+const everhourWorkSignalClient = require('./everhourWorkSignalClient');
 const codaWorkSignalClient = require('./codaWorkSignalClient');
 const teamworkWorkSignalClient = require('./teamworkWorkSignalClient');
 const basecampWorkSignalClient = require('./basecampWorkSignalClient');
@@ -667,6 +668,12 @@ harvestAdapter.capabilities.credentialBackedSync = true;
 harvestAdapter.list = async account => (await harvestWorkSignalClient.fetchDelta(account, null)).records;
 harvestAdapter.fetchDelta = (account, cursor) => harvestWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('harvest', harvestAdapter);
+
+const everhourAdapter = buildAdapter('everhour', 'Everhour bounded time-entry utilization adapter', (account, entry) => ({ externalId: pick(entry.id), sourceType: 'time_entry', title: titleFromText([entry.project?.name || 'Everhour project', entry.task?.name || 'Tracked time'].join(' - ')), description: '', status: 'done', priority: 'normal', owners: userNames(entry.user), labels: compact(['everhour', entry.project?.name, entry.task?.name, entry.billable === true ? 'billable' : 'non-billable']), dueAt: undefined, providerCreatedAt: pick(entry.spentDate, entry.createdAt), providerUpdatedAt: pick(entry.updatedAt, entry.createdAt, entry.spentDate), evidenceRefs: baseEvidence(account, entry, 'Everhour time-entry metadata'), raw: { id: entry.id, timeEntryId: entry.timeEntryId, spentDate: entry.spentDate, hours: entry.hours, billable: entry.billable === true, user: entry.user, project: entry.project, task: entry.task, createdAt: entry.createdAt, updatedAt: entry.updatedAt } }));
+everhourAdapter.capabilities.credentialBackedSync = true;
+everhourAdapter.list = async account => (await everhourWorkSignalClient.fetchDelta(account, null)).records;
+everhourAdapter.fetchDelta = (account, cursor) => everhourWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('everhour', everhourAdapter);
 
 const codaAdapter = buildAdapter('coda', 'Coda allowlisted table metadata adapter', (account, table) => ({
   externalId: pick(table.externalId, table.id),

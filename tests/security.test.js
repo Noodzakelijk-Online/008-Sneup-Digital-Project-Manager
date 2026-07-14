@@ -70,6 +70,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/trelloWorkSignalClient');
     jest.dontMock('../src/services/jiraWorkSignalClient');
     jest.dontMock('../src/services/harvestWorkSignalClient');
+    jest.dontMock('../src/services/everhourWorkSignalClient');
     jest.dontMock('../src/services/codaWorkSignalClient');
     jest.dontMock('../src/services/teamworkWorkSignalClient');
     jest.dontMock('../src/services/basecampWorkSignalClient');
@@ -2148,6 +2149,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('harvest').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Everhour adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'time_entry:1' }] });
+    jest.doMock('../src/services/everhourWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'everhour' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('everhour').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('Teamwork adapter delegates live delta reads to the credential-backed client', async () => {
     jest.resetModules();
     const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'task:1' }] });
@@ -3790,6 +3803,67 @@ describe('work signal normalization', () => {
     });
     expect(normalized).toMatchObject({
       externalId: 'time_entry:71', sourceType: 'time_entry', title: 'Sneup - Connector delivery', description: '', status: 'done', priority: 'normal', owners: ['Robert'], labels: ['Noodzakelijk', 'Sneup', 'Connector delivery', 'billable', 'approved']
+    });
+    expect(JSON.stringify(normalized.raw)).not.toContain('Private detail');
+  });
+
+  test('Everhour sync reads bounded time-entry metadata without private entry content or provider writes', async () => {
+    jest.dontMock('../src/services/everhourWorkSignalClient');
+    jest.resetModules();
+    const { EverhourWorkSignalClient } = require('../src/services/everhourWorkSignalClient');
+    const http = { get: jest.fn().mockResolvedValue({ data: [{
+      id: 'entry-71', date: '2026-07-10', time: 5400, billable: true,
+      created_at: '2026-07-10T09:00:00.000Z', updated_at: '2026-07-10T12:00:00.000Z',
+      user: { id: 'user-9', name: 'Robert' }, project: { id: 'project-3', name: 'Sneup' }, task: { id: 'task-4', name: 'Connector delivery' },
+      description: 'Private meeting notes', notes: 'Private discussion', budget: { money: 999 }, expenses: [{ amount: 50 }], invoice: { id: 'INV-001' }, rate: 125
+    }] }) };
+    const client = new EverhourWorkSignalClient({
+      http,
+      now: () => new Date('2026-07-14T12:00:00.000Z'),
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'everhour-key' })) }
+    });
+    const result = await client.fetchDelta({ connectorId: 'everhour' }, '2026-07-10T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://api.everhour.com/time', expect.objectContaining({
+      params: { from: '2026-06-14', to: '2026-07-14', limit: 2001 },
+      headers: expect.objectContaining({ 'X-API-Key': 'everhour-key', 'User-Agent': expect.stringContaining('Sneup') }),
+      maxRedirects: 0,
+      proxy: false
+    }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toContain('Private meeting notes');
+    expect(JSON.stringify(result.records)).not.toContain('INV-001');
+    expect(JSON.stringify(result.records)).not.toContain('125');
+    expect(result).toMatchObject({ metadata: { source: 'everhour_api', projects: 1, timeEntries: 1 }, hasMore: false, nextCursor: '2026-07-10T12:00:00.000Z' });
+    expect(result.records[0]).toMatchObject({ id: 'time_entry:entry-71', hours: 1.5, user: { name: 'Robert' }, project: { name: 'Sneup' } });
+  });
+
+  test('Everhour sync fails closed when the configured time-entry limit would truncate provider data', async () => {
+    jest.dontMock('../src/services/everhourWorkSignalClient');
+    jest.resetModules();
+    const { EverhourWorkSignalClient } = require('../src/services/everhourWorkSignalClient');
+    const previousLimit = process.env.SNEUP_EVERHOUR_MAX_ENTRIES;
+    process.env.SNEUP_EVERHOUR_MAX_ENTRIES = '1';
+    const http = { get: jest.fn().mockResolvedValue({ data: [{ id: 'entry-1' }, { id: 'entry-2' }] }) };
+    const client = new EverhourWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'everhour-key' })) } });
+    try {
+      await expect(client.fetchDelta({ connectorId: 'everhour' })).rejects.toMatchObject({ statusCode: 413 });
+      expect(http.get).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_EVERHOUR_MAX_ENTRIES;
+      else process.env.SNEUP_EVERHOUR_MAX_ENTRIES = previousLimit;
+    }
+  });
+
+  test('Everhour normalization preserves utilization context without private time-entry content', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'everhour' }, {
+      id: 'time_entry:entry-71', timeEntryId: 'entry-71', spentDate: '2026-07-10', hours: 1.5, billable: true,
+      createdAt: '2026-07-10T09:00:00.000Z', updatedAt: '2026-07-10T12:00:00.000Z',
+      user: { id: 'user-9', name: 'Robert' }, project: { id: 'project-3', name: 'Sneup' }, task: { id: 'task-4', name: 'Connector delivery' }, description: 'Private detail'
+    });
+    expect(normalized).toMatchObject({
+      externalId: 'time_entry:entry-71', sourceType: 'time_entry', title: 'Sneup - Connector delivery', description: '', status: 'done', priority: 'normal', owners: ['Robert'], labels: ['everhour', 'Sneup', 'Connector delivery', 'billable']
     });
     expect(JSON.stringify(normalized.raw)).not.toContain('Private detail');
   });
