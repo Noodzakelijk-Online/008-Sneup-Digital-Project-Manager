@@ -1,10 +1,15 @@
 const mongoose = require('mongoose');
 
 const jobControlSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    required: true,
+    index: true
+  },
   jobName: {
     type: String,
     required: true,
-    unique: true,
     index: true
   },
   status: {
@@ -24,6 +29,7 @@ const jobControlSchema = new mongoose.Schema({
   timestamps: true
 });
 
-jobControlSchema.index({ status: 1, updatedAt: -1 });
+jobControlSchema.index({ workspaceId: 1, jobName: 1 }, { unique: true });
+jobControlSchema.index({ workspaceId: 1, status: 1, updatedAt: -1 });
 
 module.exports = mongoose.model('JobControl', jobControlSchema);

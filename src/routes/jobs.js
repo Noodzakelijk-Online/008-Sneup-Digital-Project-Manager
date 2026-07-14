@@ -10,7 +10,7 @@ const operationsLedgerService = require('../services/operationsLedgerService');
 const performanceTracker = require('../services/performanceTracker');
 const notificationService = require('../services/notificationService');
 const trelloSync = require('../services/trelloSync');
-const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId } = require('../services/workspaceScopeService');
+const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId, getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { clampInteger, requirePermission } = require('../utils/requestSecurity');
 
 const actorFromRequest = (req) =>
@@ -144,6 +144,7 @@ const manualJobHandlers = {
 router.get('/', async (req, res) => {
   try {
     const dashboard = await jobObservabilityService.getDashboard({
+      workspaceId: getRequestWorkspaceObjectId(req),
       limit: clampInteger(req.query.limit, 250, 1, 500),
       jobType: req.query.jobType,
       status: req.query.status
@@ -165,6 +166,7 @@ router.get('/', async (req, res) => {
 router.get('/health', async (req, res) => {
   try {
     const dashboard = await jobObservabilityService.getDashboard({
+      workspaceId: getRequestWorkspaceObjectId(req),
       limit: clampInteger(req.query.limit, 250, 1, 500)
     });
 
@@ -185,6 +187,7 @@ router.get('/health', async (req, res) => {
 router.get('/runs', async (req, res) => {
   try {
     const runs = await jobObservabilityService.listRuns({
+      workspaceId: getRequestWorkspaceObjectId(req),
       limit: clampInteger(req.query.limit, 100, 1, 500),
       jobName: req.query.jobName,
       jobType: req.query.jobType,
@@ -209,6 +212,7 @@ router.get('/runs', async (req, res) => {
 router.post('/:jobName/pause', requirePermission('jobs:manage'), async (req, res) => {
   try {
     const control = await jobObservabilityService.setPaused(req.params.jobName, true, {
+      workspaceId: getRequestWorkspaceObjectId(req),
       actor: actorFromRequest(req),
       reason: req.body?.reason
     });
@@ -230,6 +234,7 @@ router.post('/:jobName/pause', requirePermission('jobs:manage'), async (req, res
 router.post('/:jobName/resume', requirePermission('jobs:manage'), async (req, res) => {
   try {
     const control = await jobObservabilityService.setPaused(req.params.jobName, false, {
+      workspaceId: getRequestWorkspaceObjectId(req),
       actor: actorFromRequest(req)
     });
     await recordJobAudit(req, 'job_resumed', req.params.jobName, control);
@@ -258,15 +263,17 @@ router.post('/:jobName/trigger', requirePermission('jobs:manage'), async (req, r
       });
     }
 
-    if (await jobObservabilityService.isJobPaused(req.params.jobName)) {
+    const workspaceId = getRequestWorkspaceObjectId(req);
+    if (await jobObservabilityService.isJobPaused(req.params.jobName, { workspaceId })) {
       return res.status(409).json({
         success: false,
         error: 'Resume this job before triggering it manually'
       });
     }
 
-    await jobObservabilityService.markManualRun(req.params.jobName, actorFromRequest(req));
+    await jobObservabilityService.markManualRun(req.params.jobName, actorFromRequest(req), { workspaceId });
     const result = await jobObservabilityService.trackJob({
+      workspaceId,
       jobName: req.params.jobName,
       jobType: handler.jobType,
       triggerType: 'manual',

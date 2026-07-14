@@ -7,7 +7,7 @@ const usage = () => [
   'Usage: npm run migrate:workspace [-- --apply] [-- --concurrency <1-16>]',
   '',
   'Without --apply, Sneup only inspects legacy records missing workspaceId.',
-  '--apply creates the default workspace if needed and backfills those records.'
+  '--apply creates the default workspace if needed, backfills those records, and replaces legacy global control indexes.'
 ].join('\n');
 
 const parseArgs = (args) => {
@@ -52,7 +52,11 @@ const main = async () => {
 
   try {
     const report = options.apply
-      ? await workspaceScopeService.backfillDefaultWorkspace({ concurrency })
+      ? {
+        ...(await workspaceScopeService.backfillDefaultWorkspace({ concurrency })),
+        policyRuleIndexes: await workspaceScopeService.ensurePolicyRuleIndexes(),
+        jobControlIndexes: await workspaceScopeService.ensureJobControlIndexes()
+      }
       : await workspaceScopeService.inspectDefaultWorkspaceBackfill({ concurrency });
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } finally {

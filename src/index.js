@@ -187,11 +187,15 @@ const initApp = async () => {
         databaseConnected = true;
         const workspaceBackfill = await workspaceScopeService.backfillDefaultWorkspace();
         const policyRuleIndexMigration = await workspaceScopeService.ensurePolicyRuleIndexes();
+        const jobControlIndexMigration = await workspaceScopeService.ensureJobControlIndexes();
         if (workspaceBackfill.totalModified > 0) {
           logger.info('Default workspace migration applied', workspaceBackfill);
         }
         if (policyRuleIndexMigration.removedLegacyNameIndex) {
           logger.info('Migrated legacy global PolicyRule name index');
+        }
+        if (jobControlIndexMigration.removedLegacyJobNameIndex) {
+          logger.info('Migrated legacy global JobControl jobName index');
         }
       } catch (error) {
         logger.warn('MongoDB is not available. Starting Sneup in catalog/demo mode.');

@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const jobRunSchema = new mongoose.Schema({
+  workspaceId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Workspace',
+    required: true,
+    index: true
+  },
   jobName: {
     type: String,
     required: true,
@@ -61,8 +67,8 @@ const jobRunSchema = new mongoose.Schema({
   timestamps: true
 });
 
-jobRunSchema.index({ jobName: 1, status: 1, startedAt: -1 });
-jobRunSchema.index({ status: 1, startedAt: -1 });
-jobRunSchema.index({ jobType: 1, startedAt: -1 });
+jobRunSchema.index({ workspaceId: 1, jobName: 1, status: 1, startedAt: -1 });
+jobRunSchema.index({ workspaceId: 1, status: 1, startedAt: -1 });
+jobRunSchema.index({ workspaceId: 1, jobType: 1, startedAt: -1 });
 
 module.exports = mongoose.model('JobRun', jobRunSchema);

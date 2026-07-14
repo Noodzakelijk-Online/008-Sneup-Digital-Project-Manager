@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const JobControl = require('../models/JobControl');
 const JobRun = require('../models/JobRun');
+const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 const logger = require('../utils/logger');
 
 const DEFAULT_LIMIT = 100;
@@ -93,17 +94,23 @@ const trackedJobs = [
 ];
 
 class JobObservabilityService {
+  resolveWorkspaceId(workspaceId) {
+    return normalizeWorkspaceObjectId(workspaceId || getDefaultWorkspaceObjectId());
+  }
+
   isDatabaseReady() {
     return mongoose.connection.readyState === 1;
   }
 
   async trackJob(options, callback) {
-    const paused = await this.isJobPaused(options.jobName);
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const scopedOptions = { ...options, workspaceId };
+    const paused = await this.isJobPaused(options.jobName, { workspaceId });
     if (paused) {
-      return this.recordSkippedRun(options, 'Job is paused by operator control');
+      return this.recordSkippedRun(scopedOptions, 'Job is paused by operator control');
     }
 
-    const run = await this.startRun(options);
+    const run = await this.startRun(scopedOptions);
 
     try {
       const result = await callback(run);
@@ -119,6 +126,7 @@ class JobObservabilityService {
     const startedAt = new Date();
     const config = this.getJobConfig(options.jobName);
     const data = {
+      workspaceId: this.resolveWorkspaceId(options.workspaceId),
       jobName: options.jobName,
       jobType: options.jobType || config?.jobType || 'system',
       triggerType: options.triggerType || 'scheduled',
@@ -191,6 +199,7 @@ class JobObservabilityService {
     }
 
     const query = {};
+    query.workspaceId = this.resolveWorkspaceId(filters.workspaceId);
     if (filters.jobName) query.jobName = filters.jobName;
     if (filters.jobType) query.jobType = filters.jobType;
     if (filters.status) query.status = filters.status;
@@ -207,7 +216,7 @@ class JobObservabilityService {
       ...filters,
       limit: filters.limit || 250
     });
-    const controls = await this.listControls();
+    const controls = await this.listControls({ workspaceId: filters.workspaceId });
     return this.buildDashboard(runs, new Date(), controls);
   }
 
@@ -322,22 +331,23 @@ class JobObservabilityService {
     }
   }
 
-  async listControls() {
+  async listControls(options = {}) {
     if (!this.isDatabaseReady()) return [];
     return JobControl.find({
+      workspaceId: this.resolveWorkspaceId(options.workspaceId),
       jobName: { $in: trackedJobs.map(job => job.jobName) }
     });
   }
 
-  async getControl(jobName) {
+  async getControl(jobName, options = {}) {
     this.ensureKnownJob(jobName);
     if (!this.isDatabaseReady()) return null;
-    return JobControl.findOne({ jobName });
+    return JobControl.findOne({ jobName, workspaceId: this.resolveWorkspaceId(options.workspaceId) });
   }
 
-  async isJobPaused(jobName) {
+  async isJobPaused(jobName, options = {}) {
     if (!jobName || !this.isDatabaseReady()) return false;
-    const control = await JobControl.findOne({ jobName }).select('status');
+    const control = await JobControl.findOne({ jobName, workspaceId: this.resolveWorkspaceId(options.workspaceId) }).select('status');
     return control?.status === 'paused';
   }
 
@@ -346,6 +356,7 @@ class JobObservabilityService {
     this.requireDatabaseForControls();
 
     const actor = options.actor || 'sneup';
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const update = paused
       ? {
         status: 'paused',
@@ -360,18 +371,18 @@ class JobObservabilityService {
       };
 
     return JobControl.findOneAndUpdate(
-      { jobName },
+      { jobName, workspaceId },
       { $set: update },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
   }
 
-  async markManualRun(jobName, actor = 'sneup') {
+  async markManualRun(jobName, actor = 'sneup', options = {}) {
     this.ensureKnownJob(jobName);
     if (!this.isDatabaseReady()) return null;
 
     return JobControl.findOneAndUpdate(
-      { jobName },
+      { jobName, workspaceId: this.resolveWorkspaceId(options.workspaceId) },
       {
         $set: {
           lastManualRunAt: new Date(),

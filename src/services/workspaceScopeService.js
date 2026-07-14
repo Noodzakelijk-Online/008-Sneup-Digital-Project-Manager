@@ -29,6 +29,8 @@ const WorkDependency = require('../models/WorkDependency');
 const WorkEvent = require('../models/WorkEvent');
 const WorkItem = require('../models/WorkItem');
 const PolicyRule = require('../models/PolicyRule');
+const JobRun = require('../models/JobRun');
+const JobControl = require('../models/JobControl');
 
 const OBJECT_ID_PATTERN = /^[a-f0-9]{24}$/i;
 const DEFAULT_BACKFILL_CONCURRENCY = 4;
@@ -98,7 +100,9 @@ const workspaceScopedModels = [
   ['workDependencies', WorkDependency],
   ['workEvents', WorkEvent],
   ['workItems', WorkItem],
-  ['policyRules', PolicyRule]
+  ['policyRules', PolicyRule],
+  ['jobRuns', JobRun],
+  ['jobControls', JobControl]
 ];
 
 const missingWorkspaceQuery = () => ({
@@ -236,10 +240,26 @@ const ensurePolicyRuleIndexes = async ({ Model = PolicyRule } = {}) => {
   return { removedLegacyNameIndex: Boolean(legacyNameIndex) };
 };
 
+const ensureJobControlIndexes = async ({ Model = JobControl } = {}) => {
+  let indexes = [];
+  try {
+    indexes = await Model.collection.indexes();
+  } catch (error) {
+    if (error.code !== 26 && error.codeName !== 'NamespaceNotFound') throw error;
+  }
+  const legacyJobNameIndex = indexes.find((index) => index.unique === true
+    && Object.keys(index.key || {}).length === 1
+    && index.key.jobName === 1);
+  if (legacyJobNameIndex) await Model.collection.dropIndex(legacyJobNameIndex.name);
+  await Model.createIndexes();
+  return { removedLegacyJobNameIndex: Boolean(legacyJobNameIndex) };
+};
+
 module.exports = {
   backfillDefaultWorkspace,
   defaultWorkspaceQuery,
   ensurePolicyRuleIndexes,
+  ensureJobControlIndexes,
   ensureDefaultWorkspace,
   getBackfillConcurrency,
   getDefaultWorkspaceKey,

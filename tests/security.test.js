@@ -1042,6 +1042,8 @@ describe('workspace identity models', () => {
     const User = require('../src/models/User');
     const Workspace = require('../src/models/Workspace');
     const WorkspaceInvite = require('../src/models/WorkspaceInvite');
+    const JobRun = require('../src/models/JobRun');
+    const JobControl = require('../src/models/JobControl');
 
     const rawToken = 'sneup_test_secret_token';
     const hash = ApiToken.hashToken(rawToken);
@@ -1096,6 +1098,11 @@ describe('workspace identity models', () => {
     expect(invite.isUsable()).toBe(true);
     expect(WorkspaceInvite.schema.path('tokenHash').options.select).toBe(false);
     expect(WorkspaceInvite.schema.path('delivery.status').enumValues).toEqual(expect.arrayContaining(['not_sent', 'sent', 'failed']));
+    expect(JobRun.schema.path('workspaceId')).toBeTruthy();
+    expect(JobControl.schema.path('workspaceId')).toBeTruthy();
+    expect(JobControl.schema.indexes()).toEqual(expect.arrayContaining([
+      [expect.objectContaining({ workspaceId: 1, jobName: 1 }), expect.objectContaining({ unique: true })]
+    ]));
     expect(Workspace.schema.path('slug')).toBeTruthy();
     expect(User.schema.path('role').enumValues).toEqual(expect.arrayContaining(['owner', 'admin', 'manager', 'operator', 'viewer', 'service']));
     expect(Board.schema.path('workspaceId')).toBeTruthy();
