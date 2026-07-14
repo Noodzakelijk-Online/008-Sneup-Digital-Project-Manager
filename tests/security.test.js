@@ -95,6 +95,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
     jest.dontMock('../src/services/pipedriveWorkSignalClient');
     jest.dontMock('../src/services/hubSpotWorkSignalClient');
+    jest.dontMock('../src/services/typeformWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2163,6 +2164,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('hubspot').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Typeform adapter delegates bounded form reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'form:Abcd1234' }] });
+    jest.doMock('../src/services/typeformWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'typeform' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('typeform').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4370,6 +4382,41 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_HUBSPOT_MAX_DEALS; process.env.SNEUP_HUBSPOT_MAX_DEALS = '1';
     const capped = new HubSpotWorkSignalClient({ http: { post: jest.fn().mockResolvedValue({ data: { results: [{ id: '1', properties: { dealname: 'First deal' } }], paging: { next: { after: 'cursor-2' } } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) } });
     try { await expect(capped.fetchDelta({ connectorId: 'hubspot' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_HUBSPOT_MAX_DEALS; else process.env.SNEUP_HUBSPOT_MAX_DEALS = previous; }
+  });
+
+  test('Typeform sync pages bounded form metadata without responses, form content, or provider writes', async () => {
+    jest.dontMock('../src/services/typeformWorkSignalClient');
+    jest.resetModules();
+    const { TypeformWorkSignalClient } = require('../src/services/typeformWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { items: [{ id: 'Abcd1234', title: `Client intake for ${privateEmail}`, created_at: '2026-07-10T12:00:00.000Z', last_updated_at: '2026-07-12T12:00:00.000Z', workspace: { id: 'workspace1', name: 'Private workspace', members: [{ email: privateEmail }] }, fields: [{ title: 'Private question' }], logic: [{ type: 'branch' }], hidden: ['email'], settings: { is_public: false } }] } })
+      .mockResolvedValueOnce({ data: { items: [{ id: 'Efgh5678', title: 'Partner delivery check-in', created_at: '2026-07-11T12:00:00.000Z', last_updated_at: '2026-07-13T12:00:00.000Z' }] } })
+      .mockResolvedValueOnce({ data: { items: [] } }) };
+    const client = new TypeformWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'typeform-token' })) } });
+    const previous = { max: process.env.SNEUP_TYPEFORM_MAX_FORMS, page: process.env.SNEUP_TYPEFORM_PAGE_SIZE };
+    process.env.SNEUP_TYPEFORM_MAX_FORMS = '3'; process.env.SNEUP_TYPEFORM_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'typeform' }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://api.typeform.com/forms', expect.objectContaining({ params: { page_size: 1, page: 1 }, headers: expect.objectContaining({ Authorization: 'Bearer typeform-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://api.typeform.com/forms', expect.objectContaining({ params: { page_size: 1, page: 2 } }));
+      expect(http.get).toHaveBeenNthCalledWith(3, 'https://api.typeform.com/forms', expect.objectContaining({ params: { page_size: 1, page: 3 } }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'typeform_forms_api', forms: 2, pages: 3 }, nextCursor: '2026-07-13T12:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private question|Private workspace|workspace members|logic|hidden|settings/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_TYPEFORM_MAX_FORMS; else process.env.SNEUP_TYPEFORM_MAX_FORMS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_TYPEFORM_PAGE_SIZE; else process.env.SNEUP_TYPEFORM_PAGE_SIZE = previous.page; }
+  });
+
+  test('Typeform sync rejects invalid cursors and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/typeformWorkSignalClient');
+    jest.resetModules();
+    const { TypeformWorkSignalClient } = require('../src/services/typeformWorkSignalClient');
+    const invalid = new TypeformWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'token' })) } });
+    await expect(invalid.fetchDelta({ connectorId: 'typeform' }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_TYPEFORM_MAX_FORMS; process.env.SNEUP_TYPEFORM_MAX_FORMS = '1';
+    const capped = new TypeformWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { items: [{ id: 'Abcd1234', title: 'First form' }] } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'token' })) } });
+    try { await expect(capped.fetchDelta({ connectorId: 'typeform' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_TYPEFORM_MAX_FORMS; else process.env.SNEUP_TYPEFORM_MAX_FORMS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

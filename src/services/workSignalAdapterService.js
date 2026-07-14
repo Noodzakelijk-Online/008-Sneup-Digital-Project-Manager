@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -62,6 +62,7 @@ const zendeskWorkSignalClient = require('./zendeskWorkSignalClient');
 const freshdeskWorkSignalClient = require('./freshdeskWorkSignalClient');
 const pipedriveWorkSignalClient = require('./pipedriveWorkSignalClient');
 const hubSpotWorkSignalClient = require('./hubSpotWorkSignalClient');
+const typeformWorkSignalClient = require('./typeformWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -926,6 +927,12 @@ hubspotAdapter.capabilities.credentialBackedSync = true;
 hubspotAdapter.list = async account => (await hubSpotWorkSignalClient.fetchDelta(account, null)).records;
 hubspotAdapter.fetchDelta = (account, cursor) => hubSpotWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('hubspot', hubspotAdapter);
+
+const typeformAdapter = buildAdapter('typeform', 'Typeform form metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'form'), title: titleFromText(item.name, 'Typeform intake form'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['typeform', item.sourceType, item.workspaceId ? `workspace:${item.workspaceId}` : undefined]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Typeform form metadata'), raw: { id: item.id, sourceType: item.sourceType, formId: item.formId, workspaceId: item.workspaceId, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+typeformAdapter.capabilities.credentialBackedSync = true;
+typeformAdapter.list = async account => (await typeformWorkSignalClient.fetchDelta(account, null)).records;
+typeformAdapter.fetchDelta = (account, cursor) => typeformWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('typeform', typeformAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
