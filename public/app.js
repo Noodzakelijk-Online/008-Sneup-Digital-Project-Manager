@@ -3722,6 +3722,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-figma-team]').forEach((button) => {
     button.addEventListener('click', () => openFigmaTeamModal(button.dataset.figmaTeam));
   });
+  document.querySelectorAll('[data-sharepoint-site]').forEach((button) => {
+    button.addEventListener('click', () => openSharePointSiteModal(button.dataset.sharepointSite));
+  });
   document.querySelectorAll('[data-load-more-connectors]').forEach((button) => {
     button.addEventListener('click', () => {
       loadConnectors({ append: true });
@@ -3787,7 +3790,9 @@ function renderConnector(connector, account) {
   const isResourceGuru = connector.id === 'resource_guru';
   const selectedFigmaTeamId = account?.metadata?.fields?.figmaTeamId;
   const isFigma = connector.id === 'figma';
-  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId));
+  const selectedSharePointSiteId = account?.metadata?.fields?.sharePointSiteId;
+  const isSharePoint = connector.id === 'sharepoint';
+  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId) && (!isSharePoint || selectedSharePointSiteId));
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
@@ -3841,6 +3846,7 @@ function renderConnector(connector, account) {
         ${isBasecamp && account ? `<button class="button" data-basecamp-account="${escapeHtml(account.id)}" type="button">${selectedBasecampAccountId ? 'Basecamp account selected' : 'Select Basecamp account'}</button>` : ''}
         ${isResourceGuru && account ? `<button class="button" data-resource-guru-account="${escapeHtml(account.id)}" type="button">${selectedResourceGuruAccountId ? 'Resource Guru account selected' : 'Select Resource Guru account'}</button>` : ''}
         ${isFigma && account ? `<button class="button" data-figma-team="${escapeHtml(account.id)}" type="button">${selectedFigmaTeamId ? 'Figma team selected' : 'Configure Figma team'}</button>` : ''}
+        ${isSharePoint && account ? `<button class="button" data-sharepoint-site="${escapeHtml(account.id)}" type="button">${selectedSharePointSiteId ? 'SharePoint site selected' : 'Select SharePoint site'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         ${syncReady ? (connected && connector.auth.type !== 'oauth2'
           ? `<button class="button primary" data-rotate-credential="${escapeHtml(account.id)}" type="button">Rotate credential</button>`
@@ -3884,6 +3890,57 @@ async function openFigmaTeamModal(accountId) {
       openNotice('Figma team configuration', error.message);
     }
   });
+}
+
+async function openSharePointSiteModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  try {
+    const data = await fetchApi(`/api/connectors/accounts/${accountId}/sharepoint-sites`);
+    const sites = data.sites || [];
+    if (sites.length === 0) {
+      openNotice('SharePoint site selection', 'No followed SharePoint sites are available for this account. Follow a site in SharePoint, then reconnect it with the approved read-only scope.');
+      return;
+    }
+
+    const selectedSiteId = account.metadata?.fields?.sharePointSiteId || (sites.length === 1 ? sites[0].sharePointSiteId : '');
+    els.modalTitle.textContent = 'Select SharePoint site';
+    els.modalBody.innerHTML = `
+      <form id="sharePointSiteForm">
+        <div class="field">
+          <label for="sharePointSiteId">Followed SharePoint site</label>
+          <select id="sharePointSiteId" name="sharePointSiteId" required>
+            <option value="" ${selectedSiteId ? '' : 'selected'} disabled>Select a site</option>
+            ${sites.map(site => `<option value="${escapeHtml(site.sharePointSiteId)}" ${site.sharePointSiteId === selectedSiteId ? 'selected' : ''}>${escapeHtml(site.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="notice">Sneup reads only root file and folder metadata from this selected followed site. It does not read contents, links, permissions, pages, lists, versions, or sharing details.</div>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelSharePointSite">Cancel</button>
+          <button class="button primary" type="submit">Use this site</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelSharePointSite').addEventListener('click', closeModal);
+    document.getElementById('sharePointSiteForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target).entries());
+      try {
+        await fetchApi(`/api/connectors/accounts/${accountId}/sharepoint-site`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        closeModal();
+        openNotice('SharePoint site selected', 'Sneup will use this site for the next read-only metadata sync.');
+        await loadConnectors();
+      } catch (error) {
+        openNotice('SharePoint site selection', error.message);
+      }
+    });
+  } catch (error) {
+    openNotice('SharePoint site selection', error.message);
+  }
 }
 
 async function openResourceGuruAccountModal(accountId) {

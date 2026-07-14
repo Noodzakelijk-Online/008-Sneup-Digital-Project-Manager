@@ -199,6 +199,8 @@ Trello writes remain approval-gated regardless of a workspace rule. A rule can p
 - `POST /api/connectors/accounts/:accountId/jira-site` - Select the Jira Cloud site Sneup may read from
 - `GET /api/connectors/accounts/:accountId/asana-workspaces` - List Asana workspaces authorized by a linked Asana account
 - `POST /api/connectors/accounts/:accountId/asana-workspace` - Select the Asana workspace Sneup may read from
+- `GET /api/connectors/accounts/:accountId/sharepoint-sites` - List followed SharePoint sites authorized by a linked SharePoint account
+- `POST /api/connectors/accounts/:accountId/sharepoint-site` - Select the one SharePoint site Sneup may read from
 - `DELETE /api/connectors/accounts/:accountId` - Remove a linked connector account
 - `GET /api/work-signals/contracts` - List normalized sync adapter contracts for all connectors
 - `GET /api/work-signals/adapters` - List implemented first-wave read-only provider adapters
@@ -218,6 +220,8 @@ TestRail is available for one explicit public HTTPS tenant, username, API key, a
 BrowserStack is available with a username and access key. Sneup performs one fixed-host, bounded Automate build-list GET, fails closed when its page cap is reached, and retains only build ID, redacted name, status, priority, completion state, and bounded duration. It excludes public URLs, tags, sessions, logs, browser and device data, and provider writes.
 
 OneDrive is available as a separate Microsoft OAuth connection with `Files.Read` only. Sneup makes one bounded GET to the signed-in user's drive root, fails visibly if Graph signals a further page, and retains only redacted item names, type, and created/updated metadata. It excludes file content, web URLs, permissions, versions, shared links, and provider writes.
+
+SharePoint is available as a separate Microsoft OAuth connection. It explicitly presents the delegated `Sites.Read.All` grant for review, lists only sites the signed-in user follows, requires one site to be selected, and then makes one capped root-metadata GET with `Files.Read`. It retains only redacted file or folder names, opaque identifiers, and timestamps; file contents, web URLs, permissions, pages, lists, people, versions, and sharing details are excluded.
 
 SurveyMonkey is available with a View Surveys access token. Sneup makes one bounded survey-list GET and retains only redacted survey title and ID. It excludes questions, responses, collectors, contacts, links, and provider writes.
 

@@ -247,6 +247,45 @@ class AccountConnectorService {
     return this.sanitizeAccount(account);
   }
 
+  async getSharePointSites(accountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireSharePointAccount(account);
+    return this.fetchSharePointSites(account);
+  }
+
+  async selectSharePointSite(accountId, sharePointSiteId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireSharePointAccount(account);
+    const requestedSiteId = String(sharePointSiteId || '').trim();
+    if (!/^[A-Za-z0-9._,-]{1,512}$/.test(requestedSiteId)) {
+      const error = new Error('A valid SharePoint site ID is required.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const sites = await this.fetchSharePointSites(account);
+    const site = sites.find(item => item.sharePointSiteId === requestedSiteId);
+    if (!site) {
+      const error = new Error('That SharePoint site is no longer available through this account.');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: {
+        ...(account.metadata?.fields || {}),
+        sharePointSiteId: site.sharePointSiteId
+      }
+    };
+    account.accountName = account.connectorName;
+    account.externalAccountId = site.sharePointSiteId;
+    account.status = 'connected';
+    account.lastError = undefined;
+    await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   getCatalog(filters = {}) {
     const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
     const catalogConnectors = getConnectors();
@@ -690,6 +729,14 @@ class AccountConnectorService {
     }
   }
 
+  requireSharePointAccount(account) {
+    if (account.connectorId !== 'sharepoint') {
+      const error = new Error('SharePoint site selection is only available for SharePoint connector accounts.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   async fetchJiraSites(account) {
     const credentials = this.getAccountCredentials(account);
     const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
@@ -772,6 +819,34 @@ class AccountConnectorService {
         workspaceGid: String(workspace.gid || workspace.id),
         name: String(workspace.name || workspace.gid || workspace.id),
         organization: Boolean(workspace.is_organization)
+      }));
+  }
+
+  async fetchSharePointSites(account) {
+    const credentials = this.getAccountCredentials(account);
+    const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
+    if (!accessToken) {
+      const error = new Error('SharePoint access token is missing. Reconnect this account to continue.');
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const response = await this.http.get('https://graph.microsoft.com/v1.0/me/followedSites', {
+      params: { '$select': 'id,displayName' },
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`
+      },
+      timeout: 15000,
+      maxRedirects: 0,
+      proxy: false
+    });
+
+    return (Array.isArray(response.data?.value) ? response.data.value : [])
+      .filter(site => /^[A-Za-z0-9._,-]{1,512}$/.test(String(site?.id || '')))
+      .map(site => ({
+        sharePointSiteId: String(site.id),
+        name: String(site.displayName || 'SharePoint site').replace(/\s+/g, ' ').trim().slice(0, 160) || 'SharePoint site'
       }));
   }
 

@@ -266,6 +266,30 @@ router.post('/accounts/:accountId/figma-team', requirePermission('connectors:man
   }
 });
 
+router.get('/accounts/:accountId/sharepoint-sites', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const sites = await accountConnectorService.getSharePointSites(req.params.accountId, connectorRequestOptions(req));
+    res.json({ success: true, sites });
+  } catch (error) {
+    logger.error('Failed to list SharePoint sites:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/sharepoint-site', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.selectSharePointSite(
+      req.params.accountId,
+      req.body.sharePointSiteId,
+      connectorRequestOptions(req)
+    );
+    res.json({ success: true, account });
+  } catch (error) {
+    logger.error('Failed to select SharePoint site:', error);
+    sendError(res, error);
+  }
+});
+
 router.get('/:connectorId', (req, res) => {
   try {
     const connector = accountConnectorService.getConnectorDetails(req.params.connectorId);

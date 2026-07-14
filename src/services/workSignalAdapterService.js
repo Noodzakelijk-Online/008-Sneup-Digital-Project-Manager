@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -96,6 +96,7 @@ const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
 const tableauWorkSignalClient = require('./tableauWorkSignalClient');
+const sharePointWorkSignalClient = require('./sharePointWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1285,6 +1286,27 @@ oneDriveAdapter.capabilities.credentialBackedSync = true;
 oneDriveAdapter.list = async account => (await oneDriveWorkSignalClient.fetchDelta(account, null)).records;
 oneDriveAdapter.fetchDelta = (account, cursor) => oneDriveWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('onedrive', oneDriveAdapter);
+
+const sharePointAdapter = buildAdapter('sharepoint', 'SharePoint selected-site root metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'file'),
+  title: titleFromText(item.name, 'SharePoint item'),
+  description: '',
+  status: item.status || 'open',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['sharepoint', item.sourceType]),
+  dueAt: undefined,
+  providerCreatedAt: item.createdAt,
+  providerUpdatedAt: item.updatedAt,
+  evidenceRefs: baseEvidence(account, item, 'SharePoint selected-site root metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, itemId: item.itemId, siteId: item.siteId, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+sharePointAdapter.capabilities.credentialBackedSync = true;
+sharePointAdapter.list = async account => (await sharePointWorkSignalClient.fetchDelta(account, null)).records;
+sharePointAdapter.fetchDelta = (account, cursor) => sharePointWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('sharepoint', sharePointAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),
