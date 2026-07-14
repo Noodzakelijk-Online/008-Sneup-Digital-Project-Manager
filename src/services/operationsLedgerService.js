@@ -32,6 +32,12 @@ const boundedHours = (value, fallback, minimum, maximum) => {
   return Math.max(minimum, Math.min(maximum, parsed));
 };
 
+const boundedInteger = (value, fallback, minimum, maximum) => {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(minimum, Math.min(maximum, parsed));
+};
+
 class OperationsLedgerService {
   isDatabaseReady() {
     return mongoose.connection.readyState === 1;
@@ -1462,6 +1468,118 @@ class OperationsLedgerService {
       : workGraphService.emptyLedgerContext('card');
 
     return { recommendations, actions, followUps, workerResponses, findings, auditEvents, graphContext };
+  }
+
+  async getWorkerAccountability(filters = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(filters.workspaceId);
+    const days = boundedInteger(filters.days, 30, 7, 90);
+    const limit = boundedInteger(filters.limit, 50, 1, 100);
+    const now = filters.now ? new Date(filters.now) : new Date();
+    const windowStart = new Date(now.getTime() - days * 24 * HOURS);
+    const activeFollowUpStatuses = ['scheduled', 'due'];
+
+    const [members, followUpRows, responseRows] = await Promise.all([
+      Member.find({ workspaceId })
+        .select('_id username fullName workloadLevel')
+        .sort({ fullName: 1, username: 1 })
+        .limit(limit)
+        .lean(),
+      FollowUpPlan.aggregate([
+        { $match: { workspaceId, memberId: { $ne: null }, createdAt: { $gte: windowStart } } },
+        {
+          $group: {
+            _id: '$memberId',
+            followUpsCreated: { $sum: 1 },
+            openFollowUps: { $sum: { $cond: [{ $in: ['$status', activeFollowUpStatuses] }, 1, 0] } },
+            overdueFollowUps: {
+              $sum: {
+                $cond: [
+                  { $and: [{ $in: ['$status', activeFollowUpStatuses] }, { $lte: ['$dueAt', now] }] },
+                  1,
+                  0
+                ]
+              }
+            },
+            respondedFollowUps: { $sum: { $cond: [{ $in: ['$outcome', ['response_received', 'completed']] }, 1, 0] } },
+            escalatedFollowUps: { $sum: { $cond: [{ $eq: ['$status', 'escalated'] }, 1, 0] } }
+          }
+        }
+      ]),
+      WorkerResponse.aggregate([
+        { $match: { workspaceId, memberId: { $ne: null }, receivedAt: { $gte: windowStart } } },
+        {
+          $group: {
+            _id: '$memberId',
+            responseCount: { $sum: 1 },
+            completedResponses: { $sum: { $cond: [{ $eq: ['$responseType', 'completed'] }, 1, 0] } },
+            blockedResponses: { $sum: { $cond: [{ $eq: ['$responseType', 'blocked'] }, 1, 0] } },
+            needsHelpResponses: { $sum: { $cond: [{ $eq: ['$responseType', 'needs_help'] }, 1, 0] } },
+            ignoredResponses: { $sum: { $cond: [{ $eq: ['$responseType', 'ignored'] }, 1, 0] } }
+          }
+        }
+      ])
+    ]);
+
+    const followUpsByMember = new Map(followUpRows.map((row) => [String(row._id), row]));
+    const responsesByMember = new Map(responseRows.map((row) => [String(row._id), row]));
+    const memberIds = new Set([
+      ...members.map((member) => String(member._id)),
+      ...followUpsByMember.keys(),
+      ...responsesByMember.keys()
+    ]);
+    const membersById = new Map(members.map((member) => [String(member._id), member]));
+    const accountability = [...memberIds].map((memberId) => {
+      const member = membersById.get(memberId) || {};
+      const followUps = followUpsByMember.get(memberId) || {};
+      const responses = responsesByMember.get(memberId) || {};
+      const followUpsCreated = Number(followUps.followUpsCreated || 0);
+      const respondedFollowUps = Number(followUps.respondedFollowUps || 0);
+      const overdueFollowUps = Number(followUps.overdueFollowUps || 0);
+      const escalatedFollowUps = Number(followUps.escalatedFollowUps || 0);
+      const blockedResponses = Number(responses.blockedResponses || 0);
+      const needsHelpResponses = Number(responses.needsHelpResponses || 0);
+      const attentionScore = escalatedFollowUps * 4 + overdueFollowUps * 3 + blockedResponses * 2 + needsHelpResponses * 2 + Number(responses.ignoredResponses || 0);
+      const attention = attentionScore >= 4 ? 'needs_attention' : attentionScore > 0 ? 'watch' : 'clear';
+
+      return {
+        memberId,
+        name: member.fullName || member.username || 'Unknown member',
+        username: member.username || '',
+        workloadLevel: member.workloadLevel || 'unknown',
+        followUpsCreated,
+        openFollowUps: Number(followUps.openFollowUps || 0),
+        overdueFollowUps,
+        respondedFollowUps,
+        escalatedFollowUps,
+        responseCount: Number(responses.responseCount || 0),
+        completedResponses: Number(responses.completedResponses || 0),
+        blockedResponses,
+        needsHelpResponses,
+        ignoredResponses: Number(responses.ignoredResponses || 0),
+        responseCoverage: followUpsCreated > 0 ? Math.round((respondedFollowUps / followUpsCreated) * 100) : null,
+        attention,
+        attentionScore
+      };
+    })
+      .sort((left, right) => right.attentionScore - left.attentionScore
+        || right.overdueFollowUps - left.overdueFollowUps
+        || left.name.localeCompare(right.name))
+      .slice(0, limit);
+
+    return {
+      window: { days, start: windowStart, end: now },
+      summary: {
+        members: accountability.length,
+        membersNeedingAttention: accountability.filter((member) => member.attention === 'needs_attention').length,
+        openFollowUps: accountability.reduce((total, member) => total + member.openFollowUps, 0),
+        overdueFollowUps: accountability.reduce((total, member) => total + member.overdueFollowUps, 0),
+        escalatedFollowUps: accountability.reduce((total, member) => total + member.escalatedFollowUps, 0),
+        recordedResponses: accountability.reduce((total, member) => total + member.responseCount, 0),
+        explicitlyIgnored: accountability.reduce((total, member) => total + member.ignoredResponses, 0)
+      },
+      members: accountability
+    };
   }
 
   async listFollowUps(filters = {}) {

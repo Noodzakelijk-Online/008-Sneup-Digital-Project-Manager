@@ -61,5 +61,6 @@ followUpPlanSchema.index({ status: 1, dueAt: 1 });
 followUpPlanSchema.index({ boardId: 1, status: 1 });
 followUpPlanSchema.index({ workspaceId: 1, status: 1, dueAt: 1 });
 followUpPlanSchema.index({ workspaceId: 1, boardId: 1, status: 1 });
+followUpPlanSchema.index({ workspaceId: 1, memberId: 1, createdAt: -1, status: 1 });
 
 module.exports = mongoose.model('FollowUpPlan', followUpPlanSchema);

@@ -59,7 +59,7 @@ const enhancements = [
     priority: 'P1',
     area: 'trust',
     title: 'Attach evidence and source citations to every recommendation',
-    evidence: 'Recommendations preserve sourceEvidence, `/api/recommendations/:recommendationId/evidence` returns source refs plus decisions, approvals, Trello attempts, audit events, follow-ups, worker responses, and related findings, mission-control command/focus/risk/chat payloads now carry sourceEvidence, and the dashboard renders validated HTTPS source links wherever an upstream card or provider object exposes one.',
+    evidence: 'Recommendations preserve sourceEvidence, `/api/recommendations/:recommendationId/evidence` returns source refs plus decisions, approvals, Trello attempts, audit events, follow-ups, worker responses, and related findings, mission-control command/focus/risk/chat payloads now carry sourceEvidence, and the dashboard renders validated HTTPS source links plus a response-text-free worker accountability summary wherever an upstream card or provider object exposes one.',
     impact: 'Makes Sneup defensible: humans can inspect why a recommendation exists before trusting it.',
     effort: 'M',
     status: 'in-progress',

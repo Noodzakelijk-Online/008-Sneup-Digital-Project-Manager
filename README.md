@@ -141,6 +141,7 @@ All components are battle-tested, production-ready open source libraries:
 - `GET /api/team/board/:boardId/auto-assign` - Get auto-assignment suggestions
 - `GET /api/team/board/:boardId/at-risk` - Get at-risk cards
 - `GET /api/team/board/:boardId/report` - Generate team report
+- `GET /api/team/accountability` - Summarize workspace follow-ups, responses, overdue work, and escalations by member without returning response text
 - `POST /api/team/recommendation/execute` - Queue a workload recommendation for approval
 - `GET /api/team/patterns` - Get team patterns
 

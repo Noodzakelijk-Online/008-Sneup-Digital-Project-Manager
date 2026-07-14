@@ -38,6 +38,7 @@ const state = {
     actions: [],
     auditEvents: [],
     followUps: [],
+    accountability: null,
     findings: [],
     healthSnapshots: [],
     reconciliationHealth: null,
@@ -89,6 +90,8 @@ const els = {
   boardHealthCount: document.getElementById('boardHealthCount'),
   followUps: document.getElementById('followUps'),
   followUpCount: document.getElementById('followUpCount'),
+  accountabilityList: document.getElementById('accountabilityList'),
+  accountabilityCount: document.getElementById('accountabilityCount'),
   auditTrail: document.getElementById('auditTrail'),
   auditCount: document.getElementById('auditCount'),
   connectorCount: document.getElementById('connectorCount'),
@@ -695,6 +698,7 @@ async function loadOperationsLedger() {
     actions: fetchApi('/api/trello-actions?limit=50'),
     auditEvents: fetchApi('/api/audit?limit=50'),
     followUps: fetchApi('/api/follow-ups/due?limit=50'),
+    accountability: fetchApi('/api/team/accountability?days=30&limit=50'),
     findings: fetchApi('/api/findings?status=open&limit=50'),
     healthSnapshots: fetchApi('/api/findings/board-health?limit=20'),
     reconciliationHealth: fetchApi('/api/trello-actions/reconciliation/health?limit=100'),
@@ -723,6 +727,7 @@ async function loadOperationsLedger() {
     if (key === 'actions') state.ledger.actions = data.actions || [];
     if (key === 'auditEvents') state.ledger.auditEvents = data.auditEvents || [];
     if (key === 'followUps') state.ledger.followUps = data.followUps || [];
+    if (key === 'accountability') state.ledger.accountability = data.accountability || null;
     if (key === 'findings') state.ledger.findings = data.findings || [];
     if (key === 'healthSnapshots') state.ledger.healthSnapshots = data.snapshots || [];
     if (key === 'reconciliationHealth') state.ledger.reconciliationHealth = data.health || null;
@@ -870,6 +875,7 @@ function renderOperationsLedger() {
   const actions = state.ledger.actions || [];
   const auditEvents = state.ledger.auditEvents || [];
   const followUps = state.ledger.followUps || [];
+  const accountability = state.ledger.accountability;
   const findings = state.ledger.findings || [];
   const healthSnapshots = state.ledger.healthSnapshots || [];
   const reconciliationHealth = state.ledger.reconciliationHealth;
@@ -893,6 +899,8 @@ function renderOperationsLedger() {
     ['Critical evidence gaps', reconciliationSummary.critical || 0],
     ['Open findings', findings.length],
     ['High-risk findings', highRiskFindings],
+    ['Overdue follow-ups', accountability?.summary?.overdueFollowUps || 0],
+    ['Workers needing attention', accountability?.summary?.membersNeedingAttention || 0],
     ['Audit events', auditEvents.length]
   ].map(([label, value]) => `
     <div class="metric">
@@ -926,6 +934,10 @@ function renderOperationsLedger() {
   els.notificationDeliveries.innerHTML = listOrEmpty(notificationDeliveries, renderNotificationDelivery);
   els.followUpCount.textContent = `${followUps.length} due`;
   els.followUps.innerHTML = listOrEmpty(followUps, renderFollowUp);
+  els.accountabilityCount.textContent = `${accountability?.summary?.members || 0} people`;
+  els.accountabilityList.innerHTML = accountability
+    ? listOrEmpty(accountability.members || [], renderWorkerAccountability)
+    : '<div class="notice">Worker accountability needs ledger access.</div>';
   els.auditCount.textContent = `${auditEvents.length} events`;
   els.auditTrail.innerHTML = listOrEmpty(auditEvents, renderAuditEvent);
 
@@ -1266,6 +1278,42 @@ function renderFollowUp(followUp) {
       <div class="item-actions">
         <button class="button primary" data-followup-id="${followUpId}" data-followup-action="resolved" type="button">Resolved</button>
         <button class="button" data-followup-id="${followUpId}" data-followup-action="escalated" type="button">Escalate</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderWorkerAccountability(member) {
+  const attentionClass = member.attention === 'needs_attention'
+    ? 'critical'
+    : member.attention === 'watch'
+      ? 'review'
+      : 'healthy';
+  const attentionLabel = member.attention === 'needs_attention'
+    ? 'needs attention'
+    : member.attention === 'watch'
+      ? 'watch'
+      : 'clear';
+  const coverage = member.responseCoverage === null || member.responseCoverage === undefined
+    ? 'No follow-ups in window'
+    : `${member.responseCoverage}% response coverage`;
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(member.name || 'Unknown member')}</strong>
+        <span class="pill ${attentionClass}">${escapeHtml(attentionLabel)}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(member.workloadLevel || 'unknown')} workload</span>
+        <span>${member.followUpsCreated || 0} follow-ups</span>
+        <span>${member.responseCount || 0} responses</span>
+        <span>${escapeHtml(coverage)}</span>
+      </div>
+      <div class="meta">
+        <span>${member.overdueFollowUps || 0} overdue</span>
+        <span>${member.escalatedFollowUps || 0} escalated</span>
+        <span>${member.blockedResponses || 0} blocked</span>
+        <span>${member.ignoredResponses || 0} explicitly ignored</span>
       </div>
     </div>
   `;

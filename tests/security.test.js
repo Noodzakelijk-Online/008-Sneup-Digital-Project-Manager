@@ -4828,6 +4828,7 @@ describe('follow-up accountability', () => {
     jest.dontMock('../src/models/Board');
     jest.dontMock('../src/models/Card');
     jest.dontMock('../src/models/Member');
+    jest.dontMock('../src/models/WorkItem');
     jest.dontMock('../src/services/trelloClient');
     jest.dontMock('../src/services/workspaceScopeService');
     jest.dontMock('../src/services/operationsLedgerService');
@@ -4947,6 +4948,96 @@ describe('follow-up accountability', () => {
       action: 'follow_ups_resolved_from_worker_response',
       actor: 'worker-1'
     }));
+  });
+
+  test('summarizes bounded workspace accountability without response text', async () => {
+    jest.resetModules();
+
+    const workspaceId = new mongoose.Types.ObjectId();
+    const memberId = new mongoose.Types.ObjectId();
+    const membersQuery = {
+      select: jest.fn(() => membersQuery),
+      sort: jest.fn(() => membersQuery),
+      limit: jest.fn(() => membersQuery),
+      lean: jest.fn().mockResolvedValue([{
+        _id: memberId,
+        fullName: 'Nina Jacobs',
+        username: 'nina',
+        workloadLevel: 'normal'
+      }])
+    };
+    const followUpRows = [{
+      _id: memberId,
+      followUpsCreated: 4,
+      openFollowUps: 2,
+      overdueFollowUps: 1,
+      respondedFollowUps: 2,
+      escalatedFollowUps: 1
+    }];
+    const responseRows = [{
+      _id: memberId,
+      responseCount: 3,
+      completedResponses: 1,
+      blockedResponses: 1,
+      needsHelpResponses: 0,
+      ignoredResponses: 1
+    }];
+
+    jest.doMock('mongoose', () => ({ ...mongoose, connection: { readyState: 1 } }));
+    jest.doMock('../src/models/Member', () => ({ find: jest.fn(() => membersQuery) }));
+    jest.doMock('../src/models/FollowUpPlan', () => ({ aggregate: jest.fn().mockResolvedValue(followUpRows) }));
+    jest.doMock('../src/models/WorkerResponse', () => ({ aggregate: jest.fn().mockResolvedValue(responseRows) }));
+    [
+      '../src/models/Recommendation',
+      '../src/models/Approval',
+      '../src/models/TrelloActionAttempt',
+      '../src/models/AuditEvent',
+      '../src/models/DecisionQueueItem',
+      '../src/models/Intervention',
+      '../src/models/CardFinding',
+      '../src/models/BoardHealthSnapshot',
+      '../src/models/Board',
+      '../src/models/Card',
+      '../src/models/WorkItem'
+    ].forEach((modelPath) => jest.doMock(modelPath, () => ({})));
+    jest.doMock('../src/services/trelloClient', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn((value) => value || workspaceId)
+    }));
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const result = await operationsLedgerService.getWorkerAccountability({
+      workspaceId,
+      days: 500,
+      limit: 500,
+      now: '2026-07-14T12:00:00.000Z'
+    });
+
+    expect(result.window.days).toBe(90);
+    expect(result.members).toEqual([expect.objectContaining({
+      memberId: String(memberId),
+      name: 'Nina Jacobs',
+      overdueFollowUps: 1,
+      escalatedFollowUps: 1,
+      blockedResponses: 1,
+      ignoredResponses: 1,
+      responseCoverage: 50,
+      attention: 'needs_attention'
+    })]);
+    expect(result.summary).toMatchObject({
+      members: 1,
+      membersNeedingAttention: 1,
+      overdueFollowUps: 1,
+      escalatedFollowUps: 1,
+      recordedResponses: 3,
+      explicitlyIgnored: 1
+    });
+    expect(result.members[0]).not.toHaveProperty('responseText');
+    expect(membersQuery.limit).toHaveBeenCalledWith(100);
+    expect(require('../src/models/FollowUpPlan').aggregate).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ $match: expect.objectContaining({ workspaceId }) })
+    ]));
   });
 });
 

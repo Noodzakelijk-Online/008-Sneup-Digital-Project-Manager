@@ -2,11 +2,29 @@ const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger');
 const teamManager = require('../services/teamManager');
+const operationsLedgerService = require('../services/operationsLedgerService');
 const contextAnalyzer = require('../services/contextAnalyzer');
 const { requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 
 router.param('boardId', validateObjectIdParam('boardId'));
+
+router.get('/accountability', requirePermission('audit:read'), async (req, res) => {
+  try {
+    const accountability = await operationsLedgerService.getWorkerAccountability({
+      workspaceId: getRequestWorkspaceObjectId(req),
+      days: req.query.days,
+      limit: req.query.limit
+    });
+    res.json({ success: true, accountability });
+  } catch (error) {
+    logger.error('Failed to get worker accountability:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to retrieve worker accountability'
+    });
+  }
+});
 
 // Get workload analysis for a board
 router.get('/board/:boardId/workload', async (req, res) => {
