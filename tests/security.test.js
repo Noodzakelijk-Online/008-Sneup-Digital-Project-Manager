@@ -100,6 +100,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/zoomWorkSignalClient');
     jest.dontMock('../src/services/miroWorkSignalClient');
     jest.dontMock('../src/services/dropboxWorkSignalClient');
+    jest.dontMock('../src/services/boxWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -1177,6 +1178,8 @@ describe('connector registry', () => {
     expect(byId.figma.auth.scopes).not.toEqual(expect.arrayContaining(['files:read', 'file_content:read', 'file_comments:read']));
     expect(byId.confluence.auth.scopes).toEqual(['read:page:confluence', 'read:space:confluence', 'offline_access']);
     expect(byId.confluence.auth.scopes).not.toEqual(expect.arrayContaining(['write:page:confluence', 'write:space:confluence', 'read:comment:confluence', 'read:attachment:confluence']));
+    expect(byId.box.auth.scopes).toEqual(['root_readonly']);
+    expect(byId.box.auth.scopes).not.toEqual(expect.arrayContaining(['root_readwrite', 'manage_webhook', 'manage_groups']));
   });
 
   test('makes provider scope risk explicit and requires acknowledgement before credentials or OAuth leave Sneup', () => {
@@ -2328,6 +2331,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('dropbox').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Box adapter delegates bounded root metadata reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'file:1234' }] });
+    jest.doMock('../src/services/boxWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'box' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('box').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -4774,6 +4788,32 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_DROPBOX_MAX_ENTRIES; process.env.SNEUP_DROPBOX_MAX_ENTRIES = '1';
     const capped = new DropboxWorkSignalClient({ http: { post: jest.fn().mockResolvedValue({ data: { entries: [{ '.tag': 'file', id: 'id:abc12345', name: 'First' }], has_more: true, cursor: 'cursor_2' } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ connectorId: 'dropbox' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_DROPBOX_MAX_ENTRIES; else process.env.SNEUP_DROPBOX_MAX_ENTRIES = previous; }
+  });
+
+  test('Box sync pages bounded root metadata without content, paths, sharing, users, versions, comments, or provider writes', async () => {
+    jest.dontMock('../src/services/boxWorkSignalClient');
+    jest.resetModules();
+    const { BoxWorkSignalClient } = require('../src/services/boxWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { entries: [{ id: '1234', type: 'file', name: `Launch ${privateEmail}`, item_status: 'active', created_at: '2026-07-10T00:00:00Z', modified_at: '2026-07-12T00:00:00Z', description: 'private', path_collection: { entries: [] }, shared_link: { url: 'https://box.example.test' }, owned_by: { login: privateEmail }, file_version: { id: 'secret' }, comment_count: 4 }], next_marker: 'marker_2' } })
+      .mockResolvedValueOnce({ data: { entries: [{ id: '5678', type: 'folder', name: 'Delivery', item_status: 'active' }], next_marker: null } }) };
+    const client = new BoxWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'box-token' })) } });
+    const previous = { max: process.env.SNEUP_BOX_MAX_ENTRIES, page: process.env.SNEUP_BOX_PAGE_SIZE }; process.env.SNEUP_BOX_MAX_ENTRIES = '2'; process.env.SNEUP_BOX_PAGE_SIZE = '1';
+    try { const result = await client.fetchDelta({ connectorId: 'box' }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://api.box.com/2.0/folders/0/items', expect.objectContaining({ params: { usemarker: true, limit: 1, fields: 'id,type,name,item_status,created_at,modified_at' }, headers: expect.objectContaining({ Authorization: 'Bearer box-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://api.box.com/2.0/folders/0/items', expect.objectContaining({ params: expect.objectContaining({ marker: 'marker_2' }) }));
+      expect(http).not.toHaveProperty('post'); expect(result).toMatchObject({ metadata: { source: 'box_root_metadata', entries: 2, pages: 2 }, nextCursor: '2026-07-12T00:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/private|box\.example|path_collection|shared_link|owned_by|file_version|comment_count/); expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_BOX_MAX_ENTRIES; else process.env.SNEUP_BOX_MAX_ENTRIES = previous.max; if (previous.page === undefined) delete process.env.SNEUP_BOX_PAGE_SIZE; else process.env.SNEUP_BOX_PAGE_SIZE = previous.page; }
+  });
+
+  test('Box sync rejects invalid cursors, malformed entries and pagination, and collection caps', async () => {
+    jest.dontMock('../src/services/boxWorkSignalClient'); jest.resetModules(); const { BoxWorkSignalClient } = require('../src/services/boxWorkSignalClient'); const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) };
+    const invalid = new BoxWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ connectorId: 'box' }, 'bad-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new BoxWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { entries: [{ id: 'https://127.0.0.1/steal', type: 'file' }] } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ connectorId: 'box' })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_BOX_MAX_ENTRIES; process.env.SNEUP_BOX_MAX_ENTRIES = '1'; const capped = new BoxWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { entries: [{ id: '1234', type: 'file', name: 'First' }], next_marker: 'marker_2' } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'box' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_BOX_MAX_ENTRIES; else process.env.SNEUP_BOX_MAX_ENTRIES = previous; }
   });
 
   test('Calendly sync reads bounded event-type metadata without profile, links, availability, invitees, or provider writes', async () => {

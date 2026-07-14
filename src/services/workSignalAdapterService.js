@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -72,6 +72,7 @@ const teamsWorkSignalClient = require('./teamsWorkSignalClient');
 const googleChatWorkSignalClient = require('./googleChatWorkSignalClient');
 const figmaWorkSignalClient = require('./figmaWorkSignalClient');
 const confluenceWorkSignalClient = require('./confluenceWorkSignalClient');
+const boxWorkSignalClient = require('./boxWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -996,6 +997,12 @@ confluenceAdapter.capabilities.credentialBackedSync = true;
 confluenceAdapter.list = async account => (await confluenceWorkSignalClient.fetchDelta(account, null)).records;
 confluenceAdapter.fetchDelta = (account, cursor) => confluenceWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('confluence', confluenceAdapter);
+
+const boxAdapter = buildAdapter('box', 'Box root file and folder metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'file'), title: titleFromText(item.name, 'Box entry'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['box', item.sourceType]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Box root metadata'), raw: { id: item.id, sourceType: item.sourceType, entryId: item.entryId, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+boxAdapter.capabilities.credentialBackedSync = true;
+boxAdapter.list = async account => (await boxWorkSignalClient.fetchDelta(account, null)).records;
+boxAdapter.fetchDelta = (account, cursor) => boxWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('box', boxAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

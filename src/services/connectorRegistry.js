@@ -405,15 +405,15 @@ const CONNECTORS = [
     id: 'box',
     name: 'Box',
     category: 'files_assets',
-    description: 'Enterprise content, folders, files, comments, tasks, approvals, and retention-aware project assets.',
+    description: 'Read-only bounded root file and folder metadata through Box OAuth. Sneup excludes file contents, downloads, previews, shared links, paths, descriptions, users, versions, comments, and provider writes.',
     auth: oauth2({
       envPrefix: 'BOX',
       authorizationUrl: 'https://account.box.com/api/oauth2/authorize',
       tokenUrl: 'https://api.box.com/oauth2/token',
-      scopes: [],
-      docsUrl: 'https://developer.box.com/guides/authentication/oauth2/'
+      scopes: ['root_readonly'],
+      docsUrl: 'https://developer.box.com/reference/get-folders-id-items/'
     }),
-    sync: ['files', 'folders', 'comments', 'tasks']
+    sync: ['files', 'folders']
   },
   {
     id: 'hubspot',
