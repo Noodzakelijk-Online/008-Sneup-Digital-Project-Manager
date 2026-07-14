@@ -107,6 +107,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/podioWorkSignalClient');
     jest.dontMock('../src/services/intercomWorkSignalClient');
     jest.dontMock('../src/services/webexWorkSignalClient');
+    jest.dontMock('../src/services/discordWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -1193,6 +1194,9 @@ describe('connector registry', () => {
     expect(byId.confluence.auth.scopes).not.toEqual(expect.arrayContaining(['write:page:confluence', 'write:space:confluence', 'read:comment:confluence', 'read:attachment:confluence']));
     expect(byId.box.auth.scopes).toEqual(['root_readonly']);
     expect(byId.box.auth.scopes).not.toEqual(expect.arrayContaining(['root_readwrite', 'manage_webhook', 'manage_groups']));
+    expect(byId.discord.auth.scopes).toEqual(['identify', 'guilds']);
+    expect(byId.discord.auth.scopes).not.toEqual(expect.arrayContaining(['email', 'guilds.join', 'messages.read']));
+    expect(byId.discord.sync).toEqual(['guilds']);
     expect(byId.rally.auth.fields.map(field => field.name)).toEqual(['apiKey']);
     expect(byId.rally.sync).toEqual(['user_stories', 'defects']);
   });
@@ -2407,6 +2411,11 @@ describe('work signal normalization', () => {
   test('Webex adapter delegates bounded meeting-list metadata reads to the credential-backed client', async () => {
     jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'meeting:abc123' }] }); jest.doMock('../src/services/webexWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'webex' };
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('webex').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Discord adapter delegates bounded guild metadata reads to the credential-backed client', async () => {
+    jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'guild:123456789012345678' }] }); jest.doMock('../src/services/discordWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'discord' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('discord').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -5153,6 +5162,35 @@ describe('work signal normalization', () => {
       .mockResolvedValueOnce({ data: { results: [{ id: '1001', name: 'One' }, { id: '1002', name: 'Two' }], _links: {} } })
       .mockResolvedValueOnce({ data: { results: [], _links: {} } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ metadata: { fields: { confluenceCloudId: 'cloud-0001' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_CONFLUENCE_MAX_SPACES; else process.env.SNEUP_CONFLUENCE_MAX_SPACES = previous; }
+  });
+
+  test('Discord sync reads one bounded server metadata collection without channels, people, permissions, invites, icons, messages, or provider writes', async () => {
+    jest.dontMock('../src/services/discordWorkSignalClient');
+    jest.resetModules();
+    const { DiscordWorkSignalClient } = require('../src/services/discordWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn().mockResolvedValue({ data: [{ id: '123456789012345678', name: `Delivery ${privateEmail}`, owner: true, permissions: '8', icon: 'private-icon', approximate_member_count: 50, channels: [{ id: 'private-channel' }], messages: ['private'], invites: ['private'] }] }) };
+    const client = new DiscordWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'discord-access-token' })) } });
+    const previous = process.env.SNEUP_DISCORD_MAX_GUILDS; process.env.SNEUP_DISCORD_MAX_GUILDS = '2';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'discord' }, '2026-07-12T12:00:00.000Z');
+      expect(http.get).toHaveBeenCalledWith('https://discord.com/api/v10/users/@me/guilds', expect.objectContaining({ params: { limit: 2, with_counts: false }, headers: expect.objectContaining({ Authorization: 'Bearer discord-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'discord_current_user_guild_metadata', guilds: 1, pages: 1 }, nextCursor: '2026-07-12T12:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/private-icon|channels|messages|invites|permissions|owner/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous === undefined) delete process.env.SNEUP_DISCORD_MAX_GUILDS; else process.env.SNEUP_DISCORD_MAX_GUILDS = previous; }
+  });
+
+  test('Discord sync rejects invalid cursors, malformed server identifiers, and collection caps', async () => {
+    jest.dontMock('../src/services/discordWorkSignalClient');
+    jest.resetModules();
+    const { DiscordWorkSignalClient } = require('../src/services/discordWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) };
+    const invalid = new DiscordWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ connectorId: 'discord' }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new DiscordWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ id: 'https://127.0.0.1/steal' }] }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ connectorId: 'discord' })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_DISCORD_MAX_GUILDS; process.env.SNEUP_DISCORD_MAX_GUILDS = '1'; const capped = new DiscordWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ id: '123456789012345678' }] }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ connectorId: 'discord' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_DISCORD_MAX_GUILDS; else process.env.SNEUP_DISCORD_MAX_GUILDS = previous; }
   });
 
   test('Webex sync reads one bounded meeting metadata collection without agendas, people, links, recordings, messages, or provider writes', async () => {

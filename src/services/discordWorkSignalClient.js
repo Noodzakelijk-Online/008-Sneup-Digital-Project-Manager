@@ -1,0 +1,19 @@
+const axios = require('axios');
+const accountConnectorService = require('./accountConnectorService');
+const API_URL = 'https://discord.com/api/v10';
+const clamp = (value, fallback, minimum, maximum) => { const parsed = Number.parseInt(value, 10); return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback; };
+const compact = value => Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ''));
+const boundedText = value => { const text = String(value || '').replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted email]').replace(/\bhttps?:\/\/\S+/gi, '[redacted url]').replace(/\s+/g, ' ').trim(); return text ? text.slice(0, 160) : undefined; };
+const validGuildId = value => /^\d{1,20}$/.test(String(value || ''));
+const parseDate = value => { if (!value) return null; const date = new Date(value); return Number.isNaN(date.getTime()) ? null : date; };
+const invalidResponse = message => { const error = new Error(message); error.statusCode = 502; return error; };
+const guild = value => validGuildId(value?.id) ? compact({ id: `guild:${value.id}`, sourceType: 'guild', guildId: String(value.id), name: boundedText(value.name) || 'Discord server', status: 'open' }) : null;
+class DiscordWorkSignalClient {
+  constructor(options = {}) { this.http = options.http || axios; this.accountConnectorService = options.accountConnectorService || accountConnectorService; }
+  getConfig() { return { timeout: clamp(process.env.SNEUP_DISCORD_TIMEOUT_MS, 15000, 1000, 60000), maxGuilds: clamp(process.env.SNEUP_DISCORD_MAX_GUILDS, 100, 1, 200) }; }
+  getAccessToken(account) { const credentials = this.accountConnectorService.getAccountCredentials(account); const token = credentials.accessToken || credentials.token; if (!token) { const error = new Error('Discord OAuth access token is missing. Reconnect this account with identify and guilds to continue syncing.'); error.statusCode = 503; throw error; } return token; }
+  async fetchDelta(account, cursor) { const cursorDate = cursor ? parseDate(cursor) : null; if (cursor && !cursorDate) { const error = new Error('Discord work-signal cursor is invalid. Reconnect this account to establish a new cursor.'); error.statusCode = 400; throw error; } const config = this.getConfig(); const token = this.getAccessToken(account); const response = await this.http.get(`${API_URL}/users/@me/guilds`, { params: { limit: config.maxGuilds, with_counts: false }, headers: { Accept: 'application/json', Authorization: `Bearer ${token}`, 'User-Agent': 'Sneup Digital Project Manager (support@noodzakelijk.online)' }, timeout: config.timeout, maxRedirects: 0, proxy: false }); const values = response?.data; if (!Array.isArray(values) || values.length > config.maxGuilds) throw invalidResponse('Discord returned an invalid server-metadata collection. Reconnect this account before syncing again.'); if (values.length === config.maxGuilds) { const error = new Error('Discord server metadata reached its configured limit. Increase SNEUP_DISCORD_MAX_GUILDS before continuing.'); error.statusCode = 413; throw error; } const records = values.map(guild).filter(Boolean); if (records.length !== values.length) throw invalidResponse('Discord returned an invalid server identifier. Reconnect this account before syncing again.'); return { records, nextCursor: cursorDate ? cursorDate.toISOString() : null, hasMore: false, metadata: { source: 'discord_current_user_guild_metadata', guilds: records.length, pages: 1, contentPolicy: 'current_user_guild_metadata_only_no_channels_messages_direct_messages_members_roles_permissions_invites_files_voice_activity_icons_raw_payloads_or_provider_writes' } }; }
+}
+const discordWorkSignalClient = new DiscordWorkSignalClient();
+module.exports = discordWorkSignalClient;
+module.exports.DiscordWorkSignalClient = DiscordWorkSignalClient;
