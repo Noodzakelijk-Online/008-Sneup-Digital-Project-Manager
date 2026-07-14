@@ -127,6 +127,7 @@ workSignalSchema.index({
 }, { unique: true });
 workSignalSchema.index({ workspaceId: 1, status: 1, priority: 1, dueAt: 1 });
 workSignalSchema.index({ workspaceId: 1, provider: 1, sourceType: 1, lastSeenAt: -1 });
+workSignalSchema.index({ workspaceId: 1, provider: 1, sourceType: 1, providerCreatedAt: -1 });
 
 workSignalSchema.statics.signalTypes = SIGNAL_TYPES;
 workSignalSchema.statics.signalStatuses = SIGNAL_STATUSES;

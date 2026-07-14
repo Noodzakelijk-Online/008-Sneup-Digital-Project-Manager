@@ -563,6 +563,7 @@ describe('capacity-aware forecasting', () => {
         timeOff: [{ startDate: '2026-07-13', endDate: '2026-07-14', label: 'Leave' }], skills: ['engineering']
       }],
       performances: [{ memberId: 'member-1', metrics: { averageCycleTime: 5 } }],
+      utilizationSignals: [{ raw: { hours: 20, spentDate: '2026-07-03', user: { name: 'Milan' } } }],
       cards: [
         { _id: 'card-1', boardId: 'board-1', members: ['member-1'], riskLevel: 'medium' },
         { _id: 'card-2', boardId: 'board-1', members: [], riskLevel: 'high', due: '2026-07-04T09:00:00.000Z' }
@@ -583,8 +584,12 @@ describe('capacity-aware forecasting', () => {
       configured: true,
       allocationPercent: 75,
       timeOffHours: expect.any(Number),
-      historicalCardHours: 5
+      historicalCardHours: 5,
+      harvestHoursLast28Days: 20,
+      harvestWeeklyHours: 5
     });
+    expect(forecast.dataQuality.utilization).toMatchObject({ provider: 'harvest', entries: 1, totalHours: 20, matchedMembers: 1 });
+    expect(forecast.portfolio.assumptions.join(' ')).toContain('Harvest time-entry metadata');
     expect(forecast.boards[0]).toMatchObject({ boardId: 'board-1', boardName: 'Launch' });
   });
 
@@ -603,6 +608,22 @@ describe('capacity-aware forecasting', () => {
     expect(forecast.portfolio.p80).toBeNull();
     expect(forecast.portfolio.confidence).toBeLessThan(50);
     expect(forecast.portfolio.health).toBe('watch');
+  });
+
+  test('flags a declared-capacity mismatch from bounded Harvest utilization evidence without changing provider data', () => {
+    const { buildForecast } = require('../src/services/forecastService');
+    const forecast = buildForecast({
+      now: new Date('2026-07-06T09:00:00.000Z'),
+      boards: [{ _id: 'board-1', name: 'Launch' }],
+      members: [{ _id: 'member-1', username: 'milan', fullName: 'Milan' }],
+      profiles: [{ _id: 'profile-1', memberId: 'member-1', weeklyHours: 20, allocationPercent: 100, focusHoursPerWeek: 4 }],
+      cards: [{ _id: 'card-1', boardId: 'board-1', members: ['member-1'], riskLevel: 'normal' }],
+      utilizationSignals: [{ raw: { hours: 100, spentDate: '2026-07-03', user: { name: 'Milan' } } }]
+    });
+
+    expect(forecast.memberCapacity[0]).toMatchObject({ harvestWeeklyHours: 25, weeklyAvailableHours: 16 });
+    expect(forecast.portfolio.risks.join(' ')).toContain('Harvest reports more tracked hours than modeled capacity');
+    expect(forecast.portfolio.assumptions.join(' ')).toContain('calibrates forecast confidence only');
   });
 });
 

@@ -646,7 +646,7 @@ const harvestAdapter = buildAdapter('harvest', 'Harvest time-entry adapter', (ac
   url: undefined,
   owners: userNames(entry.user),
   labels: compact([entry.client?.name, entry.project?.name, entry.task?.name, entry.billable ? 'billable' : 'non-billable', entry.approvalStatus]),
-  providerCreatedAt: pick(entry.createdAt),
+  providerCreatedAt: pick(entry.spentDate, entry.createdAt),
   providerUpdatedAt: pick(entry.updatedAt, entry.createdAt),
   evidenceRefs: baseEvidence(account, entry, 'Harvest time entry'),
   raw: {

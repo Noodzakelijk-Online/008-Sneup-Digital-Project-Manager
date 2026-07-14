@@ -390,6 +390,7 @@ function renderForecast(errorMessage = '') {
   const portfolio = forecast.portfolio || {};
   const members = forecast.memberCapacity || [];
   const boards = forecast.boards || [];
+  const utilization = forecast.dataQuality?.utilization || {};
   els.forecastCount.textContent = String(boards.filter(board => board.health !== 'on_track').length);
   els.forecastMode.textContent = forecast.mode === 'demo' ? 'demo' : 'analysis only';
   els.forecastMode.className = `pill ${forecast.mode === 'demo' ? 'review' : 'healthy'}`;
@@ -401,7 +402,8 @@ function renderForecast(errorMessage = '') {
     ['Forecast confidence', `${portfolio.confidence || 0}%`],
     ['Open cards', portfolio.openCards || 0],
     ['Weekly capacity', `${portfolio.weeklyAvailableHours || 0}h`],
-    ['Estimated work', `${portfolio.workHours || 0}h`]
+    ['Estimated work', `${portfolio.workHours || 0}h`],
+    ['Tracked utilization', utilization.entries ? `${utilization.weeklyHours || 0}h/week` : 'No Harvest evidence']
   ].map(([label, value]) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
   els.portfolioForecast.innerHTML = renderForecastSummary(portfolio);
   els.forecastCapacity.innerHTML = listOrEmpty(members, renderCapacityMember);
@@ -448,7 +450,7 @@ function renderCapacityMember(member = {}) {
     <div class="item">
       <div class="item-title"><strong>${escapeHtml(member.name || 'Team member')}</strong><span class="pill ${member.configured ? 'healthy' : 'review'}">${member.configured ? 'configured' : 'default'}</span></div>
       <div class="meta"><span>${member.weeklyAvailableHours || 0}h/week</span><span>${member.dailyAvailableHours || 0}h/day</span><span>${member.allocationPercent || 0}% allocation</span><span>${member.focusHoursPerWeek || 0}h focus</span>${member.timeOffHours ? `<span>${member.timeOffHours}h planned time off</span>` : ''}</div>
-      <div class="meta">Historical card effort: ${member.historicalCardHours || 0}h. ${(member.skills || []).map(escapeHtml).join(' | ') || 'No skills recorded.'}</div>
+      <div class="meta">Historical card effort: ${member.historicalCardHours || 0}h. ${member.harvestEntriesLast28Days ? `Harvest tracked ${member.harvestWeeklyHours || 0}h/week recently.` : 'No matched Harvest utilization evidence.'} ${(member.skills || []).map(escapeHtml).join(' | ') || 'No skills recorded.'}</div>
       ${editable ? `<div class="item-actions"><button class="button" type="button" data-capacity-member="${escapeHtml(member.memberId)}">Edit capacity</button></div>` : ''}
     </div>
   `;
