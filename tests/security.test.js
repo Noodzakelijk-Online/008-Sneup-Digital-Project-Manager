@@ -93,6 +93,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
+    jest.dontMock('../src/services/pipedriveWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2139,6 +2140,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('freshdesk').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Pipedrive adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'deal:19' }] });
+    jest.doMock('../src/services/pipedriveWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'pipedrive' };
+    await workSignalAdapterService.fetchDelta(account, 'opaque-cursor');
+    expect(fetchDelta).toHaveBeenCalledWith(account, 'opaque-cursor');
+    expect(workSignalAdapterService.getAdapter('pipedrive').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4279,6 +4291,39 @@ describe('work signal normalization', () => {
       expect(JSON.stringify(result.records)).not.toMatch(/Private body|private|secret/);
       expect(result.records[0].name).not.toContain(privateEmail);
     } finally { if (previous.max === undefined) delete process.env.SNEUP_FRESHDESK_MAX_TICKETS; else process.env.SNEUP_FRESHDESK_MAX_TICKETS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_FRESHDESK_PAGE_SIZE; else process.env.SNEUP_FRESHDESK_PAGE_SIZE = previous.page; }
+  });
+
+  test('Pipedrive sync reads bounded cursor-paginated deal metadata with OAuth access', async () => {
+    jest.dontMock('../src/services/pipedriveWorkSignalClient');
+    jest.resetModules();
+    const { PipedriveWorkSignalClient } = require('../src/services/pipedriveWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { data: [{ id: 19, title: `Launch plan for ${privateEmail}`, value: 5000, currency: 'EUR', person_id: 2, org_id: 3, owner_id: 4, custom_fields: { secret: 'value' }, lost_reason: 'Private details', status: 'open', pipeline_id: 9, stage_id: 12, expected_close_date: '2026-07-15', add_time: '2026-07-10T12:00:00.000Z', update_time: '2026-07-12T12:00:00.000Z' }], additional_data: { pagination: { next_cursor: 'cursor-2' } } } })
+      .mockResolvedValueOnce({ data: { data: [{ id: 20, title: 'Confirm delivery handoff', status: 'won', pipeline_id: 9, stage_id: 14, won_time: '2026-07-13T12:00:00.000Z', add_time: '2026-07-11T12:00:00.000Z', update_time: '2026-07-13T12:00:00.000Z' }], additional_data: {} } }) };
+    const client = new PipedriveWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'pipedrive-access-token' })) } });
+    const previous = { max: process.env.SNEUP_PIPEDRIVE_MAX_DEALS, page: process.env.SNEUP_PIPEDRIVE_PAGE_SIZE };
+    process.env.SNEUP_PIPEDRIVE_MAX_DEALS = '2'; process.env.SNEUP_PIPEDRIVE_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ metadata: { fields: { companyDomain: 'sneup-demo' } } });
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://sneup-demo.pipedrive.com/api/v2/deals', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer pipedrive-access-token' }), params: expect.objectContaining({ updated_since: '2026-06-14T12:00:00.000Z', sort_by: 'update_time', sort_direction: 'asc', limit: 1 }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://sneup-demo.pipedrive.com/api/v2/deals', expect.objectContaining({ params: expect.objectContaining({ cursor: 'cursor-2', limit: 1 }) }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'pipedrive_api_v2_deals', deals: 2, pages: 2 }, nextCursor: null, hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/5000|EUR|Private details|secret/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_PIPEDRIVE_MAX_DEALS; else process.env.SNEUP_PIPEDRIVE_MAX_DEALS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_PIPEDRIVE_PAGE_SIZE; else process.env.SNEUP_PIPEDRIVE_PAGE_SIZE = previous.page; }
+  });
+
+  test('Pipedrive sync rejects unsafe company domains and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/pipedriveWorkSignalClient');
+    jest.resetModules();
+    const { PipedriveWorkSignalClient } = require('../src/services/pipedriveWorkSignalClient');
+    const invalid = new PipedriveWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) } });
+    await expect(invalid.fetchDelta({ metadata: { fields: { companyDomain: 'localhost:3000' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const previous = process.env.SNEUP_PIPEDRIVE_MAX_DEALS; process.env.SNEUP_PIPEDRIVE_MAX_DEALS = '1';
+    const capped = new PipedriveWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [{ id: 1, title: 'First deal' }], additional_data: { next_cursor: 'cursor-2' } } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'token' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { companyDomain: 'sneup-demo' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_PIPEDRIVE_MAX_DEALS; else process.env.SNEUP_PIPEDRIVE_MAX_DEALS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

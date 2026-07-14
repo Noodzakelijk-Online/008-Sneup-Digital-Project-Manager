@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -60,6 +60,7 @@ const genericRestApiWorkSignalClient = require('./genericRestApiWorkSignalClient
 const datadogWorkSignalClient = require('./datadogWorkSignalClient');
 const zendeskWorkSignalClient = require('./zendeskWorkSignalClient');
 const freshdeskWorkSignalClient = require('./freshdeskWorkSignalClient');
+const pipedriveWorkSignalClient = require('./pipedriveWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -912,6 +913,12 @@ freshdeskAdapter.capabilities.credentialBackedSync = true;
 freshdeskAdapter.list = async account => (await freshdeskWorkSignalClient.fetchDelta(account, null)).records;
 freshdeskAdapter.fetchDelta = (account, cursor) => freshdeskWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('freshdesk', freshdeskAdapter);
+
+const pipedriveAdapter = buildAdapter('pipedrive', 'Pipedrive deal metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'deal'), title: titleFromText(item.name, 'Pipedrive deal'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['pipedrive', item.sourceType, item.status, item.pipelineId ? `pipeline:${item.pipelineId}` : undefined, item.stageId ? `stage:${item.stageId}` : undefined]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Pipedrive deal metadata'), raw: { id: item.id, sourceType: item.sourceType, dealId: item.dealId, status: item.status, pipelineId: item.pipelineId, stageId: item.stageId, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt, wonAt: item.wonAt, lostAt: item.lostAt } }));
+pipedriveAdapter.capabilities.credentialBackedSync = true;
+pipedriveAdapter.list = async account => (await pipedriveWorkSignalClient.fetchDelta(account, null)).records;
+pipedriveAdapter.fetchDelta = (account, cursor) => pipedriveWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('pipedrive', pipedriveAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
