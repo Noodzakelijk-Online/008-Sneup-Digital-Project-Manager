@@ -100,6 +100,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/zoomWorkSignalClient');
     jest.dontMock('../src/services/miroWorkSignalClient');
     jest.dontMock('../src/services/dropboxWorkSignalClient');
+    jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2252,6 +2253,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('dropbox').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'event_type:abcd1234' }] });
+    jest.doMock('../src/services/calendlyWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'calendly' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('calendly').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4643,6 +4655,31 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_DROPBOX_MAX_ENTRIES; process.env.SNEUP_DROPBOX_MAX_ENTRIES = '1';
     const capped = new DropboxWorkSignalClient({ http: { post: jest.fn().mockResolvedValue({ data: { entries: [{ '.tag': 'file', id: 'id:abc12345', name: 'First' }], has_more: true, cursor: 'cursor_2' } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ connectorId: 'dropbox' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_DROPBOX_MAX_ENTRIES; else process.env.SNEUP_DROPBOX_MAX_ENTRIES = previous; }
+  });
+
+  test('Calendly sync reads bounded event-type metadata without profile, links, availability, invitees, or provider writes', async () => {
+    jest.dontMock('../src/services/calendlyWorkSignalClient');
+    jest.resetModules();
+    const { CalendlyWorkSignalClient } = require('../src/services/calendlyWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { resource: { uri: 'https://api.calendly.com/users/abcd1234-0000-0000-0000-000000000000', email: privateEmail, name: 'Private operator', scheduling_url: 'https://calendly.com/private' } } })
+      .mockResolvedValueOnce({ data: { collection: [{ uri: 'https://api.calendly.com/event_types/abcd1234-0000-0000-0000-000000000000', name: `Client review ${privateEmail}`, active: true, duration: 30, created_at: '2026-07-10T12:00:00Z', updated_at: '2026-07-12T12:00:00Z', scheduling_url: 'https://calendly.com/private/review', location: { type: 'zoom' }, profile: { type: 'Team' } }], pagination: { next_page_token: 'page_2' } } })
+      .mockResolvedValueOnce({ data: { collection: [{ uri: 'https://api.calendly.com/event_types/efgh5678-0000-0000-0000-000000000000', name: 'Delivery handoff', active: false, duration: 45, created_at: '2026-07-11T12:00:00Z', updated_at: '2026-07-13T12:00:00Z' }], pagination: {} } }) };
+    const client = new CalendlyWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'calendly-token' })) } });
+    const previous = { max: process.env.SNEUP_CALENDLY_MAX_EVENT_TYPES, page: process.env.SNEUP_CALENDLY_PAGE_SIZE };
+    process.env.SNEUP_CALENDLY_MAX_EVENT_TYPES = '2'; process.env.SNEUP_CALENDLY_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'calendly' }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://api.calendly.com/users/me', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer calendly-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://api.calendly.com/event_types', expect.objectContaining({ params: { user: 'https://api.calendly.com/users/abcd1234-0000-0000-0000-000000000000', count: 1 } }));
+      expect(http.get).toHaveBeenNthCalledWith(3, 'https://api.calendly.com/event_types', expect.objectContaining({ params: { user: 'https://api.calendly.com/users/abcd1234-0000-0000-0000-000000000000', count: 1, page_token: 'page_2' } }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'calendly_event_types', eventTypes: 2, pages: 2 }, nextCursor: '2026-07-10T00:00:00.000Z', hasMore: false });
+      expect(result.records[1]).toMatchObject({ status: 'archived' });
+      expect(JSON.stringify(result.records)).not.toMatch(/calendly\.com|zoom|profile|location|Private operator/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_CALENDLY_MAX_EVENT_TYPES; else process.env.SNEUP_CALENDLY_MAX_EVENT_TYPES = previous.max; if (previous.page === undefined) delete process.env.SNEUP_CALENDLY_PAGE_SIZE; else process.env.SNEUP_CALENDLY_PAGE_SIZE = previous.page; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

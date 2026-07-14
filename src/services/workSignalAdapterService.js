@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -67,6 +67,7 @@ const salesforceWorkSignalClient = require('./salesforceWorkSignalClient');
 const zoomWorkSignalClient = require('./zoomWorkSignalClient');
 const miroWorkSignalClient = require('./miroWorkSignalClient');
 const dropboxWorkSignalClient = require('./dropboxWorkSignalClient');
+const calendlyWorkSignalClient = require('./calendlyWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -961,6 +962,12 @@ dropboxAdapter.capabilities.credentialBackedSync = true;
 dropboxAdapter.list = async account => (await dropboxWorkSignalClient.fetchDelta(account, null)).records;
 dropboxAdapter.fetchDelta = (account, cursor) => dropboxWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('dropbox', dropboxAdapter);
+
+const calendlyAdapter = buildAdapter('calendly', 'Calendly event-type metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'event_type'), title: titleFromText(item.name, 'Calendly event type'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['calendly', item.sourceType, item.durationMinutes ? `duration:${item.durationMinutes}` : undefined]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Calendly event-type metadata'), raw: { id: item.id, sourceType: item.sourceType, eventTypeId: item.eventTypeId, durationMinutes: item.durationMinutes, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+calendlyAdapter.capabilities.credentialBackedSync = true;
+calendlyAdapter.list = async account => (await calendlyWorkSignalClient.fetchDelta(account, null)).records;
+calendlyAdapter.fetchDelta = (account, cursor) => calendlyWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('calendly', calendlyAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
