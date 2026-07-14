@@ -3232,6 +3232,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-resource-guru-account]').forEach((button) => {
     button.addEventListener('click', () => openResourceGuruAccountModal(button.dataset.resourceGuruAccount));
   });
+  document.querySelectorAll('[data-figma-team]').forEach((button) => {
+    button.addEventListener('click', () => openFigmaTeamModal(button.dataset.figmaTeam));
+  });
 }
 
 function renderConnectorSafety() {
@@ -3275,7 +3278,6 @@ function renderConnector(connector, account) {
   const safety = connector.safety || {};
   const contract = state.workSignalContracts.find(item => item.connectorId === connector.id);
   const adapterImplemented = contract?.adapterStatus === 'implemented';
-  const canSync = Boolean(account && adapterImplemented);
   const connectionLabel = connected ? (adapterImplemented ? 'connected' : 'linked') : configured ? 'ready' : 'setup';
   const connectionStatusClass = connected && adapterImplemented ? 'connected' : connected || configured ? 'review' : 'high';
   const adapterSummary = adapterImplemented
@@ -3289,6 +3291,9 @@ function renderConnector(connector, account) {
   const isBasecamp = connector.id === 'basecamp';
   const selectedResourceGuruAccountId = account?.metadata?.fields?.resourceGuruAccountId;
   const isResourceGuru = connector.id === 'resource_guru';
+  const selectedFigmaTeamId = account?.metadata?.fields?.figmaTeamId;
+  const isFigma = connector.id === 'figma';
+  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId));
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
@@ -3339,6 +3344,7 @@ function renderConnector(connector, account) {
         ${isAsana && account ? `<button class="button" data-asana-workspace="${escapeHtml(account.id)}" type="button">${selectedAsanaWorkspaceGid ? 'Asana workspace selected' : 'Select Asana workspace'}</button>` : ''}
         ${isBasecamp && account ? `<button class="button" data-basecamp-account="${escapeHtml(account.id)}" type="button">${selectedBasecampAccountId ? 'Basecamp account selected' : 'Select Basecamp account'}</button>` : ''}
         ${isResourceGuru && account ? `<button class="button" data-resource-guru-account="${escapeHtml(account.id)}" type="button">${selectedResourceGuruAccountId ? 'Resource Guru account selected' : 'Select Resource Guru account'}</button>` : ''}
+        ${isFigma && account ? `<button class="button" data-figma-team="${escapeHtml(account.id)}" type="button">${selectedFigmaTeamId ? 'Figma team selected' : 'Configure Figma team'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         ${connected && connector.auth.type !== 'oauth2'
           ? `<button class="button primary" data-rotate-credential="${escapeHtml(account.id)}" type="button">Rotate credential</button>`
@@ -3346,6 +3352,42 @@ function renderConnector(connector, account) {
       </div>
     </div>
   `;
+}
+
+async function openFigmaTeamModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+  const selectedTeamId = account.metadata?.fields?.figmaTeamId || '';
+  els.modalTitle.textContent = 'Configure Figma team';
+  els.modalBody.innerHTML = `
+    <form id="figmaTeamForm">
+      <div class="field">
+        <label for="figmaTeamId">Figma team ID</label>
+        <input id="figmaTeamId" name="figmaTeamId" inputmode="numeric" pattern="[0-9]{1,24}" maxlength="24" required value="${escapeHtml(selectedTeamId)}" placeholder="Numeric ID from the Figma team URL">
+      </div>
+      <div class="notice">Sneup uses the selected team's project and file metadata only. It does not read design content, nodes, comments, users, thumbnails, URLs, or versions.</div>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelFigmaTeam">Cancel</button>
+        <button class="button primary" type="submit">Use this team</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelFigmaTeam').addEventListener('click', closeModal);
+  document.getElementById('figmaTeamForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const body = Object.fromEntries(new FormData(event.target).entries());
+    try {
+      await fetchApi(`/api/connectors/accounts/${accountId}/figma-team`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      closeModal();
+      openNotice('Figma team configured', 'Sneup will use this team for the next read-only metadata sync.');
+      await loadConnectors();
+    } catch (error) {
+      openNotice('Figma team configuration', error.message);
+    }
+  });
 }
 
 async function openResourceGuruAccountModal(accountId) {

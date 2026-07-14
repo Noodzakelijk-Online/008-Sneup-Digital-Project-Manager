@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -70,6 +70,7 @@ const dropboxWorkSignalClient = require('./dropboxWorkSignalClient');
 const calendlyWorkSignalClient = require('./calendlyWorkSignalClient');
 const teamsWorkSignalClient = require('./teamsWorkSignalClient');
 const googleChatWorkSignalClient = require('./googleChatWorkSignalClient');
+const figmaWorkSignalClient = require('./figmaWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -982,6 +983,12 @@ googleChatAdapter.capabilities.credentialBackedSync = true;
 googleChatAdapter.list = async account => (await googleChatWorkSignalClient.fetchDelta(account, null)).records;
 googleChatAdapter.fetchDelta = (account, cursor) => googleChatWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('google_chat', googleChatAdapter);
+
+const figmaAdapter = buildAdapter('figma', 'Figma project and file metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'file'), title: titleFromText(item.sourceType === 'file' && item.projectName ? `${item.projectName}: ${item.name}` : item.name, 'Figma work item'), description: '', status: item.status || 'open', priority: 'unknown', owners: [], labels: compact(['figma', item.sourceType, item.projectName]), dueAt: undefined, providerCreatedAt: undefined, providerUpdatedAt: pick(item.updatedAt), evidenceRefs: baseEvidence(account, item, 'Figma project/file metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, fileKey: item.fileKey, updatedAt: item.updatedAt } }));
+figmaAdapter.capabilities.credentialBackedSync = true;
+figmaAdapter.list = async account => (await figmaWorkSignalClient.fetchDelta(account, null)).records;
+figmaAdapter.fetchDelta = (account, cursor) => figmaWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('figma', figmaAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

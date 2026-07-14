@@ -103,6 +103,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
+    jest.dontMock('../src/services/figmaWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1171,6 +1172,8 @@ describe('connector registry', () => {
     expect(byId.miro.auth.scopes).toEqual(['boards:read']);
     expect(byId.google_chat.auth.scopes).toEqual(['https://www.googleapis.com/auth/chat.spaces.readonly']);
     expect(byId.google_chat.auth.scopes).not.toEqual(expect.arrayContaining(['https://www.googleapis.com/auth/chat.messages.readonly']));
+    expect(byId.figma.auth.scopes).toEqual(['projects:read']);
+    expect(byId.figma.auth.scopes).not.toEqual(expect.arrayContaining(['files:read', 'file_content:read', 'file_comments:read']));
   });
 
   test('makes provider scope risk explicit and requires acknowledgement before credentials or OAuth leave Sneup', () => {
@@ -1521,6 +1524,33 @@ describe('connector registry', () => {
       accountConnectorService.http = originalHttp;
       if (originalEncryptionKey === undefined) delete process.env.CONNECTOR_ENCRYPTION_KEY;
       else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;
+    }
+  });
+
+  test('persists only a validated Figma team ID after OAuth account linking', async () => {
+    const account = {
+      _id: 'account-figma-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'figma',
+      connectorName: 'Figma',
+      category: 'whiteboard_design',
+      authType: 'oauth2',
+      status: 'failed',
+      credentials: { accessToken: 'never-expose-this' },
+      metadata: { fields: {} },
+      save: jest.fn().mockResolvedValue(undefined)
+    };
+    const accountSpy = jest.spyOn(accountConnectorService, 'getManagedAccount').mockResolvedValue(account);
+    try {
+      await expect(accountConnectorService.selectFigmaTeam('account-figma-1', 'not-a-team', { workspaceId: 'workspace-1' })).rejects.toMatchObject({ statusCode: 400 });
+      const selected = await accountConnectorService.selectFigmaTeam('account-figma-1', '1234567890', { workspaceId: 'workspace-1' });
+      expect(account.metadata.fields).toEqual({ figmaTeamId: '1234567890' });
+      expect(account.status).toBe('connected');
+      expect(account.save).toHaveBeenCalledTimes(1);
+      expect(selected.metadata.fields).toEqual({ figmaTeamId: '1234567890' });
+      expect(selected).not.toHaveProperty('credentials');
+    } finally {
+      accountSpy.mockRestore();
     }
   });
 });
@@ -2289,6 +2319,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('google_chat').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Figma adapter delegates bounded project/file metadata reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'file:AbCdEf1234' }] });
+    jest.doMock('../src/services/figmaWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'figma' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('figma').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4725,7 +4766,7 @@ describe('work signal normalization', () => {
       expect(http.get).toHaveBeenNthCalledWith(2, `https://graph.microsoft.com/v1.0/teams/${team}/channels`, expect.objectContaining({ params: { '$top': 1, '$select': 'id,displayName,membershipType,createdDateTime,isArchived' } }));
       expect(http).not.toHaveProperty('post');
       expect(result).toMatchObject({ metadata: { source: 'microsoft_teams_metadata', teams: 1, channels: 1 }, nextCursor: '2026-07-10T00:00:00.000Z', hasMore: false });
-      expect(JSON.stringify(result.records)).not.toMatch(/Private team|Private channel|teams\.example|webUrl|description|email/);
+      expect(JSON.stringify(result.records)).not.toMatch(/Private team|Private channel|teams\.example|webUrl|description/);
       expect(result.records[1].name).not.toContain(privateEmail);
     } finally { if (previous.teams === undefined) delete process.env.SNEUP_TEAMS_MAX_TEAMS; else process.env.SNEUP_TEAMS_MAX_TEAMS = previous.teams; if (previous.channels === undefined) delete process.env.SNEUP_TEAMS_MAX_CHANNELS_PER_TEAM; else process.env.SNEUP_TEAMS_MAX_CHANNELS_PER_TEAM = previous.channels; if (previous.total === undefined) delete process.env.SNEUP_TEAMS_MAX_TOTAL_CHANNELS; else process.env.SNEUP_TEAMS_MAX_TOTAL_CHANNELS = previous.total; }
   });
@@ -4778,6 +4819,43 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES; process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES = '1';
     const capped = new GoogleChatWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { spaces: [{ name: 'spaces/AAAA1234', spaceType: 'SPACE' }], nextPageToken: 'next_page_2' } }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ connectorId: 'google_chat' })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES; else process.env.SNEUP_GOOGLE_CHAT_MAX_SPACES = previous; }
+  });
+
+  test('Figma sync reads bounded project and file metadata without design content, comments, users, thumbnails, URLs, versions, branches, or provider writes', async () => {
+    jest.dontMock('../src/services/figmaWorkSignalClient');
+    jest.resetModules();
+    const { FigmaWorkSignalClient } = require('../src/services/figmaWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { projects: [{ id: '1234567890', name: `Delivery ${privateEmail}`, description: 'Private project detail', url: 'https://figma.example.test/team/private' }] } })
+      .mockResolvedValueOnce({ data: { files: [{ key: 'AbCdEf1234', name: `Launch ${privateEmail}`, last_modified: '2026-07-12T12:00:00Z', thumbnail_url: 'https://figma.example.test/private.png', version: 'private-version', branch_data: { key: 'private' }, document: { children: ['private'] }, comments: ['private'] }] } }) };
+    const client = new FigmaWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'figma-access-token' })) } });
+    const previous = { projects: process.env.SNEUP_FIGMA_MAX_PROJECTS, files: process.env.SNEUP_FIGMA_MAX_FILES, perProject: process.env.SNEUP_FIGMA_MAX_FILES_PER_PROJECT };
+    process.env.SNEUP_FIGMA_MAX_PROJECTS = '1'; process.env.SNEUP_FIGMA_MAX_FILES = '1'; process.env.SNEUP_FIGMA_MAX_FILES_PER_PROJECT = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'figma', metadata: { fields: { figmaTeamId: '1234567890' } } }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://api.figma.com/v1/teams/1234567890/projects', expect.objectContaining({ headers: expect.objectContaining({ 'X-Figma-Token': 'figma-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://api.figma.com/v1/projects/1234567890/files', expect.objectContaining({ headers: expect.objectContaining({ 'X-Figma-Token': 'figma-access-token' }), maxRedirects: 0, proxy: false }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'figma_project_file_metadata', teamId: '1234567890', projects: 1, files: 1 }, nextCursor: '2026-07-12T12:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private project|figma\.example|thumbnail|version|branch|document|comments/);
+      expect(result.records[1].name).not.toContain(privateEmail);
+    } finally { if (previous.projects === undefined) delete process.env.SNEUP_FIGMA_MAX_PROJECTS; else process.env.SNEUP_FIGMA_MAX_PROJECTS = previous.projects; if (previous.files === undefined) delete process.env.SNEUP_FIGMA_MAX_FILES; else process.env.SNEUP_FIGMA_MAX_FILES = previous.files; if (previous.perProject === undefined) delete process.env.SNEUP_FIGMA_MAX_FILES_PER_PROJECT; else process.env.SNEUP_FIGMA_MAX_FILES_PER_PROJECT = previous.perProject; }
+  });
+
+  test('Figma sync requires a selected team and rejects invalid cursors, provider identifiers, and collection caps', async () => {
+    jest.dontMock('../src/services/figmaWorkSignalClient');
+    jest.resetModules();
+    const { FigmaWorkSignalClient } = require('../src/services/figmaWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ accessToken: 'figma-token' })) };
+    const invalid = new FigmaWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector });
+    await expect(invalid.fetchDelta({ metadata: { fields: {} } })).rejects.toMatchObject({ statusCode: 409 });
+    await expect(invalid.fetchDelta({ metadata: { fields: { figmaTeamId: '1234567890' } } }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new FigmaWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { projects: [{ id: 'https://127.0.0.1/steal' }] } }) }, accountConnectorService: accountConnector });
+    await expect(malformed.fetchDelta({ metadata: { fields: { figmaTeamId: '1234567890' } } })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = process.env.SNEUP_FIGMA_MAX_PROJECTS; process.env.SNEUP_FIGMA_MAX_PROJECTS = '1';
+    const capped = new FigmaWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { projects: [{ id: '1', name: 'One' }, { id: '2', name: 'Two' }] } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { figmaTeamId: '1234567890' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_FIGMA_MAX_PROJECTS; else process.env.SNEUP_FIGMA_MAX_PROJECTS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {

@@ -187,6 +187,29 @@ class AccountConnectorService {
     return this.sanitizeAccount(account);
   }
 
+  async selectFigmaTeam(accountId, figmaTeamId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireFigmaAccount(account);
+    const requestedTeamId = String(figmaTeamId || '').trim();
+    if (!/^\d{1,24}$/.test(requestedTeamId)) {
+      const error = new Error('A valid Figma team ID is required. Copy the numeric ID from the team URL in Figma.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: {
+        ...(account.metadata?.fields || {}),
+        figmaTeamId: requestedTeamId
+      }
+    };
+    account.status = 'connected';
+    account.lastError = undefined;
+    await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   getCatalog(filters = {}) {
     const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
     const filteredConnectors = this.filterConnectors(category, search);
@@ -587,6 +610,14 @@ class AccountConnectorService {
   requireResourceGuruAccount(account) {
     if (account.connectorId !== 'resource_guru') {
       const error = new Error('Resource Guru account selection is only available for Resource Guru connector accounts.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  requireFigmaAccount(account) {
+    if (account.connectorId !== 'figma') {
+      const error = new Error('Figma team configuration is only available for Figma connector accounts.');
       error.statusCode = 400;
       throw error;
     }

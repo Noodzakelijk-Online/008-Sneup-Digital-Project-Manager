@@ -362,15 +362,15 @@ const CONNECTORS = [
     id: 'figma',
     name: 'Figma',
     category: 'whiteboard_design',
-    description: 'Design files, projects, teams, comments, branches, prototypes, and design review status.',
+    description: 'Read-only bounded project and file metadata for one explicitly selected Figma team through a configured private OAuth app. Sneup excludes file content, nodes, comments, users, thumbnails, URLs, versions, branch data, and provider writes.',
     auth: oauth2({
       envPrefix: 'FIGMA',
       authorizationUrl: 'https://www.figma.com/oauth',
       tokenUrl: 'https://api.figma.com/v1/oauth/token',
-      scopes: ['files:read'],
-      docsUrl: 'https://www.figma.com/developers/api#oauth2'
+      scopes: ['projects:read'],
+      docsUrl: 'https://developers.figma.com/docs/rest-api/projects-endpoints/'
     }),
-    sync: ['files', 'projects', 'comments', 'users']
+    sync: ['projects', 'files']
   },
   {
     id: 'miro',

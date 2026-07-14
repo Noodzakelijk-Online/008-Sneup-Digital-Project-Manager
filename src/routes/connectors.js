@@ -228,6 +228,20 @@ router.post('/accounts/:accountId/resource-guru-account', requirePermission('con
   }
 });
 
+router.post('/accounts/:accountId/figma-team', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.selectFigmaTeam(
+      req.params.accountId,
+      req.body.figmaTeamId,
+      connectorRequestOptions(req)
+    );
+    res.json({ success: true, account });
+  } catch (error) {
+    logger.error('Failed to configure Figma team:', error);
+    sendError(res, error);
+  }
+});
+
 router.get('/:connectorId', (req, res) => {
   try {
     const connector = accountConnectorService.getConnectorDetails(req.params.connectorId);
