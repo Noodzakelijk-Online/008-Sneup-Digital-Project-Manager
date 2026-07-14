@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -37,6 +37,7 @@ const todoistWorkSignalClient = require('./todoistWorkSignalClient');
 const shortcutWorkSignalClient = require('./shortcutWorkSignalClient');
 const bitbucketWorkSignalClient = require('./bitbucketWorkSignalClient');
 const harvestWorkSignalClient = require('./harvestWorkSignalClient');
+const codaWorkSignalClient = require('./codaWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -618,6 +619,36 @@ harvestAdapter.capabilities.credentialBackedSync = true;
 harvestAdapter.list = async account => (await harvestWorkSignalClient.fetchDelta(account, null)).records;
 harvestAdapter.fetchDelta = (account, cursor) => harvestWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('harvest', harvestAdapter);
+
+const codaAdapter = buildAdapter('coda', 'Coda allowlisted table metadata adapter', (account, table) => ({
+  externalId: pick(table.externalId, table.id),
+  sourceType: 'document',
+  title: titleFromText(table.name, 'Coda table'),
+  description: '',
+  status: 'open',
+  priority: 'normal',
+  url: pick(table.url, table.browserLink),
+  owners: [],
+  labels: compact(['coda_table', table.documentId, table.tableType]),
+  providerCreatedAt: pick(table.createdAt),
+  providerUpdatedAt: pick(table.updatedAt, table.createdAt),
+  evidenceRefs: baseEvidence(account, table, 'Coda table metadata'),
+  raw: {
+    id: table.id,
+    documentId: table.documentId,
+    tableId: table.tableId,
+    name: table.name,
+    tableType: table.tableType,
+    rowCount: table.rowCount,
+    browserLink: table.browserLink,
+    createdAt: table.createdAt,
+    updatedAt: table.updatedAt
+  }
+}));
+codaAdapter.capabilities.credentialBackedSync = true;
+codaAdapter.list = async account => (await codaWorkSignalClient.fetchDelta(account, null)).records;
+codaAdapter.fetchDelta = (account, cursor) => codaWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('coda', codaAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

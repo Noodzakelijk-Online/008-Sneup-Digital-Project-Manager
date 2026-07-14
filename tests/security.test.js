@@ -69,6 +69,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/trelloWorkSignalClient');
     jest.dontMock('../src/services/jiraWorkSignalClient');
     jest.dontMock('../src/services/harvestWorkSignalClient');
+    jest.dontMock('../src/services/codaWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -3023,6 +3024,82 @@ describe('work signal normalization', () => {
       externalId: 'time_entry:71', sourceType: 'time_entry', title: 'Sneup - Connector delivery', description: '', status: 'done', priority: 'normal', owners: ['Robert'], labels: ['Noodzakelijk', 'Sneup', 'Connector delivery', 'billable', 'approved']
     });
     expect(JSON.stringify(normalized.raw)).not.toContain('Private detail');
+  });
+
+  test('Coda sync reads bounded table metadata from explicitly allowed documents without fetching rows or document content', async () => {
+    jest.dontMock('../src/services/codaWorkSignalClient');
+    jest.resetModules();
+    const { CodaWorkSignalClient } = require('../src/services/codaWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: { items: [{
+          id: 'grid-1', name: 'Release tracker', tableType: 'table', rowCount: 12,
+          browserLink: 'https://coda.io/d/Sneup_dDoc-A/#Release-tracker_tu1',
+          parent: { name: 'Sensitive delivery page' }, values: { status: 'Private row value' },
+          createdAt: '2026-07-10T09:00:00.000Z', updatedAt: '2026-07-10T12:00:00.000Z'
+        }], nextPageToken: 'more-tables' } })
+        .mockResolvedValueOnce({ data: { items: [{
+          id: 'grid-2', name: 'Risk register', tableType: 'view', rowCount: 3,
+          browserLink: 'https://coda.io/d/Sneup_dDoc-A/#Risks_tu2',
+          createdAt: '2026-07-11T09:00:00.000Z', updatedAt: '2026-07-11T10:00:00.000Z'
+        }] } })
+    };
+    const client = new CodaWorkSignalClient({
+      http,
+      now: () => new Date('2026-07-14T12:00:00.000Z'),
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'coda-token' })) }
+    });
+    const account = { connectorId: 'coda', metadata: { fields: { documentIds: 'Doc-A' } } };
+    const result = await client.fetchDelta(account, '2026-07-09T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://coda.io/apis/v1/docs/Doc-A/tables', expect.objectContaining({
+      params: { limit: 100 }, headers: expect.objectContaining({ Authorization: 'Bearer coda-token' })
+    }));
+    expect(http.get).toHaveBeenCalledWith('https://coda.io/apis/v1/docs/Doc-A/tables', expect.objectContaining({
+      params: { limit: 99, pageToken: 'more-tables' }
+    }));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/rows|columns|pages|buttons/i);
+    expect(JSON.stringify(result.records)).not.toContain('Private row value');
+    expect(JSON.stringify(result.records)).not.toContain('Sensitive delivery page');
+    expect(result).toMatchObject({ metadata: { source: 'coda_api', documents: 1, tables: 2, contentPolicy: 'allowlisted_document_table_metadata_only' }, hasMore: false, nextCursor: '2026-07-11T10:00:00.000Z' });
+    expect(result.records[0]).toMatchObject({ id: 'table:Doc-A:grid-1', documentId: 'Doc-A', tableId: 'grid-1', name: 'Release tracker', rowCount: 12 });
+  });
+
+  test('Coda sync fails closed without an explicit document allowlist or when a table cap would truncate metadata', async () => {
+    jest.dontMock('../src/services/codaWorkSignalClient');
+    jest.resetModules();
+    const { CodaWorkSignalClient } = require('../src/services/codaWorkSignalClient');
+    const noDocumentHttp = { get: jest.fn() };
+    const noDocumentClient = new CodaWorkSignalClient({ http: noDocumentHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'coda-token' })) } });
+    await expect(noDocumentClient.fetchDelta({ metadata: { fields: {} } })).rejects.toMatchObject({ statusCode: 400 });
+    expect(noDocumentHttp.get).not.toHaveBeenCalled();
+
+    const previousLimit = process.env.SNEUP_CODA_MAX_TABLES_PER_DOCUMENT;
+    process.env.SNEUP_CODA_MAX_TABLES_PER_DOCUMENT = '1';
+    const cappedHttp = { get: jest.fn().mockResolvedValue({ data: { items: [{ id: 'grid-1', name: 'One table' }], nextPageToken: 'more' } }) };
+    const cappedClient = new CodaWorkSignalClient({ http: cappedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'coda-token' })) } });
+    try {
+      await expect(cappedClient.fetchDelta({ metadata: { fields: { documentIds: 'Doc-A' } } })).rejects.toMatchObject({ statusCode: 413 });
+      expect(cappedHttp.get).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_CODA_MAX_TABLES_PER_DOCUMENT;
+      else process.env.SNEUP_CODA_MAX_TABLES_PER_DOCUMENT = previousLimit;
+    }
+  });
+
+  test('Coda adapter registers credential-backed document metadata normalization without retaining arbitrary content', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    expect(workSignalAdapterService.getAdapter('coda').capabilities.credentialBackedSync).toBe(true);
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'coda' }, {
+      id: 'table:Doc-A:grid-1', documentId: 'Doc-A', tableId: 'grid-1', name: 'Release tracker', tableType: 'table', rowCount: 12,
+      browserLink: 'https://coda.io/d/Sneup_dDoc-A/#Release-tracker_tu1', updatedAt: '2026-07-10T12:00:00.000Z', values: { private: 'No row data' }
+    });
+    expect(normalized).toMatchObject({
+      externalId: 'table:Doc-A:grid-1', sourceType: 'document', title: 'Release tracker', description: '', status: 'open', priority: 'normal', labels: ['coda_table', 'Doc-A', 'table']
+    });
+    expect(JSON.stringify(normalized.raw)).not.toContain('No row data');
   });
 
   test('projects provider signals into normalized work graph records', () => {
