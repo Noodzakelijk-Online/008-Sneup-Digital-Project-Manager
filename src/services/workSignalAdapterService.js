@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -100,6 +100,7 @@ const sharePointWorkSignalClient = require('./sharePointWorkSignalClient');
 const xeroWorkSignalClient = require('./xeroWorkSignalClient');
 const googleFormsWorkSignalClient = require('./googleFormsWorkSignalClient');
 const muralWorkSignalClient = require('./muralWorkSignalClient');
+const canvaWorkSignalClient = require('./canvaWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1358,6 +1359,12 @@ muralAdapter.capabilities.credentialBackedSync = true;
 muralAdapter.list = async account => (await muralWorkSignalClient.fetchDelta(account, null)).records;
 muralAdapter.fetchDelta = (account, cursor) => muralWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('mural', muralAdapter);
+
+const canvaAdapter = buildAdapter('canva', 'Canva bounded design metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: 'design', title: titleFromText(item.name, 'Canva design'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['canva', 'design']), dueAt: undefined, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt, evidenceRefs: baseEvidence(account, item, 'Canva design metadata'), raw: { id: item.id, sourceType: 'design', designId: item.designId, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+canvaAdapter.capabilities.credentialBackedSync = true;
+canvaAdapter.list = async account => (await canvaWorkSignalClient.fetchDelta(account, null)).records;
+canvaAdapter.fetchDelta = (account, cursor) => canvaWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('canva', canvaAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),

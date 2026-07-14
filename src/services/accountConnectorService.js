@@ -495,11 +495,13 @@ class AccountConnectorService {
     }
 
     const redirectUri = this.getRedirectUri(connector.id, options.baseUrl);
+    const pkceVerifier = connector.auth.pkce ? this.createPkceVerifier() : undefined;
     const state = this.createState({
       connectorId: connector.id,
       returnTo: this.sanitizeReturnTo(options.returnTo),
       workspaceId: String(this.resolveWorkspaceId(options.workspaceId)),
-      consent: this.createConsentEvidence(connector, options)
+      consent: this.createConsentEvidence(connector, options),
+      pkce: pkceVerifier ? this.encryptStateValue(pkceVerifier) : undefined
     });
 
     const authUrl = new URL(connector.auth.authorizationUrl);
@@ -514,6 +516,10 @@ class AccountConnectorService {
     }
     if (connector.auth.audience) {
       authUrl.searchParams.set('audience', connector.auth.audience);
+    }
+    if (pkceVerifier) {
+      authUrl.searchParams.set('code_challenge', crypto.createHash('sha256').update(pkceVerifier).digest('base64url'));
+      authUrl.searchParams.set('code_challenge_method', 'S256');
     }
     Object.entries(connector.auth.extraAuthParams || {}).forEach(([key, value]) => {
       authUrl.searchParams.set(key, value);
@@ -560,7 +566,8 @@ class AccountConnectorService {
       throw error;
     }
 
-    const tokenResponse = await this.exchangeCodeForToken(connector, query.code, options.baseUrl);
+    const pkceVerifier = connector.auth.pkce ? this.decryptStateValue(state.pkce) : undefined;
+    const tokenResponse = await this.exchangeCodeForToken(connector, query.code, options.baseUrl, pkceVerifier);
     const account = await this.saveOAuthAccount(connector, tokenResponse, {
       workspaceId: state.workspaceId || options.workspaceId,
       consent: state.consent
@@ -1061,7 +1068,7 @@ class AccountConnectorService {
     return this.sanitizeAccount(account);
   }
 
-  async exchangeCodeForToken(connector, code, baseUrl) {
+  async exchangeCodeForToken(connector, code, baseUrl, pkceVerifier) {
     const config = this.getOAuthEnvironment(connector);
     const redirectUri = this.getRedirectUri(connector.id, baseUrl);
     const body = new URLSearchParams();
@@ -1069,6 +1076,14 @@ class AccountConnectorService {
     body.set('code', code);
     body.set('redirect_uri', redirectUri);
     body.set('client_id', config.clientId);
+    if (connector.auth.pkce) {
+      if (!/^[A-Za-z0-9._~-]{43,128}$/.test(String(pkceVerifier || ''))) {
+        const error = new Error('OAuth PKCE verifier is missing or invalid. Start the connector authorization again.');
+        error.statusCode = 400;
+        throw error;
+      }
+      body.set('code_verifier', pkceVerifier);
+    }
 
     const headers = {
       Accept: 'application/json',
@@ -1419,6 +1434,33 @@ class AccountConnectorService {
     const encoded = Buffer.from(JSON.stringify(statePayload)).toString('base64url');
     const signature = this.sign(encoded);
     return `${encoded}.${signature}`;
+  }
+
+  createPkceVerifier() {
+    return crypto.randomBytes(64).toString('base64url');
+  }
+
+  encryptStateValue(value) {
+    const iv = crypto.randomBytes(12);
+    const key = crypto.createHash('sha256').update(this.getStateSecret()).digest();
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
+    return `${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${encrypted.toString('base64url')}`;
+  }
+
+  decryptStateValue(value) {
+    try {
+      const [ivValue, tagValue, encryptedValue, ...extra] = String(value || '').split('.');
+      if (extra.length || !ivValue || !tagValue || !encryptedValue) throw new Error('invalid state encryption envelope');
+      const key = crypto.createHash('sha256').update(this.getStateSecret()).digest();
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivValue, 'base64url'));
+      decipher.setAuthTag(Buffer.from(tagValue, 'base64url'));
+      return Buffer.concat([decipher.update(Buffer.from(encryptedValue, 'base64url')), decipher.final()]).toString('utf8');
+    } catch (_error) {
+      const error = new Error('OAuth PKCE state is missing or invalid. Start the connector authorization again.');
+      error.statusCode = 400;
+      throw error;
+    }
   }
 
   verifyState(state) {

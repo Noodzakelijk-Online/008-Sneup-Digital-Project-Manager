@@ -233,6 +233,8 @@ Google Forms is available as a separate Google OAuth connection with `drive.meta
 
 Mural is available as a separate OAuth connection with `workspaces:read` and `murals:read`. Sneup requires the user to select one currently authorized workspace, then makes one capped request for active mural metadata. It retains only redacted mural names, opaque identifiers, and timestamps; mural content, widgets, comments, templates, rooms, people, URLs, sharing details, and provider writes are excluded.
 
+Canva is available as a separate PKCE OAuth connection with `design:meta:read`. Sneup stores each one-time PKCE verifier encrypted inside its signed server state, then makes one capped design-metadata request. It retains only redacted design names, opaque identifiers, and timestamps; design content, pages, thumbnails, temporary links, owners, folders, assets, comments, approvals, and provider writes are excluded.
+
 SurveyMonkey is available with a View Surveys access token. Sneup makes one bounded survey-list GET and retains only redacted survey title and ID. It excludes questions, responses, collectors, contacts, links, and provider writes.
 
 Google Drive is available as a separate metadata-only Google OAuth connection. Sneup reads one bounded user-Drive page, rejects incomplete pagination, and retains only redacted file or folder names plus timestamps. It excludes file content, web URLs, permissions, owners, shared drives, and provider writes.
