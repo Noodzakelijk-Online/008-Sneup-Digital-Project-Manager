@@ -297,6 +297,22 @@ const enhancements = [
       'The suppression window never executes a provider write or relaxes approval requirements.',
       'Manual requests remain distinct from scheduled signal suppression.'
     ]
+  },
+  {
+    id: 'ENH-019',
+    priority: 'P1',
+    area: 'operations',
+    title: 'Make scheduled follow-up transitions durable and auditable',
+    evidence: 'The scheduled worker now atomically moves overdue workspace-scoped follow-up plans from scheduled to due and writes an audit event. Legacy intervention follow-up and escalation candidate scans are workspace-scoped and only record their queued state after a successful approval-gated candidate path.',
+    impact: 'Gives operators a durable lifecycle trail while preventing one workspace from processing another workspace\'s queued work or a transient failure from silently suppressing a retry.',
+    effort: 'S',
+    status: 'done',
+    nextStep: 'Add configurable, workspace-scoped escalation timing policies with bounded defaults.',
+    acceptanceCriteria: [
+      'Overdue scheduled follow-up plans transition to due once and include audit evidence.',
+      'Scheduled intervention follow-up and escalation scans stay within the requested workspace.',
+      'A failed candidate path leaves the original intervention eligible for a later safe retry.'
+    ]
   }
 ];
 

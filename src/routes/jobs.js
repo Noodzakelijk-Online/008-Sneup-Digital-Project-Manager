@@ -108,15 +108,23 @@ const manualJobHandlers = {
   'interventions.follow_ups': {
     jobType: 'intervention',
     run: async () => {
-      await interventionEngine.processFollowUps();
-      return { processedCount: 1, successCount: 1, failureCount: 0 };
+      const workspaceId = getDefaultWorkspaceObjectId();
+      const ledgerResult = await operationsLedgerService.processDueFollowUps({ workspaceId });
+      const queuedInterventions = await interventionEngine.processFollowUps({ workspaceId });
+      return {
+        processedCount: ledgerResult.markedDue + queuedInterventions.length,
+        successCount: 1,
+        failureCount: 0
+      };
     }
   },
   'interventions.escalations': {
     jobType: 'intervention',
     run: async () => {
-      await interventionEngine.processEscalations();
-      return { processedCount: 1, successCount: 1, failureCount: 0 };
+      const queuedInterventions = await interventionEngine.processEscalations({
+        workspaceId: getDefaultWorkspaceObjectId()
+      });
+      return { processedCount: queuedInterventions.length, successCount: 1, failureCount: 0 };
     }
   },
   'performance.daily': {

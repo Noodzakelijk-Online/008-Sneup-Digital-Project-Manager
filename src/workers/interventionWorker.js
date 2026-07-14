@@ -1,6 +1,7 @@
 const schedule = require('node-schedule');
 const logger = require('../utils/logger');
 const interventionEngine = require('../services/interventionEngine');
+const operationsLedgerService = require('../services/operationsLedgerService');
 const Board = require('../models/Board');
 const jobObservabilityService = require('../services/jobObservabilityService');
 const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId } = require('../services/workspaceScopeService');
@@ -89,9 +90,11 @@ class InterventionWorker {
   async processFollowUps() {
     try {
       logger.info('Processing follow-ups...');
-      await interventionEngine.processFollowUps();
+      const workspaceId = getDefaultWorkspaceObjectId();
+      const ledgerResult = await operationsLedgerService.processDueFollowUps({ workspaceId });
+      const queuedInterventions = await interventionEngine.processFollowUps({ workspaceId });
       return {
-        processedCount: 1,
+        processedCount: ledgerResult.markedDue + queuedInterventions.length,
         successCount: 1,
         failureCount: 0
       };
@@ -105,9 +108,11 @@ class InterventionWorker {
   async processEscalations() {
     try {
       logger.info('Processing escalations...');
-      await interventionEngine.processEscalations();
+      const queuedInterventions = await interventionEngine.processEscalations({
+        workspaceId: getDefaultWorkspaceObjectId()
+      });
       return {
-        processedCount: 1,
+        processedCount: queuedInterventions.length,
         successCount: 1,
         failureCount: 0
       };

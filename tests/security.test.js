@@ -5215,6 +5215,89 @@ describe('follow-up accountability', () => {
       expect.objectContaining({ $match: expect.objectContaining({ workspaceId }) })
     ]));
   });
+
+  test('marks overdue scheduled follow-ups due with workspace-scoped audit evidence', async () => {
+    jest.resetModules();
+
+    const workspaceId = new mongoose.Types.ObjectId();
+    const followUpId = new mongoose.Types.ObjectId();
+    const recommendationId = new mongoose.Types.ObjectId();
+    const boardId = new mongoose.Types.ObjectId();
+    const cardId = new mongoose.Types.ObjectId();
+    const memberId = new mongoose.Types.ObjectId();
+    const candidate = {
+      _id: followUpId,
+      workspaceId,
+      recommendationId,
+      boardId,
+      cardId,
+      memberId,
+      dueAt: new Date('2026-07-14T09:00:00.000Z')
+    };
+    const dueFollowUp = { ...candidate, status: 'due' };
+    const findChain = {
+      sort: jest.fn(() => findChain),
+      limit: jest.fn().mockResolvedValue([candidate])
+    };
+    const findOneAndUpdate = jest.fn().mockResolvedValue(dueFollowUp);
+    const auditCreate = jest.fn().mockResolvedValue({ _id: new mongoose.Types.ObjectId() });
+
+    jest.doMock('mongoose', () => ({ ...mongoose, connection: { readyState: 1 } }));
+    jest.doMock('../src/models/FollowUpPlan', () => ({
+      find: jest.fn(() => findChain),
+      findOneAndUpdate
+    }));
+    jest.doMock('../src/models/AuditEvent', () => ({ create: auditCreate }));
+    [
+      '../src/models/Recommendation',
+      '../src/models/Approval',
+      '../src/models/TrelloActionAttempt',
+      '../src/models/DecisionQueueItem',
+      '../src/models/WorkerResponse',
+      '../src/models/Intervention',
+      '../src/models/CardFinding',
+      '../src/models/BoardHealthSnapshot',
+      '../src/models/Board',
+      '../src/models/Card',
+      '../src/models/Member',
+      '../src/models/WorkItem'
+    ].forEach((modelPath) => jest.doMock(modelPath, () => ({})));
+    jest.doMock('../src/services/trelloClient', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn((value) => value || workspaceId)
+    }));
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const result = await operationsLedgerService.processDueFollowUps({
+      workspaceId,
+      now: '2026-07-14T10:00:00.000Z',
+      actor: 'scheduler'
+    });
+
+    expect(result).toEqual({ scannedCount: 1, markedDue: 1, skippedCount: 0 });
+    expect(findOneAndUpdate).toHaveBeenCalledWith({
+      _id: followUpId,
+      workspaceId,
+      status: 'scheduled'
+    }, {
+      $set: { status: 'due' }
+    }, {
+      new: true
+    });
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+      entityType: 'follow_up_plan',
+      action: 'follow_up_due',
+      actor: 'scheduler',
+      afterState: expect.objectContaining({
+        workspaceId,
+        boardId,
+        cardId,
+        memberId,
+        status: 'due'
+      })
+    }));
+  });
 });
 
 describe('autopilot command approval queue', () => {

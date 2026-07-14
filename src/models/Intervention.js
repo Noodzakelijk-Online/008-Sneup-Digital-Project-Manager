@@ -101,6 +101,11 @@ const interventionSchema = new mongoose.Schema({
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Member'
     },
+    queuedAt: Date,
+    queuedInterventionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Intervention'
+    },
     reason: String
   },
   outcome: {
@@ -136,30 +141,36 @@ interventionSchema.statics.getPending = function() {
 };
 
 // Get interventions needing follow-up
-interventionSchema.statics.getNeedingFollowUp = function() {
+interventionSchema.statics.getNeedingFollowUp = function(options = {}) {
   const followUpThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours
-  
-  return this.find({
+  const query = {
     status: 'executed',
     type: { $in: ['comment', 'follow_up'] },
     'response.respondedAt': { $exists: false },
+    followUpInterventionId: { $exists: false },
     executedAt: { $lt: followUpThreshold }
-  })
+  };
+  if (options.workspaceId) query.workspaceId = options.workspaceId;
+
+  return this.find(query)
     .sort({ severity: -1, executedAt: 1 })
     .populate('boardId cardId memberId');
 };
 
 // Get interventions needing escalation
-interventionSchema.statics.getNeedingEscalation = function() {
+interventionSchema.statics.getNeedingEscalation = function(options = {}) {
   const escalationThreshold = new Date(Date.now() - 48 * 60 * 60 * 1000); // 48 hours
-  
-  return this.find({
+  const query = {
     status: 'executed',
     'escalation.escalated': false,
+    'escalation.queuedAt': { $exists: false },
     'response.respondedAt': { $exists: false },
     executedAt: { $lt: escalationThreshold },
     severity: { $in: ['high', 'critical'] }
-  })
+  };
+  if (options.workspaceId) query.workspaceId = options.workspaceId;
+
+  return this.find(query)
     .sort({ severity: -1, executedAt: 1 })
     .populate('boardId cardId memberId');
 };

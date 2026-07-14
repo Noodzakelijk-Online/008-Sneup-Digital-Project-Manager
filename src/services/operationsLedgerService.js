@@ -1839,6 +1839,60 @@ class OperationsLedgerService {
       .limit(filters.limit || 100);
   }
 
+  async processDueFollowUps(filters = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(filters.workspaceId);
+    const now = filters.now ? new Date(filters.now) : new Date();
+    const referenceNow = Number.isNaN(now.getTime()) ? new Date() : now;
+    const limit = boundedInteger(filters.limit, 100, 1, 250);
+    const candidates = await FollowUpPlan.find({
+      workspaceId,
+      status: 'scheduled',
+      dueAt: { $lte: referenceNow }
+    })
+      .sort({ dueAt: 1, createdAt: 1 })
+      .limit(limit);
+
+    let markedDue = 0;
+    for (const candidate of candidates) {
+      const followUp = await FollowUpPlan.findOneAndUpdate({
+        _id: candidate._id,
+        workspaceId,
+        status: 'scheduled'
+      }, {
+        $set: { status: 'due' }
+      }, {
+        new: true
+      });
+      if (!followUp) continue;
+
+      markedDue += 1;
+      await this.recordAudit({
+        entityType: 'follow_up_plan',
+        entityId: followUp._id,
+        action: 'follow_up_due',
+        actor: filters.actor || 'sneup',
+        source: 'worker',
+        riskLevel: 'low',
+        recommendationId: followUp.recommendationId,
+        afterState: {
+          workspaceId: followUp.workspaceId,
+          boardId: followUp.boardId,
+          cardId: followUp.cardId,
+          memberId: followUp.memberId,
+          status: followUp.status,
+          dueAt: followUp.dueAt
+        }
+      });
+    }
+
+    return {
+      scannedCount: candidates.length,
+      markedDue,
+      skippedCount: candidates.length - markedDue
+    };
+  }
+
   async resolveFollowUp(followUpId, body = {}) {
     this.requireDatabase();
     const followUp = await FollowUpPlan.findOne(this.workspaceQuery(body, { _id: followUpId }));

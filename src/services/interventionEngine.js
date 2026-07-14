@@ -482,9 +482,11 @@ class InterventionEngine {
   }
 
   // Process follow-ups for interventions that didn't get responses
-  async processFollowUps() {
+  async processFollowUps(options = {}) {
     try {
-      const needingFollowUp = await Intervention.getNeedingFollowUp();
+      const workspaceId = options.workspaceId ? normalizeWorkspaceObjectId(options.workspaceId) : undefined;
+      const needingFollowUp = await Intervention.getNeedingFollowUp({ workspaceId });
+      const queuedFollowUps = [];
 
       for (const intervention of needingFollowUp) {
         // Create follow-up intervention
@@ -501,21 +503,28 @@ class InterventionEngine {
           metadata: { originalInterventionId: intervention._id }
         });
 
-        await this.executeIntervention(followUp);
+        const followUpResult = await this.executeIntervention(followUp);
+        if (followUpResult?.error) continue;
+
         intervention.followUpInterventionId = followUp._id;
         await intervention.save();
+        queuedFollowUps.push(followUp);
       }
 
-      logger.info(`Processed ${needingFollowUp.length} follow-ups`);
+      logger.info(`Queued ${queuedFollowUps.length} of ${needingFollowUp.length} follow-ups`);
+      return queuedFollowUps;
     } catch (error) {
       logger.error('Failed to process follow-ups:', error);
+      return [];
     }
   }
 
   // Process escalations for interventions that still didn't get responses
-  async processEscalations() {
+  async processEscalations(options = {}) {
     try {
-      const needingEscalation = await Intervention.getNeedingEscalation();
+      const workspaceId = options.workspaceId ? normalizeWorkspaceObjectId(options.workspaceId) : undefined;
+      const needingEscalation = await Intervention.getNeedingEscalation({ workspaceId });
+      const queuedEscalations = [];
 
       for (const intervention of needingEscalation) {
         // Create escalation intervention
@@ -532,12 +541,23 @@ class InterventionEngine {
           metadata: { originalInterventionId: intervention._id }
         });
 
-        await this.executeIntervention(escalation);
+        const escalationResult = await this.executeIntervention(escalation);
+        if (escalationResult?.error) continue;
+
+        intervention.escalation = {
+          ...(intervention.escalation || {}),
+          queuedAt: new Date(),
+          queuedInterventionId: escalation._id
+        };
+        await intervention.save();
+        queuedEscalations.push(escalation);
       }
 
-      logger.info(`Processed ${needingEscalation.length} escalations`);
+      logger.info(`Queued ${queuedEscalations.length} of ${needingEscalation.length} escalations`);
+      return queuedEscalations;
     } catch (error) {
       logger.error('Failed to process escalations:', error);
+      return [];
     }
   }
 }
