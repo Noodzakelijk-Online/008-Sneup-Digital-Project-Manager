@@ -45,7 +45,7 @@ const workerResponseSchema = new mongoose.Schema({
   },
   source: {
     type: String,
-    enum: ['trello_comment', 'api', 'manual', 'system'],
+    enum: ['trello_comment', 'slack', 'email', 'web_chat', 'api', 'manual', 'system'],
     default: 'api'
   }
 }, {

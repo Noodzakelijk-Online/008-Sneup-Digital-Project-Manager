@@ -299,6 +299,7 @@ Datadog uses an API key plus an application key limited to `monitors_read` and `
 - `POST /api/jobs/:jobName/resume` - Resume a paused background job
 - `POST /api/jobs/:jobName/trigger` - Manually trigger an allowlisted safe job
 - `POST /api/interventions/:interventionId/record-response` - Record worker response to an intervention
+- `POST /api/chat/message` - Record card-specific completed, blocked, or needs-help chat updates against an already executed matching communication intervention; generic chat never closes a follow-up
 
 ### Webhooks
 

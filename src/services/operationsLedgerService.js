@@ -25,6 +25,8 @@ const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 const HOURS = 60 * 60 * 1000;
 const DEFAULT_RECONCILIATION_WARNING_HOURS = 4;
 const DEFAULT_RECONCILIATION_CRITICAL_HOURS = 24;
+const CHAT_RESPONSE_TYPES = new Set(['acknowledged', 'completed', 'blocked', 'needs_help']);
+const WORKER_RESPONSE_SOURCES = new Set(['trello_comment', 'slack', 'email', 'web_chat', 'api', 'manual', 'system']);
 
 const resolveSnoozedUntil = ({ snoozedUntil, defaultSnoozeHours, now = new Date() } = {}) => {
   const currentTime = now instanceof Date ? now : new Date(now);
@@ -54,6 +56,14 @@ const boundedInteger = (value, fallback, minimum, maximum) => {
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(minimum, Math.min(maximum, parsed));
 };
+
+const normalizeWorkerResponseText = (value) => {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  return text ? text.slice(0, 2000) : undefined;
+};
+
+const normalizeWorkerResponseSource = (value) => WORKER_RESPONSE_SOURCES.has(value) ? value : 'api';
 
 const getOutcomeRecordModel = () => require('../models/OutcomeRecord');
 const getListModel = () => require('../models/List');
@@ -2036,6 +2046,7 @@ class OperationsLedgerService {
   async recordWorkerResponse(body = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(body.workspaceId);
+    const responseText = normalizeWorkerResponseText(body.responseText);
     const response = await WorkerResponse.create({
       workspaceId,
       recommendationId: body.recommendationId,
@@ -2043,15 +2054,15 @@ class OperationsLedgerService {
       boardId: body.boardId,
       cardId: body.cardId,
       memberId: body.memberId,
-      responseText: body.responseText,
+      responseText,
       responseType: body.responseType || 'other',
-      source: body.source || 'api'
+      source: normalizeWorkerResponseSource(body.source)
     });
 
     if (body.interventionId) {
       const intervention = await Intervention.findOne({ _id: body.interventionId, workspaceId });
       if (intervention && body.memberId) {
-        await intervention.recordResponse(body.memberId, body.responseText, body.responseType || 'other');
+        await intervention.recordResponse(body.memberId, responseText, body.responseType || 'other');
       }
     }
 
@@ -2085,6 +2096,62 @@ class OperationsLedgerService {
     }
 
     return response;
+  }
+
+  async recordChatWorkerResponse(body = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(body.workspaceId);
+    const responseType = body.responseType;
+    const responseText = normalizeWorkerResponseText(body.responseText);
+
+    if (!body.memberId || !body.cardId || !CHAT_RESPONSE_TYPES.has(responseType) || !responseText) {
+      return { recorded: false, reason: 'missing_exact_chat_response_context' };
+    }
+
+    const intervention = await Intervention.findOne({
+      workspaceId,
+      memberId: body.memberId,
+      cardId: body.cardId,
+      type: { $in: ['comment', 'follow_up', 'escalate'] },
+      status: 'executed',
+      'response.respondedAt': { $exists: false }
+    }).sort({ executedAt: -1, createdAt: -1 });
+
+    if (!intervention) {
+      return { recorded: false, reason: 'no_matching_executed_intervention' };
+    }
+
+    let recommendation = await Recommendation.findOne({
+      workspaceId,
+      interventionId: intervention._id
+    }).sort({ createdAt: -1 });
+
+    if (!recommendation && intervention.metadata?.recommendationId) {
+      recommendation = await Recommendation.findOne({
+        _id: intervention.metadata.recommendationId,
+        workspaceId
+      });
+    }
+
+    const response = await this.recordWorkerResponse({
+      workspaceId,
+      recommendationId: recommendation?._id,
+      interventionId: intervention._id,
+      boardId: intervention.boardId,
+      cardId: intervention.cardId,
+      memberId: intervention.memberId,
+      responseText,
+      responseType,
+      source: normalizeWorkerResponseSource(body.source),
+      actor: body.actor || `worker:${String(body.memberId)}`
+    });
+
+    return {
+      recorded: true,
+      response,
+      interventionId: intervention._id,
+      recommendationId: recommendation?._id
+    };
   }
 
   async resolveFollowUpsForWorkerResponse(response, body = {}) {

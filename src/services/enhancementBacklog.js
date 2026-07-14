@@ -59,11 +59,11 @@ const enhancements = [
     priority: 'P1',
     area: 'trust',
     title: 'Attach evidence and source citations to every recommendation',
-    evidence: 'Recommendations preserve sourceEvidence, `/api/recommendations/:recommendationId/evidence` returns source refs plus decisions, approvals, Trello attempts, audit events, follow-ups, worker responses, and related findings, mission-control command/focus/risk/chat payloads now carry sourceEvidence, and the dashboard renders validated HTTPS source links, response-text-free worker accountability, and minimum-evidence outcome verification wherever an upstream card or provider object exposes one.',
+    evidence: 'Recommendations preserve sourceEvidence, `/api/recommendations/:recommendationId/evidence` returns source refs plus decisions, approvals, Trello attempts, audit events, follow-ups, worker responses, and related findings, mission-control command/focus/risk/chat payloads now carry sourceEvidence, and card-specific completed, blocked, and needs-help chat updates become worker-response evidence only when the same workspace, worker, and card have an unanswered executed communication intervention. The dashboard renders validated HTTPS source links, response-text-free worker accountability, and minimum-evidence outcome verification wherever an upstream card or provider object exposes one.',
     impact: 'Makes Sneup defensible: humans can inspect why a recommendation exists before trusting it.',
     effort: 'M',
     status: 'in-progress',
-    nextStep: 'Add source drilldowns to future chat and notification surfaces, retaining the same validated provider-link policy.',
+    nextStep: 'Add source drilldowns to notification history, retaining the same validated provider-link policy.',
     acceptanceCriteria: [
       'Each recommendation links to source cards, comments, commits, messages, documents, or analytics snapshots.',
       'The dashboard shows source count and newest evidence timestamp.',
@@ -364,6 +364,22 @@ const enhancements = [
       'Provider credentials and request configuration are redacted before Winston serializes them.',
       'Chat message content is not written to application logs.',
       'Diagnostic error name, status, and code remain available without raw request content.'
+    ]
+  },
+  {
+    id: 'ENH-023',
+    priority: 'P1',
+    area: 'operations',
+    title: 'Capture matched worker chat updates in the operating ledger',
+    evidence: 'Completed, blocked, and needs-help chat updates now become bounded WorkerResponse records only when they match an unanswered executed comment, follow-up, or escalation for the same workspace, worker, and card. The linked recommendation, intervention, follow-up outcome, and audit trail update without any provider write; generic or ambiguous chat remains unlinked.',
+    impact: 'Closes the accountability loop automatically while preventing generic worker conversation from silently resolving unrelated follow-ups.',
+    effort: 'S',
+    status: 'done',
+    nextStep: 'Add a reviewed inbound-chat connector path that supplies the same exact workspace, worker, card, and source constraints.',
+    acceptanceCriteria: [
+      'A card-specific chat update can update the matching executed intervention and follow-up evidence.',
+      'Unmatched or context-free chat does not close a ledger item.',
+      'Chat ingestion never sends a provider write.'
     ]
   }
 ];

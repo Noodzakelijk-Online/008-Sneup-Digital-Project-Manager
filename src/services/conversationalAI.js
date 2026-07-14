@@ -7,6 +7,7 @@ const Card = require('../models/Card');
 const Performance = require('../models/Performance');
 const performanceTracker = require('./performanceTracker');
 const teamManager = require('./teamManager');
+const operationsLedgerService = require('./operationsLedgerService');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 class ConversationalAI {
@@ -88,7 +89,10 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
       await conversation.addMessage('assistant', response);
 
       // Execute any actions if needed
-      await this.executeActions(intent, member, response, cardId, { workspaceId });
+      const actionResult = await this.executeActions(intent, member, message, cardId, {
+        workspaceId,
+        channel
+      });
 
       logger.info('Generated worker chat response', {
         event: 'worker_chat_response_generated',
@@ -101,7 +105,8 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
         response,
         conversation: conversation._id,
         intent,
-        sourceEvidence
+        sourceEvidence,
+        workerResponse: actionResult.workerResponse || null
       };
     } catch (error) {
       logger.error('Failed to process message:', error);
@@ -444,8 +449,9 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
   }
 
   // Execute actions based on intent
-  async executeActions(intent, member, response, cardId, options = {}) {
+  async executeActions(intent, member, message, cardId, options = {}) {
     const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || member.workspaceId || getDefaultWorkspaceObjectId());
+    const result = { workerResponse: null };
     try {
       switch (intent) {
         case 'request_reassignment':
@@ -453,31 +459,66 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
           if (member.boards && member.boards.length > 0) {
             await teamManager.analyzeTeamWorkload(member.boards[0]._id || member.boards[0], { workspaceId });
           }
-          break;
+          return result;
         
         case 'report_blocker':
-          // Add BLOCKED label to card if specified
           if (cardId) {
-            const card = await Card.findOne({ _id: cardId, workspaceId });
-            if (card) {
-              // This would be handled by intervention engine
-              logger.info('Worker reported a blocker in chat', {
-                event: 'worker_chat_blocker_reported',
-                memberId: String(member._id),
-                cardId: String(cardId)
-              });
-            }
+            result.workerResponse = await operationsLedgerService.recordChatWorkerResponse({
+              workspaceId,
+              memberId: member._id,
+              cardId,
+              responseText: message,
+              responseType: 'blocked',
+              source: options.channel,
+              actor: `worker:${String(member._id)}`
+            });
+            logger.info('Worker reported a blocker in chat', {
+              event: 'worker_chat_blocker_reported',
+              memberId: String(member._id),
+              cardId: String(cardId),
+              responseRecorded: result.workerResponse.recorded
+            });
           }
-          break;
+          return result;
         
         case 'provide_update':
-          // Mark any pending interventions as responded
-          logger.info(`Member ${member.username} provided update`);
-          break;
+          if (cardId) {
+            result.workerResponse = await operationsLedgerService.recordChatWorkerResponse({
+              workspaceId,
+              memberId: member._id,
+              cardId,
+              responseText: message,
+              responseType: 'completed',
+              source: options.channel,
+              actor: `worker:${String(member._id)}`
+            });
+          }
+          logger.info('Worker provided a chat update', {
+            event: 'worker_chat_update_received',
+            memberId: String(member._id),
+            hasCardContext: Boolean(cardId),
+            responseRecorded: Boolean(result.workerResponse?.recorded)
+          });
+          return result;
+
+        case 'ask_for_help':
+          if (cardId) {
+            result.workerResponse = await operationsLedgerService.recordChatWorkerResponse({
+              workspaceId,
+              memberId: member._id,
+              cardId,
+              responseText: message,
+              responseType: 'needs_help',
+              source: options.channel,
+              actor: `worker:${String(member._id)}`
+            });
+          }
+          return result;
       }
     } catch (error) {
       logger.error('Failed to execute actions:', error);
     }
+    return result;
   }
 
   // Handle common queries with quick responses
@@ -534,4 +575,7 @@ Remember: You're here to help workers succeed while ensuring projects stay on tr
   }
 }
 
-module.exports = new ConversationalAI();
+const conversationalAI = new ConversationalAI();
+
+module.exports = conversationalAI;
+module.exports.ConversationalAI = ConversationalAI;
