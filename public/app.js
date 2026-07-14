@@ -41,6 +41,8 @@ const state = {
   reports: [],
   forecast: null,
   loadedViews: new Set(),
+  viewLoads: new Map(),
+  connectorRequest: null,
   ledger: {
     decisions: [],
     recommendations: [],
@@ -346,8 +348,17 @@ function markDeferredViewCounts() {
 async function loadView(viewName, options = {}) {
   const loader = viewLoaders[viewName];
   if (!loader || (!options.force && state.loadedViews.has(viewName))) return;
-  await loader();
-  state.loadedViews.add(viewName);
+
+  // Repeated navigation and refresh clicks should share an in-progress view load.
+  const inFlight = state.viewLoads.get(viewName);
+  if (inFlight) return inFlight;
+
+  const load = Promise.resolve()
+    .then(loader)
+    .then(() => state.loadedViews.add(viewName))
+    .finally(() => state.viewLoads.delete(viewName));
+  state.viewLoads.set(viewName, load);
+  return load;
 }
 
 async function loadAll(options = {}) {
@@ -732,6 +743,10 @@ async function loadJobDashboard() {
 }
 
 async function loadConnectors({ append = false } = {}) {
+  if (state.connectorRequest) state.connectorRequest.abort();
+  const request = new AbortController();
+  state.connectorRequest = request;
+
   try {
     const offset = append ? state.connectors.length : 0;
     const query = new URLSearchParams({
@@ -741,7 +756,8 @@ async function loadConnectors({ append = false } = {}) {
     if (state.category !== 'all') query.set('category', state.category);
     if (state.search) query.set('search', state.search);
 
-    const data = await fetchApi(`/api/connectors?${query}`);
+    const data = await fetchApi(`/api/connectors?${query}`, { signal: request.signal });
+    if (state.connectorRequest !== request) return;
     const connectors = data.connectors || [];
     state.connectors = append ? [...state.connectors, ...connectors] : connectors;
     state.categories = data.categories || [];
@@ -752,7 +768,10 @@ async function loadConnectors({ append = false } = {}) {
     state.connectorSyncReadiness = data.syncReadiness || null;
     renderConnectors();
   } catch (error) {
+    if (error.name === 'AbortError' || state.connectorRequest !== request) return;
     els.connectorGrid.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  } finally {
+    if (state.connectorRequest === request) state.connectorRequest = null;
   }
 }
 

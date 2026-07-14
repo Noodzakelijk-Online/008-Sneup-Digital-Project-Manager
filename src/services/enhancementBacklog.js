@@ -323,7 +323,7 @@ const enhancements = [
     priority: 'P2',
     area: 'resource',
     title: 'Load command-center data only when its view is opened',
-    evidence: 'The initial overview no longer fans out to every hidden dashboard view. Sneup loads the overview, operations brief, and job health immediately, then loads each ledger, connector, signal, forecast, report, and workspace surface on demand. Explicit refreshes and workspace changes invalidate the cache so operators always receive fresh scoped data.',
+    evidence: 'The initial overview no longer fans out to every hidden dashboard view. Sneup loads the overview, operations brief, and job health immediately, then loads each ledger, connector, signal, forecast, report, and workspace surface on demand. Repeated navigation or refresh clicks share an in-progress view load, and a newer connector catalog request cancels the superseded request before it can consume more work or render stale results. Explicit refreshes and workspace changes invalidate the cache so operators always receive fresh scoped data.',
     impact: 'Cuts avoidable initial API and database work while keeping each view responsive when Robert opens it.',
     effort: 'S',
     status: 'done',
