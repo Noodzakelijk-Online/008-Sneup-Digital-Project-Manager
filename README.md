@@ -208,6 +208,8 @@ Microsoft Planner uses a dedicated Microsoft OAuth account with `Tasks.Read` onl
 
 YouTrack uses a permanent token and a public HTTPS base URL. It makes only paginated `GET /api/issues` metadata reads, requests an allowlisted response shape, strips descriptions, comments, attachments, and custom-field values before storage, and fails visibly at its configured issue cap.
 
+Taiga uses a bearer access token and a public HTTPS base URL. It reads only the signed-in member's bounded project, user-story, and task metadata with `GET`, filters deltas locally with a short lookback, excludes descriptions, comments, attachments, custom attributes, and provider writes, and fails visibly at configured collection caps.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations

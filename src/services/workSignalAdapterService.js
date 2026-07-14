@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -43,6 +43,7 @@ const basecampWorkSignalClient = require('./basecampWorkSignalClient');
 const redmineWorkSignalClient = require('./redmineWorkSignalClient');
 const microsoftPlannerWorkSignalClient = require('./microsoftPlannerWorkSignalClient');
 const youTrackWorkSignalClient = require('./youTrackWorkSignalClient');
+const taigaWorkSignalClient = require('./taigaWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -787,6 +788,18 @@ youTrackAdapter.capabilities.credentialBackedSync = true;
 youTrackAdapter.list = async account => (await youTrackWorkSignalClient.fetchDelta(account, null)).records;
 youTrackAdapter.fetchDelta = (account, cursor) => youTrackWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('youtrack', youTrackAdapter);
+
+const taigaAdapter = buildAdapter('taiga', 'Taiga project, user-story, and task metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'Taiga work item'), description: '',
+  status: item.closed ? 'done' : item.blocked ? 'blocked' : statusFromText(item.status), priority: 'unknown', owners: [],
+  labels: compact(['taiga', item.sourceType, item.project?.name, item.status, item.blocked ? 'blocked' : undefined]), dueAt: pick(item.dueAt),
+  providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Taiga metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, storyId: item.storyId, taskId: item.taskId, reference: item.reference, project: item.project, status: item.status, blocked: item.blocked, closed: item.closed, milestoneId: item.milestoneId, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+taigaAdapter.capabilities.credentialBackedSync = true;
+taigaAdapter.list = async account => (await taigaWorkSignalClient.fetchDelta(account, null)).records;
+taigaAdapter.fetchDelta = (account, cursor) => taigaWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('taiga', taigaAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

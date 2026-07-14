@@ -76,6 +76,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/redmineWorkSignalClient');
     jest.dontMock('../src/services/microsoftPlannerWorkSignalClient');
     jest.dontMock('../src/services/youTrackWorkSignalClient');
+    jest.dontMock('../src/services/taigaWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1933,6 +1934,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('youtrack').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Taiga adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'task:18' }] });
+    jest.doMock('../src/services/taigaWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'taiga' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('taiga').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3521,6 +3534,62 @@ describe('work signal normalization', () => {
     });
     expect(normalized).toMatchObject({ externalId: 'issue:2-18', sourceType: 'issue', title: 'Ship YouTrack connector', description: '', status: 'done', labels: ['youtrack', 'Sneup release'] });
     expect(JSON.stringify(normalized.raw)).not.toMatch(/Private issue detail|Private comment|Private field/);
+  });
+
+  test('Taiga sync reads bounded member project, story, and task metadata without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/taigaWorkSignalClient');
+    jest.resetModules();
+    const { TaigaWorkSignalClient } = require('../src/services/taigaWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { id: 99 } })
+      .mockResolvedValueOnce({ data: [{ id: 11, name: 'Sneup release', slug: 'sneup-release', created_date: '2026-07-10T10:00:00.000Z', modified_date: '2026-07-11T10:00:00.000Z', description: 'Private project detail' }], headers: {} })
+      .mockResolvedValueOnce({ data: [{ id: 17, ref: 18, subject: 'Ship Taiga connector', project: 11, status: 4, is_blocked: true, is_closed: false, due_date: '2026-07-15', created_date: '2026-07-10T10:00:00.000Z', modified_date: '2026-07-12T12:00:00.000Z', description: 'Private story detail', comments: [{ comment: 'Private comment' }], attachments: [{ name: 'secret.pdf' }], custom_attributes_values: { secret: 'Private field' } }], headers: {} })
+      .mockResolvedValueOnce({ data: [{ id: 18, ref: 19, subject: 'Verify Taiga connector', project: 11, user_story: 17, status: 2, is_closed: true, created_date: '2026-07-11T10:00:00.000Z', modified_date: '2026-07-13T12:00:00.000Z', description: 'Private task detail' }], headers: {} }) };
+    const client = new TaigaWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'taiga-token' })) } });
+    const result = await client.fetchDelta({ connectorId: 'taiga', metadata: { fields: { baseUrl: 'https://api.taiga.io' } } }, '2026-07-10T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://api.taiga.io/api/v1/users/me', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer taiga-token' }), maxRedirects: 0, proxy: false }));
+    expect(http.get).toHaveBeenCalledWith('https://api.taiga.io/api/v1/projects', expect.objectContaining({ params: { member: 99, page: 1, page_size: 100 } }));
+    expect(http.get).toHaveBeenCalledWith('https://api.taiga.io/api/v1/userstories', expect.objectContaining({ params: { project: 11, page: 1, page_size: 100 } }));
+    expect(http.get).toHaveBeenCalledWith('https://api.taiga.io/api/v1/tasks', expect.objectContaining({ params: { project: 11, page: 1, page_size: 100 } }));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/description|comments|attachments|custom_attributes/i);
+    expect(JSON.stringify(result.records)).not.toMatch(/Private project|Private story|Private task|Private comment|Private field|secret\.pdf/);
+    expect(result).toMatchObject({ metadata: { source: 'taiga_api', projects: 1, userStories: 1, tasks: 1, contentPolicy: 'project_story_task_metadata_only_no_descriptions_comments_attachments_custom_attributes_or_provider_writes' }, hasMore: false, nextCursor: '2026-07-13T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'user_story:17', project: { id: 11, name: 'Sneup release', slug: 'sneup-release' }, blocked: true }), expect.objectContaining({ id: 'task:18', storyId: 17, closed: true })]));
+  });
+
+  test('Taiga sync rejects untrusted instance URLs and fails closed at configured caps', async () => {
+    jest.dontMock('../src/services/taigaWorkSignalClient');
+    jest.resetModules();
+    const { TaigaWorkSignalClient } = require('../src/services/taigaWorkSignalClient');
+    const untrustedHttp = { get: jest.fn() };
+    const untrustedClient = new TaigaWorkSignalClient({ http: untrustedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'taiga-token' })) } });
+    await expect(untrustedClient.fetchDelta({ metadata: { fields: { baseUrl: 'https://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 400 });
+    expect(untrustedHttp.get).not.toHaveBeenCalled();
+
+    const previousLimit = process.env.SNEUP_TAIGA_MAX_PROJECTS;
+    process.env.SNEUP_TAIGA_MAX_PROJECTS = '1';
+    const cappedHttp = { get: jest.fn().mockResolvedValueOnce({ data: { id: 99 } }).mockResolvedValueOnce({ data: [{ id: 11, name: 'One' }], headers: {} }) };
+    const cappedClient = new TaigaWorkSignalClient({ http: cappedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'taiga-token' })) } });
+    try {
+      await expect(cappedClient.fetchDelta({ metadata: { fields: { baseUrl: 'https://taiga.example.com/api/v1' } } })).rejects.toMatchObject({ statusCode: 413 });
+      expect(cappedHttp.get).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_TAIGA_MAX_PROJECTS;
+      else process.env.SNEUP_TAIGA_MAX_PROJECTS = previousLimit;
+    }
+  });
+
+  test('Taiga normalization preserves only approved project delivery metadata', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'taiga' }, {
+      id: 'user_story:17', sourceType: 'user_story', storyId: 17, reference: 18, name: 'Ship Taiga connector', project: { id: 11, name: 'Sneup release' },
+      status: 4, blocked: true, updatedAt: '2026-07-12T12:00:00.000Z', description: 'Private story detail', comments: ['Private comment'], attachments: ['secret.pdf']
+    });
+    expect(normalized).toMatchObject({ externalId: 'user_story:17', sourceType: 'user_story', title: 'Ship Taiga connector', description: '', status: 'blocked', labels: ['taiga', 'user_story', 'Sneup release', '4', 'blocked'] });
+    expect(JSON.stringify(normalized.raw)).not.toMatch(/Private story detail|Private comment|secret\.pdf/);
   });
 
   test('projects provider signals into normalized work graph records', () => {
