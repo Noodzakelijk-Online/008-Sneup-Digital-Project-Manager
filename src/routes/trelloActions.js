@@ -11,7 +11,7 @@ const {
 
 router.param('actionAttemptId', validateObjectIdParam('actionAttemptId'));
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('audit:read'), async (req, res) => {
   try {
     const actions = await operationsLedgerService.listTrelloActions({
       workspaceId: getRequestWorkspaceObjectId(req),

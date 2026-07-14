@@ -135,8 +135,8 @@ const getBoardOperationsLedger = async (req, res) => {
   }
 };
 
-router.get('/:boardId/operations-ledger', getBoardOperationsLedger);
-router.get('/:boardId/operating-ledger', getBoardOperationsLedger);
+router.get('/:boardId/operations-ledger', requirePermission('audit:read'), getBoardOperationsLedger);
+router.get('/:boardId/operating-ledger', requirePermission('audit:read'), getBoardOperationsLedger);
 
 // Get board decision queue
 router.get('/:boardId/decision-queue', async (req, res) => {

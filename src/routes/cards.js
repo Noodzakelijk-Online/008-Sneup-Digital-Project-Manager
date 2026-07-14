@@ -4,7 +4,7 @@ const logger = require('../utils/logger');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const CardFinding = require('../models/CardFinding');
 const { getRequestWorkspaceObjectId, scopeQuery } = require('../services/workspaceScopeService');
-const { validateObjectIdParam } = require('../utils/requestSecurity');
+const { requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
 
 router.param('cardId', validateObjectIdParam('cardId'));
 
@@ -25,10 +25,10 @@ const getCardOperationsLedger = async (req, res) => {
   }
 };
 
-router.get('/:cardId/operations-ledger', getCardOperationsLedger);
-router.get('/:cardId/operating-ledger', getCardOperationsLedger);
+router.get('/:cardId/operations-ledger', requirePermission('audit:read'), getCardOperationsLedger);
+router.get('/:cardId/operating-ledger', requirePermission('audit:read'), getCardOperationsLedger);
 
-router.get('/:cardId/audit', async (req, res) => {
+router.get('/:cardId/audit', requirePermission('audit:read'), async (req, res) => {
   try {
     const auditEvents = await operationsLedgerService.listAuditEvents({
       ...workspaceOptions(req),

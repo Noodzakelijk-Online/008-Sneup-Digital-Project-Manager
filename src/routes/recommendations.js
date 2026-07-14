@@ -58,7 +58,7 @@ router.get('/:recommendationId', async (req, res) => {
   }
 });
 
-router.get('/:recommendationId/evidence', async (req, res) => {
+router.get('/:recommendationId/evidence', requirePermission('audit:read'), async (req, res) => {
   try {
     const evidence = await operationsLedgerService.getRecommendationEvidence(req.params.recommendationId, workspaceOptions(req));
     if (!evidence) {
