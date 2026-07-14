@@ -894,6 +894,9 @@ function renderOperationsLedger() {
   document.querySelectorAll('[data-recommendation-evidence]').forEach((button) => {
     button.addEventListener('click', () => openRecommendationEvidence(button.dataset.recommendationEvidence));
   });
+  document.querySelectorAll('[data-trello-action-reconcile]').forEach((button) => {
+    button.addEventListener('click', () => openTrelloActionReconciliation(button.dataset.trelloActionReconcile));
+  });
   bindLedgerDrilldownActions();
   bindGraphActions();
 }
@@ -1079,6 +1082,10 @@ function renderBoardHealth(snapshot) {
 }
 
 function renderTrelloAttempt(attempt) {
+  const attemptId = getId(attempt._id || attempt.id);
+  const needsReconciliation = attempt.status === 'in_progress'
+    || (attempt.status === 'succeeded' && attempt.recommendationId?.status === 'executing');
+  const reconciliation = attempt.reconciliation || {};
   return `
     <div class="item">
       <div class="item-title">
@@ -1093,6 +1100,18 @@ function renderTrelloAttempt(attempt) {
         <summary>Attempt payload</summary>
         <pre>${escapeHtml(JSON.stringify(attempt.payload || {}, null, 2))}</pre>
       </details>
+      ${reconciliation.status && reconciliation.status !== 'not_needed' ? `
+        <div class="meta">
+          <span>${escapeHtml(reconciliation.status.replaceAll('_', ' '))}</span>
+          <span>${escapeHtml(reconciliation.reconciledBy || 'operator')}</span>
+          <span>${formatDate(reconciliation.reconciledAt)}</span>
+        </div>
+      ` : ''}
+      ${needsReconciliation && attemptId ? `
+        <div class="item-actions">
+          <button class="button warn" data-trello-action-reconcile="${escapeHtml(attemptId)}" type="button">Reconcile result</button>
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -3062,6 +3081,67 @@ function openNotice(title, message) {
   `;
   els.modal.classList.add('open');
   document.getElementById('noticeClose').addEventListener('click', closeModal);
+}
+
+function openTrelloActionReconciliation(actionId) {
+  const attempt = (state.ledger.actions || []).find(item => getId(item._id || item.id) === actionId);
+  if (!attempt) return;
+
+  els.modalTitle.textContent = `Reconcile ${String(attempt.actionType || 'Trello action').replaceAll('_', ' ')}`;
+  els.modalBody.innerHTML = `
+    <form id="trelloActionReconciliationForm" class="notice-stack">
+      <div class="notice">Confirm the observed provider result. This finalizes Sneup's ledger and does not send another Trello request.</div>
+      <label>Observed result
+        <select name="outcome" required>
+          <option value="" selected disabled>Select result</option>
+          <option value="succeeded">Succeeded in Trello</option>
+          <option value="failed">Did not succeed in Trello</option>
+        </select>
+      </label>
+      <label>Evidence checked
+        <textarea name="evidence" rows="4" maxlength="2000" required placeholder="Trello activity, card state, or provider error reviewed"></textarea>
+      </label>
+      <label>Resolution note
+        <textarea name="reason" rows="2" maxlength="1000" placeholder="Optional decision note"></textarea>
+      </label>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelTrelloReconciliation">Cancel</button>
+        <button class="button primary" type="submit">Finalize ledger</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+
+  document.getElementById('cancelTrelloReconciliation').addEventListener('click', closeModal);
+  document.getElementById('trelloActionReconciliationForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    const formData = new FormData(event.currentTarget);
+    submitButton.disabled = true;
+    submitButton.textContent = 'Finalizing...';
+
+    try {
+      const data = await fetchApi(`/api/trello-actions/${encodeURIComponent(actionId)}/reconcile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          outcome: formData.get('outcome'),
+          evidence: formData.get('evidence'),
+          reason: formData.get('reason'),
+          reconciledBy: state.securityContext?.actorId || 'local-user'
+        })
+      });
+      closeModal();
+      await loadOperationsLedger();
+      openNotice('Ledger reconciled', data.auditRecorded === false
+        ? 'The provider result is finalized. Audit recording needs operator review.'
+        : 'The provider result and approval ledger are finalized.');
+    } catch (error) {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Finalize ledger';
+      openNotice('Reconciliation blocked', error.message);
+    }
+  });
 }
 
 function closeModal() {

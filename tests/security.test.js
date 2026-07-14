@@ -4073,6 +4073,80 @@ describe('approved Trello action execution safety', () => {
   });
 });
 
+describe('Trello action reconciliation safety', () => {
+  afterEach(() => {
+    jest.dontMock('../src/models/TrelloActionAttempt');
+    jest.dontMock('../src/models/AuditEvent');
+    jest.dontMock('../src/services/operationsLedgerService');
+    jest.dontMock('../src/services/workspaceScopeService');
+    jest.resetModules();
+  });
+
+  test('records human evidence while reconciling a claimed action without another provider write', async () => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const recommendation = {
+      _id: 'recommendation-1',
+      workspaceId: 'workspace-1',
+      actionType: 'move_card',
+      riskLevel: 'high',
+      status: 'executing',
+      save: jest.fn().mockResolvedValue(undefined)
+    };
+    const attempt = {
+      _id: 'attempt-1',
+      workspaceId: 'workspace-1',
+      actionType: 'move_card',
+      status: 'in_progress',
+      recommendationId: recommendation,
+      interventionId: null,
+      reconciliation: { status: 'not_needed' },
+      save: jest.fn().mockResolvedValue(undefined),
+      toObject: jest.fn(() => ({ _id: 'attempt-1', status: 'succeeded' }))
+    };
+    const auditCreate = jest.fn().mockResolvedValue({ _id: 'audit-1' });
+    const populate = jest.fn().mockResolvedValue(attempt);
+
+    jest.doMock('../src/models/TrelloActionAttempt', () => ({
+      findOne: jest.fn(() => ({ populate }))
+    }));
+    jest.doMock('../src/models/AuditEvent', () => ({ create: auditCreate }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    jest.spyOn(operationsLedgerService, 'isDatabaseReady').mockReturnValue(true);
+
+    const result = await operationsLedgerService.reconcileTrelloActionAttempt('attempt-1', {
+      workspaceId: 'workspace-1',
+      outcome: 'succeeded',
+      evidence: 'Verified the move in the Trello card activity log.',
+      reason: 'Provider action completed before the ledger finalization fault.',
+      reconciledBy: 'owner-1'
+    });
+
+    expect(result).toMatchObject({
+      followUpScheduled: false,
+      interventionUpdated: false,
+      auditRecorded: true
+    });
+    expect(attempt.status).toBe('succeeded');
+    expect(attempt.reconciliation).toMatchObject({
+      status: 'confirmed_succeeded',
+      reconciledBy: 'owner-1',
+      evidence: 'Verified the move in the Trello card activity log.'
+    });
+    expect(recommendation.status).toBe('executed');
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'trello_action_reconciled_succeeded',
+      source: 'manual',
+      trelloActionAttemptId: 'attempt-1'
+    }));
+  });
+});
+
 describe('operating ledger analyzer', () => {
   test('detects stale, blocked, Robert-required, and missing-next-action findings without Trello writes', () => {
     const analyzer = require('../src/services/operatingLedgerAnalyzer');

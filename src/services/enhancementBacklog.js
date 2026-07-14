@@ -253,15 +253,16 @@ const enhancements = [
     priority: 'P0',
     area: 'autonomy',
     title: 'Make approved Trello action execution single-claim and fail-safe',
-    evidence: 'Approved Trello writes now atomically claim the recommendation from approved to executing, reject forged no-approval write records, and remain claimed if post-write ledger finalization fails so Sneup cannot retry a potentially completed provider action.',
+    evidence: 'Approved Trello writes atomically claim the recommendation from approved to executing, reject forged no-approval write records, remain claimed if post-write ledger finalization fails, and expose an operator-only reconciliation path that records observed provider evidence without issuing another Trello request.',
     impact: 'Prevents duplicate comments, moves, assignments, labels, and other consequential provider writes under concurrent requests or partial internal failures.',
     effort: 'M',
     status: 'done',
-    nextStep: 'Add an operator-only reconciliation workflow for rare actions left executing after a provider response cannot be finalized.',
+    nextStep: 'Add reconciliation aging metrics and an operator alert before unresolved action evidence becomes stale.',
     acceptanceCriteria: [
       'Only one executor can claim an approved provider write.',
       'Provider writes cannot be executed from a record that disables required approval.',
-      'Post-write internal failures cannot relabel a successful provider action as failed or retry it automatically.'
+      'Post-write internal failures cannot relabel a successful provider action as failed or retry it automatically.',
+      'An operator can reconcile a claimed action with evidence without another provider write.'
     ]
   }
 ];

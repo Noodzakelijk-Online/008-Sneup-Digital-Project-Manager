@@ -58,6 +58,7 @@ const ALL_PERMISSIONS = Object.freeze([
   'recommendations:review',
   'sync:run',
   'trello-actions:execute-approved',
+  'trello-actions:reconcile',
   'worker-responses:record'
 ]);
 
@@ -87,6 +88,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     'recommendations:review',
     'sync:run',
     'trello-actions:execute-approved',
+    'trello-actions:reconcile',
     'worker-responses:record'
   ],
   admin: ALL_PERMISSIONS,

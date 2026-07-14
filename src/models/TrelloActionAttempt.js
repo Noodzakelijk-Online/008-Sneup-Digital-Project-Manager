@@ -53,6 +53,18 @@ const trelloActionAttemptSchema = new mongoose.Schema({
   retryCount: {
     type: Number,
     default: 0
+  },
+  reconciliation: {
+    status: {
+      type: String,
+      enum: ['not_needed', 'confirmed_succeeded', 'confirmed_failed'],
+      default: 'not_needed',
+      index: true
+    },
+    reason: String,
+    evidence: String,
+    reconciledBy: String,
+    reconciledAt: Date
   }
 }, {
   timestamps: true
@@ -63,5 +75,6 @@ trelloActionAttemptSchema.index({ boardId: 1, createdAt: -1 });
 trelloActionAttemptSchema.index({ cardId: 1, createdAt: -1 });
 trelloActionAttemptSchema.index({ workspaceId: 1, status: 1, createdAt: -1 });
 trelloActionAttemptSchema.index({ workspaceId: 1, boardId: 1, createdAt: -1 });
+trelloActionAttemptSchema.index({ workspaceId: 1, 'reconciliation.status': 1, updatedAt: -1 });
 
 module.exports = mongoose.model('TrelloActionAttempt', trelloActionAttemptSchema);
