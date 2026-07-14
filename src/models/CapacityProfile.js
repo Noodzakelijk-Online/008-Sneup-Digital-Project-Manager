@@ -6,6 +6,11 @@ const timeOffSchema = new mongoose.Schema({
   label: { type: String, maxlength: 160 }
 }, { _id: false });
 
+const externalIdentitySchema = new mongoose.Schema({
+  provider: { type: String, required: true, trim: true, lowercase: true, maxlength: 64 },
+  externalId: { type: String, required: true, trim: true, maxlength: 160 }
+}, { _id: false });
+
 const capacityProfileSchema = new mongoose.Schema({
   workspaceId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -43,6 +48,10 @@ const capacityProfileSchema = new mongoose.Schema({
   },
   skills: {
     type: [String],
+    default: []
+  },
+  externalIdentities: {
+    type: [externalIdentitySchema],
     default: []
   },
   active: {

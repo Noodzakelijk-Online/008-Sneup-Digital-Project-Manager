@@ -34,6 +34,34 @@ const normalizeTimeOff = (items) => {
   });
 };
 
+const RESOURCING_PROVIDERS = new Set(['float', 'resource_guru']);
+const normalizeExternalIdentities = (items) => {
+  if (!Array.isArray(items)) return [];
+  if (items.length > 10) {
+    const error = new Error('externalIdentities may include at most 10 provider mappings');
+    error.statusCode = 400;
+    throw error;
+  }
+  const seen = new Set();
+  return items.map((item) => {
+    const provider = String(item?.provider || '').trim().toLowerCase();
+    const externalId = String(item?.externalId || '').trim();
+    if (!RESOURCING_PROVIDERS.has(provider) || !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,159}$/.test(externalId)) {
+      const error = new Error('Each external identity needs a supported provider and a safe provider ID');
+      error.statusCode = 400;
+      throw error;
+    }
+    const key = `${provider}:${externalId}`;
+    if (seen.has(key)) {
+      const error = new Error('External identity mappings must be unique per capacity profile');
+      error.statusCode = 400;
+      throw error;
+    }
+    seen.add(key);
+    return { provider, externalId };
+  });
+};
+
 router.get('/', async (req, res) => {
   try {
     const forecast = await forecastService.getForecast({ workspaceId: getRequestWorkspaceObjectId(req) });
@@ -72,6 +100,7 @@ router.post('/capacity/:memberId', requirePermission('capacity:manage'), async (
           focusHoursPerWeek,
           timeOff: normalizeTimeOff(req.body.timeOff),
           skills: Array.isArray(req.body.skills) ? req.body.skills.map(skill => String(skill).trim()).filter(Boolean).slice(0, 30) : [],
+          externalIdentities: normalizeExternalIdentities(req.body.externalIdentities),
           active: req.body.active !== false
         }
       },

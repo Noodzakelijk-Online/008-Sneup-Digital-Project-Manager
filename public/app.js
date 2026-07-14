@@ -391,6 +391,7 @@ function renderForecast(errorMessage = '') {
   const members = forecast.memberCapacity || [];
   const boards = forecast.boards || [];
   const utilization = forecast.dataQuality?.utilization || {};
+  const allocations = forecast.dataQuality?.allocations || {};
   els.forecastCount.textContent = String(boards.filter(board => board.health !== 'on_track').length);
   els.forecastMode.textContent = forecast.mode === 'demo' ? 'demo' : 'analysis only';
   els.forecastMode.className = `pill ${forecast.mode === 'demo' ? 'review' : 'healthy'}`;
@@ -403,7 +404,8 @@ function renderForecast(errorMessage = '') {
     ['Open cards', portfolio.openCards || 0],
     ['Weekly capacity', `${portfolio.weeklyAvailableHours || 0}h`],
     ['Estimated work', `${portfolio.workHours || 0}h`],
-    ['Tracked utilization', utilization.entries ? `${utilization.weeklyHours || 0}h/week` : 'No Harvest evidence']
+    ['Tracked utilization', utilization.entries ? `${utilization.weeklyHours || 0}h/week` : 'No Harvest evidence'],
+    ['Mapped allocations', allocations.matchedEntries ? `${allocations.matchedWeeklyHours || 0}h/week` : 'No resourcing evidence']
   ].map(([label, value]) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
   els.portfolioForecast.innerHTML = renderForecastSummary(portfolio);
   els.forecastCapacity.innerHTML = listOrEmpty(members, renderCapacityMember);
@@ -450,7 +452,7 @@ function renderCapacityMember(member = {}) {
     <div class="item">
       <div class="item-title"><strong>${escapeHtml(member.name || 'Team member')}</strong><span class="pill ${member.configured ? 'healthy' : 'review'}">${member.configured ? 'configured' : 'default'}</span></div>
       <div class="meta"><span>${member.weeklyAvailableHours || 0}h/week</span><span>${member.dailyAvailableHours || 0}h/day</span><span>${member.allocationPercent || 0}% allocation</span><span>${member.focusHoursPerWeek || 0}h focus</span>${member.timeOffHours ? `<span>${member.timeOffHours}h planned time off</span>` : ''}</div>
-      <div class="meta">Historical card effort: ${member.historicalCardHours || 0}h. ${member.harvestEntriesLast28Days ? `Harvest tracked ${member.harvestWeeklyHours || 0}h/week recently.` : 'No matched Harvest utilization evidence.'} ${(member.skills || []).map(escapeHtml).join(' | ') || 'No skills recorded.'}</div>
+      <div class="meta">Historical card effort: ${member.historicalCardHours || 0}h. ${member.harvestEntriesLast28Days ? `Harvest tracked ${member.harvestWeeklyHours || 0}h/week recently.` : 'No matched Harvest utilization evidence.'} ${member.scheduledAllocationEntriesNext28Days ? `Mapped allocations schedule ${member.scheduledAllocationWeeklyHours || 0}h/week.` : 'No mapped allocation evidence.'} ${(member.skills || []).map(escapeHtml).join(' | ') || 'No skills recorded.'}</div>
       ${editable ? `<div class="item-actions"><button class="button" type="button" data-capacity-member="${escapeHtml(member.memberId)}">Edit capacity</button></div>` : ''}
     </div>
   `;
@@ -459,6 +461,7 @@ function renderCapacityMember(member = {}) {
 function openCapacityEditor(memberId) {
   const member = (state.forecast?.memberCapacity || []).find(item => String(item.memberId) === String(memberId));
   if (!member) return;
+  const externalIdentities = (member.externalIdentities || []).map(item => `${item.provider}: ${item.externalId}`).join('\n');
   els.modalTitle.textContent = `Capacity: ${member.name || 'team member'}`;
   els.modalBody.innerHTML = `
     <form id="capacityProfileForm">
@@ -467,6 +470,7 @@ function openCapacityEditor(memberId) {
       <div class="field"><label for="capacityAllocation">Allocation percentage</label><input id="capacityAllocation" name="allocationPercent" type="number" min="0" max="100" value="${escapeHtml(member.allocationPercent ?? 100)}" required></div>
       <div class="field"><label for="capacityFocus">Focus hours per week</label><input id="capacityFocus" name="focusHoursPerWeek" type="number" min="0" max="80" value="${escapeHtml(member.focusHoursPerWeek || 0)}" required></div>
       <div class="field"><label for="capacitySkills">Skills (comma-separated)</label><input id="capacitySkills" name="skills" type="text" value="${escapeHtml((member.skills || []).join(', '))}"></div>
+      <div class="field"><label for="capacityExternalIdentities">Resourcing IDs (one provider: ID per line)</label><textarea id="capacityExternalIdentities" name="externalIdentities" placeholder="float: 123&#10;resource_guru: 456">${escapeHtml(externalIdentities)}</textarea></div>
       <div class="field"><label for="capacityTimeOff">Planned time off (one YYYY-MM-DD to YYYY-MM-DD range per line)</label><textarea id="capacityTimeOff" name="timeOff">${escapeHtml((member.timeOff || []).map(item => `${String(item.startDate || '').slice(0, 10)} to ${String(item.endDate || '').slice(0, 10)}${item.label ? ` | ${item.label}` : ''}`).join('\n'))}</textarea></div>
       <div class="toolbar modal-actions"><button class="button" type="button" id="cancelCapacityEdit">Cancel</button><button class="button primary" type="submit">Save capacity</button></div>
     </form>
@@ -487,6 +491,10 @@ function openCapacityEditor(memberId) {
           allocationPercent: form.elements.allocationPercent.value,
           focusHoursPerWeek: form.elements.focusHoursPerWeek.value,
           skills: form.elements.skills.value.split(',').map(skill => skill.trim()).filter(Boolean),
+          externalIdentities: form.elements.externalIdentities.value.split('\n').map((line) => {
+            const separator = line.indexOf(':');
+            return separator > 0 ? { provider: line.slice(0, separator).trim(), externalId: line.slice(separator + 1).trim() } : null;
+          }).filter(Boolean),
           timeOff: form.elements.timeOff.value.split('\n').map((line) => {
             const [range, label] = line.split('|');
             const [startDate, endDate] = range.split(/\s+to\s+/i).map(value => value.trim());

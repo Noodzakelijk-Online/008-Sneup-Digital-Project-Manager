@@ -625,6 +625,31 @@ describe('capacity-aware forecasting', () => {
     expect(forecast.portfolio.risks.join(' ')).toContain('Harvest reports more tracked hours than modeled capacity');
     expect(forecast.portfolio.assumptions.join(' ')).toContain('calibrates forecast confidence only');
   });
+
+  test('uses only explicit Float and Resource Guru member mappings as bounded allocation evidence', () => {
+    const { buildForecast } = require('../src/services/forecastService');
+    const forecast = buildForecast({
+      now: new Date('2026-07-06T09:00:00.000Z'),
+      boards: [{ _id: 'board-1', name: 'Launch' }],
+      members: [{ _id: 'member-1', username: 'milan', fullName: 'Milan' }],
+      profiles: [{
+        _id: 'profile-1', memberId: 'member-1', weeklyHours: 20, allocationPercent: 100, focusHoursPerWeek: 4,
+        externalIdentities: [{ provider: 'float', externalId: '7' }, { provider: 'resource_guru', externalId: '12' }]
+      }],
+      cards: [{ _id: 'card-1', boardId: 'board-1', members: ['member-1'], riskLevel: 'normal' }],
+      allocationSignals: [
+        { provider: 'float', sourceType: 'allocation', raw: { assigneeId: '7', scheduledHours: 64, startedAt: '2026-07-06', dueAt: '2026-08-02' } },
+        { provider: 'resource_guru', sourceType: 'booking', raw: { resourceId: '12', scheduledMinutes: 480, approvalState: 'approved', startedAt: '2026-07-06', dueAt: '2026-08-02' } },
+        { provider: 'resource_guru', sourceType: 'booking', raw: { resourceId: '12', scheduledMinutes: 960, approvalState: 'pending', startedAt: '2026-07-06', dueAt: '2026-08-02' } },
+        { provider: 'float', sourceType: 'allocation', raw: { assigneeId: 'unmapped', scheduledHours: 80, startedAt: '2026-07-06', dueAt: '2026-08-02' } }
+      ]
+    });
+
+    expect(forecast.memberCapacity[0]).toMatchObject({ scheduledAllocationHoursNext28Days: 72, scheduledAllocationWeeklyHours: 18, weeklyAvailableHours: 16 });
+    expect(forecast.dataQuality.allocations).toMatchObject({ providers: ['float', 'resource_guru'], entries: 3, totalHours: 152, matchedEntries: 2, matchedHours: 72, matchedWeeklyHours: 18, unmatchedEntries: 1, unmatchedHours: 80, matchedMembers: 1 });
+    expect(forecast.portfolio.risks.join(' ')).toContain('Mapped resourcing allocations exceed modeled capacity');
+    expect(forecast.portfolio.assumptions.join(' ')).toContain('Explicit Float or Resource Guru member mappings');
+  });
 });
 
 describe('notification delivery safety', () => {

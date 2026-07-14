@@ -75,11 +75,11 @@ const enhancements = [
     priority: 'P1',
     area: 'forecasting',
     title: 'Upgrade forecasting with capacity calendars and confidence ranges',
-    evidence: 'Sneup now stores workspace-scoped capacity profiles with weekly hours, allocation, focus time, planned time off, and skills. Analysis-only portfolio and board forecasts use those profiles plus historical effort, ownership, overdue work, and risk to return P50/P80 ranges, confidence, assumptions, and delivery risks. Bounded Harvest time-entry metadata now calibrates forecast confidence for exact matched contributors, exposes recent tracked hours in the Capacity view, and flags declared-capacity mismatches without changing provider data or retaining notes, rates, invoices, or budget detail.',
+    evidence: 'Sneup now stores workspace-scoped capacity profiles with weekly hours, allocation, focus time, planned time off, skills, and explicit Float or Resource Guru provider IDs. Analysis-only portfolio and board forecasts use those profiles plus historical effort, ownership, overdue work, and risk to return P50/P80 ranges, confidence, assumptions, and delivery risks. Bounded Harvest time-entry metadata and mapped Float allocations or approved Resource Guru bookings calibrate confidence, expose matched weekly evidence in the Capacity view, and flag modeled-capacity mismatches without changing provider data or retaining notes, rates, invoices, or budget detail.',
     impact: 'Improves delivery predictions and prevents false certainty in project dates.',
     effort: 'L',
     status: 'in-progress',
-    nextStep: 'Add calendar and resource-allocation evidence with explicit member mapping, then tune capacity mismatch thresholds from reviewed production evidence.',
+    nextStep: 'Add calendar availability evidence only with explicit member mapping, then tune capacity mismatch thresholds from reviewed production evidence.',
     acceptanceCriteria: [
       'Forecasts return P50/P80 date ranges instead of single dates.',
       'Forecasts explain capacity assumptions and known blockers.',

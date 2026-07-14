@@ -10,6 +10,8 @@ const SIGNAL_TYPES = [
   'document',
   'event',
   'time_entry',
+  'allocation',
+  'booking',
   'risk',
   'decision',
   'other'
