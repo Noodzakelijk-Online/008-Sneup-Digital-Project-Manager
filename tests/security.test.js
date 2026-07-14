@@ -109,6 +109,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/webexWorkSignalClient');
     jest.dontMock('../src/services/discordWorkSignalClient');
     jest.dontMock('../src/services/mattermostWorkSignalClient');
+    jest.dontMock('../src/services/workfrontWorkSignalClient');
     jest.dontMock('../src/services/calendlyWorkSignalClient');
     jest.dontMock('../src/services/teamsWorkSignalClient');
     jest.dontMock('../src/services/googleChatWorkSignalClient');
@@ -1200,6 +1201,8 @@ describe('connector registry', () => {
     expect(byId.discord.sync).toEqual(['guilds']);
     expect(byId.mattermost.auth.fields.map(field => field.name)).toEqual(['baseUrl', 'token']);
     expect(byId.mattermost.sync).toEqual(['teams']);
+    expect(byId.workfront.auth.fields.map(field => field.name)).toEqual(['baseUrl', 'token']);
+    expect(byId.workfront.sync).toEqual(['projects']);
     expect(byId.rally.auth.fields.map(field => field.name)).toEqual(['apiKey']);
     expect(byId.rally.sync).toEqual(['user_stories', 'defects']);
   });
@@ -2424,6 +2427,11 @@ describe('work signal normalization', () => {
   test('Mattermost adapter delegates bounded team metadata reads to the credential-backed client', async () => {
     jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'team:team_123' }] }); jest.doMock('../src/services/mattermostWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'mattermost' };
     await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('mattermost').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Workfront adapter delegates bounded project metadata reads to the credential-backed client', async () => {
+    jest.resetModules(); const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'project:abc123' }] }); jest.doMock('../src/services/workfrontWorkSignalClient', () => ({ fetchDelta })); const workSignalAdapterService = require('../src/services/workSignalAdapterService'); const account = { connectorId: 'workfront' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z'); expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z'); expect(workSignalAdapterService.getAdapter('workfront').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('Calendly adapter delegates bounded event-type reads to the credential-backed client', async () => {
@@ -5203,6 +5211,39 @@ describe('work signal normalization', () => {
     const malformed = new MattermostWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ id: 'https://127.0.0.1/steal' }] }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ metadata: { fields: { baseUrl: 'https://chat.example.test' } } })).rejects.toMatchObject({ statusCode: 502 });
     const previous = { max: process.env.SNEUP_MATTERMOST_MAX_TEAMS, page: process.env.SNEUP_MATTERMOST_PAGE_SIZE }; process.env.SNEUP_MATTERMOST_MAX_TEAMS = '1'; process.env.SNEUP_MATTERMOST_PAGE_SIZE = '1'; const capped = new MattermostWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ id: 'team_123' }] }) }, accountConnectorService: accountConnector });
     try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://chat.example.test' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous.max === undefined) delete process.env.SNEUP_MATTERMOST_MAX_TEAMS; else process.env.SNEUP_MATTERMOST_MAX_TEAMS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_MATTERMOST_PAGE_SIZE; else process.env.SNEUP_MATTERMOST_PAGE_SIZE = previous.page; }
+  });
+
+  test('Workfront sync pages bounded project metadata without people, descriptions, custom fields, documents, links, or provider writes', async () => {
+    jest.dontMock('../src/services/workfrontWorkSignalClient');
+    jest.resetModules();
+    const { WorkfrontWorkSignalClient } = require('../src/services/workfrontWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: { data: [{ ID: 'abc123', name: `Launch ${privateEmail}`, status: 'CUR', priority: 'High', percentComplete: 50, plannedStartDate: '2026-07-10T00:00:00Z', plannedCompletionDate: '2026-07-20T00:00:00Z', lastUpdateDate: '2026-07-13T00:00:00Z', description: 'Private plan', owner: { name: 'Private operator' }, documents: [{ ID: 'doc-private' }], customData: { secret: 'private' }, url: 'https://private.example.test' }] } })
+      .mockResolvedValueOnce({ data: { data: [] } }) };
+    const client = new WorkfrontWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'workfront-session-token' })) } });
+    const previous = { max: process.env.SNEUP_WORKFRONT_MAX_PROJECTS, page: process.env.SNEUP_WORKFRONT_PAGE_SIZE }; process.env.SNEUP_WORKFRONT_MAX_PROJECTS = '2'; process.env.SNEUP_WORKFRONT_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ connectorId: 'workfront', metadata: { fields: { baseUrl: 'https://tenant.my.workfront.com' } } }, '2026-07-12T00:00:00.000Z');
+      expect(http.get).toHaveBeenNthCalledWith(1, 'https://tenant.my.workfront.com/attask/api/v15.0/project/search', expect.objectContaining({ params: { fields: 'ID,name,status,priority,percentComplete,plannedStartDate,plannedCompletionDate,lastUpdateDate', '$$FIRST': 0, '$$LIMIT': 1, ID_Sort: 'asc' }, headers: expect.objectContaining({ SessionID: 'workfront-session-token' }), maxRedirects: 0, proxy: false }));
+      expect(http.get).toHaveBeenNthCalledWith(2, 'https://tenant.my.workfront.com/attask/api/v15.0/project/search', expect.objectContaining({ params: expect.objectContaining({ '$$FIRST': 1, '$$LIMIT': 1 }) }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'workfront_current_project_metadata', projects: 1, pages: 2 }, nextCursor: '2026-07-13T00:00:00.000Z', hasMore: false });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private plan|Private operator|doc-private|customData|private\.example/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_WORKFRONT_MAX_PROJECTS; else process.env.SNEUP_WORKFRONT_MAX_PROJECTS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_WORKFRONT_PAGE_SIZE; else process.env.SNEUP_WORKFRONT_PAGE_SIZE = previous.page; }
+  });
+
+  test('Workfront sync rejects invalid cursors, unsafe tenant URLs, malformed project identifiers, and collection caps', async () => {
+    jest.dontMock('../src/services/workfrontWorkSignalClient');
+    jest.resetModules();
+    const { WorkfrontWorkSignalClient } = require('../src/services/workfrontWorkSignalClient');
+    const accountConnector = { getAccountCredentials: jest.fn(() => ({ token: 'token' })) };
+    const invalid = new WorkfrontWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: accountConnector }); await expect(invalid.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.my.workfront.com' } } }, 'not-a-date')).rejects.toMatchObject({ statusCode: 400 });
+    await expect(invalid.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.my.workfront.com.evil.test' } } })).rejects.toMatchObject({ statusCode: 400 });
+    const malformed = new WorkfrontWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [{ ID: 'https://127.0.0.1/steal', name: 'Private' }] } }) }, accountConnectorService: accountConnector }); await expect(malformed.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.my.workfront.com' } } })).rejects.toMatchObject({ statusCode: 502 });
+    const previous = { max: process.env.SNEUP_WORKFRONT_MAX_PROJECTS, page: process.env.SNEUP_WORKFRONT_PAGE_SIZE }; process.env.SNEUP_WORKFRONT_MAX_PROJECTS = '1'; process.env.SNEUP_WORKFRONT_PAGE_SIZE = '1'; const capped = new WorkfrontWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: { data: [{ ID: 'abc123', name: 'First' }] } }) }, accountConnectorService: accountConnector });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { baseUrl: 'https://tenant.my.workfront.com' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous.max === undefined) delete process.env.SNEUP_WORKFRONT_MAX_PROJECTS; else process.env.SNEUP_WORKFRONT_MAX_PROJECTS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_WORKFRONT_PAGE_SIZE; else process.env.SNEUP_WORKFRONT_PAGE_SIZE = previous.page; }
   });
 
   test('Discord sync reads one bounded server metadata collection without channels, people, permissions, invites, icons, messages, or provider writes', async () => {

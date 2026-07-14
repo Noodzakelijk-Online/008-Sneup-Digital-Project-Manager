@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops',
+  'azure_devops', 'workfront',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost'
@@ -78,6 +78,7 @@ const intercomWorkSignalClient = require('./intercomWorkSignalClient');
 const webexWorkSignalClient = require('./webexWorkSignalClient');
 const discordWorkSignalClient = require('./discordWorkSignalClient');
 const mattermostWorkSignalClient = require('./mattermostWorkSignalClient');
+const workfrontWorkSignalClient = require('./workfrontWorkSignalClient');
 const rallyWorkSignalClient = require('./rallyWorkSignalClient');
 const gmailWorkSignalClient = require('./gmailWorkSignalClient');
 const outlookWorkSignalClient = require('./outlookWorkSignalClient');
@@ -1059,6 +1060,27 @@ mattermostAdapter.capabilities.credentialBackedSync = true;
 mattermostAdapter.list = async account => (await mattermostWorkSignalClient.fetchDelta(account, null)).records;
 mattermostAdapter.fetchDelta = (account, cursor) => mattermostWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('mattermost', mattermostAdapter);
+
+const workfrontAdapter = buildAdapter('workfront', 'Adobe Workfront project metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'project'),
+  title: titleFromText(item.name, 'Workfront project'),
+  description: '',
+  status: item.status || 'open',
+  priority: item.priority || 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['workfront', item.sourceType]),
+  dueAt: item.plannedCompletionDate,
+  providerCreatedAt: undefined,
+  providerUpdatedAt: item.updatedAt,
+  evidenceRefs: baseEvidence(account, item, 'Adobe Workfront project metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, status: item.status, priority: item.priority, percentComplete: item.percentComplete, plannedStartDate: item.plannedStartDate, plannedCompletionDate: item.plannedCompletionDate, updatedAt: item.updatedAt }
+}));
+workfrontAdapter.capabilities.credentialBackedSync = true;
+workfrontAdapter.list = async account => (await workfrontWorkSignalClient.fetchDelta(account, null)).records;
+workfrontAdapter.fetchDelta = (account, cursor) => workfrontWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('workfront', workfrontAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
