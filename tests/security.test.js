@@ -1561,6 +1561,19 @@ describe('connector registry', () => {
     expect(() => accountConnectorService.beginConnection('microsoft_project')).toThrow(/secure work-signal sync is not available yet/i);
   });
 
+  test('keeps connector catalog readiness available when scheduled sync loads first', () => {
+    jest.isolateModules(() => {
+      require('../src/services/connectorSyncService');
+      const isolatedConnectorService = require('../src/services/accountConnectorService');
+      const github = isolatedConnectorService.getCatalog().connectors.find(connector => connector.id === 'github');
+
+      expect(github.syncReadiness).toMatchObject({
+        status: 'ready',
+        accountConnectionAvailable: true
+      });
+    });
+  });
+
   test('decrypts connector credentials only for in-process sync and redacts private account metadata', () => {
     const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
     process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';

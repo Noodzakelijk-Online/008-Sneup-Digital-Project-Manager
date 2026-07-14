@@ -6,7 +6,6 @@ const AuditEvent = require('../models/AuditEvent');
 const { CATEGORIES, getCategories, getConnector, getConnectors } = require('./connectorRegistry');
 const { buildConnectorSafetyProfile, summarizeConnectorSafety } = require('./connectorSafetyProfile');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
-const workSignalAdapterService = require('./workSignalAdapterService');
 
 const STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_CATALOG_LIMIT = 300;
@@ -1171,6 +1170,10 @@ class AccountConnectorService {
   }
 
   getSyncReadiness(connector) {
+    // Adapter clients depend on this service for in-process credential decryption.
+    // Resolving them only when readiness is read avoids capturing a partial export
+    // when the scheduled sync service is loaded before the connector routes.
+    const workSignalAdapterService = require('./workSignalAdapterService');
     const adapter = workSignalAdapterService.getAdapter(connector.id);
     const accountConnectionAvailable = Boolean(adapter?.capabilities?.credentialBackedSync);
     return {
