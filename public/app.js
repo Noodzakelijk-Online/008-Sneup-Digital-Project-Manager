@@ -3240,10 +3240,11 @@ function renderConnectorSafety() {
     els.connectorSafety.innerHTML = '';
     return;
   }
+  const liveAdapters = state.workSignalContracts.filter(contract => contract.adapterStatus === 'implemented').length;
   els.connectorSafety.innerHTML = `
     <div>
       <strong>${safety.providerWritesBlocked} tools are write-blocked</strong>
-      <span>Signals are read-only. ${safety.scopeReviews} account links require a scope review.</span>
+      <span>${liveAdapters} provider sync adapters are live. Signals are read-only. ${safety.scopeReviews} account links require a scope review.</span>
     </div>
     <span>${safety.providerScopeReviews} broad provider grants flagged</span>
   `;
