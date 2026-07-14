@@ -18,6 +18,12 @@ const invitationError = (message, statusCode = 400) => {
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 
+const assertEmailDeliveryConfigured = (environment = process.env) => {
+  if (!environment.RESEND_API_KEY || !environment.SNEUP_INVITE_FROM) {
+    throw invitationError('Email delivery is not configured. Set RESEND_API_KEY and SNEUP_INVITE_FROM, or use a manual invitation link.', 503);
+  }
+};
+
 const validateInviteInput = ({ email, displayName, role }) => {
   const normalizedEmail = normalizeEmail(email);
   if (!EMAIL_PATTERN.test(normalizedEmail)) {
@@ -116,11 +122,9 @@ const getInviteUrl = (rawToken, { environment = process.env, publicUrl } = {}) =
 };
 
 const sendInviteEmail = async ({ invite, inviteUrl }, { fetchFn = fetch, environment = process.env } = {}) => {
+  assertEmailDeliveryConfigured(environment);
   const apiKey = environment.RESEND_API_KEY;
   const from = environment.SNEUP_INVITE_FROM;
-  if (!apiKey || !from) {
-    throw invitationError('Email delivery is not configured. Set RESEND_API_KEY and SNEUP_INVITE_FROM, or use a manual invitation link.', 503);
-  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), MAX_EMAIL_DELIVERY_TIMEOUT_MS);
@@ -166,7 +170,7 @@ const recordAudit = async (payload) => {
   }
 };
 
-const createInvite = async ({ workspace, actor, email, displayName, role, expiresInDays, deliveryMode = 'manual' }) => {
+const createInvite = async ({ workspace, actor, email, displayName, role, expiresInDays, deliveryMode = 'manual', reissuedFromInviteId = null }) => {
   const input = validateInviteInput({ email, displayName, role });
   if (!['manual', 'email'].includes(deliveryMode)) {
     throw invitationError('deliveryMode must be manual or email');
@@ -253,7 +257,8 @@ const createInvite = async ({ workspace, actor, email, displayName, role, expire
     afterState: {
       invite: publicInvite(invite),
       revokedPendingInvites: revoked.modifiedCount || 0,
-      delivery
+      delivery,
+      ...(reissuedFromInviteId ? { reissuedFromInviteId: String(reissuedFromInviteId) } : {})
     }
   });
 
@@ -262,6 +267,92 @@ const createInvite = async ({ workspace, actor, email, displayName, role, expire
     inviteUrl,
     delivery,
     user
+  };
+};
+
+const retryInviteDelivery = async ({ workspaceId, inviteId, actor }) => {
+  const invite = await WorkspaceInvite.findOne({ _id: inviteId, workspaceId });
+  if (!invite) throw invitationError('Invitation not found', 404);
+  const expiresAt = new Date(invite.expiresAt);
+  if (invite.status !== 'pending' || expiresAt <= new Date() || invite.delivery?.mode !== 'email' || !['failed', 'not_sent'].includes(invite.delivery?.status)) {
+    throw invitationError('Only pending, unexpired email invitations with an unsent delivery can be retried', 409);
+  }
+
+  const user = await User.findOne({
+    _id: invite.userId,
+    workspaceId,
+    status: 'invited'
+  });
+  if (!user) {
+    throw invitationError('The invited user is no longer eligible for a delivery retry', 409);
+  }
+
+  assertEmailDeliveryConfigured();
+  getInviteUrl('sneup_invite_delivery_preflight');
+
+  const beforeState = publicInvite(invite);
+  const retryActor = actor || 'sneup';
+  const revoked = await WorkspaceInvite.findOneAndUpdate({
+    _id: inviteId,
+    workspaceId,
+    status: 'pending',
+    'delivery.mode': 'email',
+    'delivery.status': { $in: ['failed', 'not_sent'] }
+  }, {
+    $set: {
+      status: 'revoked',
+      revokedAt: new Date(),
+      revokedBy: `${retryActor}:delivery_retry`
+    }
+  }, { new: true });
+  if (!revoked) {
+    throw invitationError('Invitation delivery was already retried, revoked, or accepted', 409);
+  }
+
+  let result;
+  try {
+    result = await createInvite({
+      workspace: { _id: workspaceId },
+      actor: retryActor,
+      email: invite.email,
+      displayName: invite.displayName,
+      role: invite.role,
+      expiresInDays: Math.max(1, Math.ceil((new Date(invite.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000))),
+      deliveryMode: 'email',
+      reissuedFromInviteId: invite._id
+    });
+  } catch (error) {
+    await WorkspaceInvite.findOneAndUpdate({
+      _id: revoked._id,
+      workspaceId,
+      status: 'revoked',
+      revokedBy: `${retryActor}:delivery_retry`
+    }, {
+      $set: { status: 'pending' },
+      $unset: { revokedAt: 1, revokedBy: 1 }
+    });
+    throw error;
+  }
+
+  await recordAudit({
+    workspaceId,
+    entityType: 'workspace_invite',
+    entityId: revoked._id,
+    action: 'workspace_invite_delivery_reissued',
+    actor: retryActor,
+    source: 'api',
+    riskLevel: 'high',
+    beforeState,
+    afterState: {
+      revokedInvite: publicInvite(revoked),
+      replacementInvite: result.invite,
+      delivery: result.delivery
+    }
+  });
+
+  return {
+    ...result,
+    replacedInviteId: String(revoked._id)
   };
 };
 
@@ -396,6 +487,7 @@ module.exports = {
   getInviteUrl,
   listInvites,
   publicInvite,
+  retryInviteDelivery,
   revokeInvite,
   sendInviteEmail,
   validateInviteInput

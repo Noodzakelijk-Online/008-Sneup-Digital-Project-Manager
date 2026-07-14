@@ -168,6 +168,7 @@ The Windows installer uses the bundled Sneup icon. Release signing and automatic
 - `POST /api/workspaces/:workspaceId/users/:userId/sessions/:sessionId/revoke` - Revoke a user session token
 - `GET /api/workspaces/:workspaceId/invitations` - List time-bound workspace invitations
 - `POST /api/workspaces/:workspaceId/invitations` - Create an invitation and return its one-time-visible secure link; email delivery is explicit and optional
+- `POST /api/workspaces/:workspaceId/invitations/:inviteId/retry-delivery` - Replace a failed email invitation with a fresh one-time link, retry delivery, and ledger the replacement
 - `POST /api/workspaces/:workspaceId/invitations/:inviteId/revoke` - Revoke a pending invitation
 - `POST /api/workspaces/invitations/accept` - Accept a secure invitation token and issue a short-lived onboarding session
 

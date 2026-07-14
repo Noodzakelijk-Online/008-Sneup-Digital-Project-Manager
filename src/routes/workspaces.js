@@ -374,6 +374,31 @@ router.post('/:workspaceId/invitations', requirePermission('identity:manage'), a
   }
 });
 
+router.post('/:workspaceId/invitations/:inviteId/retry-delivery', requirePermission('identity:manage'), async (req, res) => {
+  try {
+    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const result = await workspaceInviteService.retryInviteDelivery({
+      workspaceId: workspace._id,
+      inviteId: req.params.inviteId,
+      actor: req.auth?.actorId || 'sneup'
+    });
+    res.json({
+      success: true,
+      invite: result.invite,
+      inviteUrl: result.inviteUrl,
+      delivery: result.delivery,
+      replacedInviteId: result.replacedInviteId,
+      user: publicUser(result.user)
+    });
+  } catch (error) {
+    logger.error('Failed to retry workspace invitation delivery:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to retry workspace invitation delivery'
+    });
+  }
+});
+
 router.post('/:workspaceId/invitations/:inviteId/revoke', requirePermission('identity:manage'), async (req, res) => {
   try {
     const workspace = await findWorkspaceOr404(req.params.workspaceId);

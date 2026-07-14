@@ -2352,6 +2352,9 @@ function renderWorkspaceUser(user) {
 
 function renderWorkspaceInvitation(invitation) {
   const canRevoke = invitation.status === 'pending';
+  const canRetryDelivery = canRevoke
+    && invitation.delivery?.mode === 'email'
+    && ['failed', 'not_sent'].includes(invitation.delivery?.status);
   const delivery = invitation.delivery?.status === 'sent' ? 'email sent' : invitation.delivery?.status === 'failed' ? 'email failed' : 'manual link';
   return `
     <div class="item">
@@ -2367,6 +2370,7 @@ function renderWorkspaceInvitation(invitation) {
       </div>
       ${canRevoke ? `
         <div class="item-actions">
+          ${canRetryDelivery ? `<button class="button" data-retry-workspace-invite-delivery="${escapeHtml(invitation.id)}" type="button">Retry email</button>` : ''}
           <button class="button danger" data-revoke-workspace-invite="${escapeHtml(invitation.id)}" type="button">Revoke invitation</button>
         </div>
       ` : ''}
@@ -2454,6 +2458,10 @@ function bindWorkspaceIdentityActions() {
   document.querySelectorAll('[data-revoke-workspace-invite]').forEach((button) => {
     const invitation = state.workspaceInvitations.find(item => item.id === button.dataset.revokeWorkspaceInvite);
     button.addEventListener('click', () => openInviteRevocationConfirmation(invitation));
+  });
+  document.querySelectorAll('[data-retry-workspace-invite-delivery]').forEach((button) => {
+    const invitation = state.workspaceInvitations.find(item => item.id === button.dataset.retryWorkspaceInviteDelivery);
+    button.addEventListener('click', () => openInviteDeliveryRetryConfirmation(invitation));
   });
 }
 
@@ -2881,6 +2889,41 @@ function openInviteRevocationConfirmation(invitation) {
       await loadWorkspaceAdmin();
     } catch (error) {
       openNotice('Invitation revocation failed', error.message);
+    }
+  });
+}
+
+function openInviteDeliveryRetryConfirmation(invitation) {
+  if (!invitation || invitation.status !== 'pending' || invitation.delivery?.mode !== 'email') return;
+  const workspaceId = state.activeWorkspaceId || state.currentWorkspace?.id;
+  if (!workspaceId) return;
+
+  els.modalTitle.textContent = 'Retry invitation email?';
+  els.modalBody.innerHTML = `
+    <div class="notice-stack">
+      <div class="notice">Sneup will invalidate the prior secure link, create a fresh one-time link, and send it to ${escapeHtml(invitation.email)}. The replacement is recorded in the workspace audit ledger.</div>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelInviteDeliveryRetry">Cancel</button>
+        <button class="button primary" type="button" id="confirmInviteDeliveryRetry">Retry email</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('cancelInviteDeliveryRetry').addEventListener('click', closeModal);
+  document.getElementById('confirmInviteDeliveryRetry').addEventListener('click', async (event) => {
+    event.currentTarget.disabled = true;
+    event.currentTarget.textContent = 'Retrying...';
+    try {
+      const data = await fetchApi(`/api/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitation.id)}/retry-delivery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      await loadWorkspaceAdmin();
+      renderCreatedInvitation(data);
+    } catch (error) {
+      event.currentTarget.disabled = false;
+      event.currentTarget.textContent = 'Retry email';
+      openNotice('Invitation retry failed', error.message);
     }
   });
 }

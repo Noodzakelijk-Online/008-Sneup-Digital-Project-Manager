@@ -43,11 +43,11 @@ const enhancements = [
     priority: 'P0',
     area: 'security',
     title: 'Add real users, workspaces, RBAC, and audit logs',
-    evidence: 'The API resolves request identity and workspace context, supports hashed database API tokens and hashed per-user session tokens, Workspace/User/ApiToken/SessionToken models exist, consequential write endpoints require explicit role permissions, workspace/user/session management APIs exist, and the dashboard lets an administrator inspect issued sessions, create/revoke time-bound invitations, and explicitly revoke active sessions with immediate server refresh. Identity administrators can explicitly send invitations through Resend or create manual one-time links; production invite links require a clean non-local HTTPS origin and delivery blocks redirects. Multi-workspace identity operations are documented, and boards/cards/connector accounts plus core operations-ledger, analytics, chat, team, list/member/comment, intervention, learning, and performance collections are workspace-scoped.',
+    evidence: 'The API resolves request identity and workspace context, supports hashed database API tokens and hashed per-user session tokens, Workspace/User/ApiToken/SessionToken models exist, consequential write endpoints require explicit role permissions, workspace/user/session management APIs exist, and the dashboard lets an administrator inspect issued sessions, create/revoke time-bound invitations, retry failed email invitations, and explicitly revoke active sessions with immediate server refresh. A retry revokes the original link atomically, issues a fresh one-time token, retries delivery, and keeps both records in the audit ledger. Identity administrators can explicitly send invitations through Resend or create manual one-time links; production invite links require a clean non-local HTTPS origin and delivery blocks redirects. Multi-workspace identity operations are documented, and boards/cards/connector accounts plus core operations-ledger, analytics, chat, team, list/member/comment, intervention, learning, and performance collections are workspace-scoped.',
     impact: 'Required before Sneup can safely run as a shared or internet-facing project-management control plane.',
     effort: 'XL',
     status: 'in-progress',
-    nextStep: 'Add production migration scripts for existing shared deployments and invitation delivery retry controls with ledger evidence.',
+    nextStep: 'Add production migration scripts for existing shared deployments and invitation delivery retention controls with ledger evidence.',
     acceptanceCriteria: [
       'Every API request resolves a user or service identity.',
       'Connector accounts and project data are workspace-scoped.',
