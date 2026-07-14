@@ -75,6 +75,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/basecampWorkSignalClient');
     jest.dontMock('../src/services/redmineWorkSignalClient');
     jest.dontMock('../src/services/microsoftPlannerWorkSignalClient');
+    jest.dontMock('../src/services/youTrackWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1920,6 +1921,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('microsoft_planner').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('YouTrack adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'issue:2-18' }] });
+    jest.doMock('../src/services/youTrackWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'youtrack' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('youtrack').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3450,6 +3463,64 @@ describe('work signal normalization', () => {
     });
     expect(normalized).toMatchObject({ externalId: 'planner_task:task-18', sourceType: 'task', title: 'Ship Planner connector', description: '', status: 'in_progress', labels: ['microsoft_planner', 'plan:plan-9', 'bucket:bucket-4'] });
     expect(JSON.stringify(normalized.raw)).not.toMatch(/Private task detail|checklist/);
+  });
+
+  test('YouTrack sync reads bounded issue metadata without custom fields, rich content, or provider writes', async () => {
+    jest.dontMock('../src/services/youTrackWorkSignalClient');
+    jest.resetModules();
+    const { YouTrackWorkSignalClient } = require('../src/services/youTrackWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: [{
+        id: '2-18', idReadable: 'SNEUP-18', summary: 'Ship YouTrack connector', project: { id: '0-1', name: 'Sneup release' },
+        created: 1783687200000, updated: 1783893600000, description: 'Private description', comments: [{ text: 'Private comment' }],
+        attachments: [{ name: 'secret.pdf' }], customFields: [{ name: 'Private', value: 'Private custom field' }]
+      }] })
+      .mockResolvedValueOnce({ data: [] }) };
+    const client = new YouTrackWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'perm:youtrack-token' })) } });
+    const result = await client.fetchDelta({ connectorId: 'youtrack', metadata: { fields: { baseUrl: 'https://youtrack.example.com/youtrack' } } }, '2026-07-09T00:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://youtrack.example.com/youtrack/api/issues', expect.objectContaining({
+      params: expect.objectContaining({ '$top': 100, '$skip': 0, fields: expect.stringContaining('summary') }),
+      headers: expect.objectContaining({ Authorization: 'Bearer perm:youtrack-token' }), maxRedirects: 0, proxy: false
+    }));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
+    expect(requested).not.toMatch(/description|comments|attachments|customfields/i);
+    expect(JSON.stringify(result.records)).not.toMatch(/Private description|Private comment|Private custom field|secret\.pdf/);
+    expect(result).toMatchObject({ metadata: { source: 'youtrack_api', issues: 1, contentPolicy: 'issue_metadata_only_no_descriptions_comments_attachments_or_custom_field_values' }, hasMore: false, nextCursor: '2026-07-12T22:00:00.000Z' });
+    expect(result.records).toEqual([expect.objectContaining({ id: 'issue:2-18', issueKey: 'SNEUP-18', project: { id: '0-1', name: 'Sneup release' } })]);
+  });
+
+  test('YouTrack sync rejects untrusted instance URLs and fails closed at its issue cap', async () => {
+    jest.dontMock('../src/services/youTrackWorkSignalClient');
+    jest.resetModules();
+    const { YouTrackWorkSignalClient } = require('../src/services/youTrackWorkSignalClient');
+    const untrustedHttp = { get: jest.fn() };
+    const untrustedClient = new YouTrackWorkSignalClient({ http: untrustedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'youtrack-token' })) } });
+    await expect(untrustedClient.fetchDelta({ metadata: { fields: { baseUrl: 'https://127.0.0.1' } } })).rejects.toMatchObject({ statusCode: 400 });
+    expect(untrustedHttp.get).not.toHaveBeenCalled();
+
+    const previousLimit = process.env.SNEUP_YOUTRACK_MAX_ISSUES;
+    process.env.SNEUP_YOUTRACK_MAX_ISSUES = '1';
+    const cappedHttp = { get: jest.fn().mockResolvedValue({ data: [{ id: '2-1', idReadable: 'S-1', summary: 'One' }] }) };
+    const cappedClient = new YouTrackWorkSignalClient({ http: cappedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'youtrack-token' })) } });
+    try {
+      await expect(cappedClient.fetchDelta({ metadata: { fields: { baseUrl: 'https://youtrack.example.com' } } })).rejects.toMatchObject({ statusCode: 413 });
+      expect(cappedHttp.get).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_YOUTRACK_MAX_ISSUES;
+      else process.env.SNEUP_YOUTRACK_MAX_ISSUES = previousLimit;
+    }
+  });
+
+  test('YouTrack normalization preserves only approved issue metadata', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'youtrack' }, {
+      id: 'issue:2-18', issueId: '2-18', issueKey: 'SNEUP-18', name: 'Ship YouTrack connector', project: { id: '0-1', name: 'Sneup release' },
+      resolvedAt: 1783893600000, updatedAt: 1783893600000, description: 'Private issue detail', comments: ['Private comment'], customFields: ['Private field']
+    });
+    expect(normalized).toMatchObject({ externalId: 'issue:2-18', sourceType: 'issue', title: 'Ship YouTrack connector', description: '', status: 'done', labels: ['youtrack', 'Sneup release'] });
+    expect(JSON.stringify(normalized.raw)).not.toMatch(/Private issue detail|Private comment|Private field/);
   });
 
   test('projects provider signals into normalized work graph records', () => {
@@ -6588,6 +6659,7 @@ describe('optional AI startup', () => {
   test('loads without OPENAI_API_KEY', () => {
     delete process.env.OPENAI_API_KEY;
     jest.resetModules();
+    jest.dontMock('mongoose');
     jest.doMock('../src/services/teamManager', () => ({
       analyzeTeamWorkload: jest.fn()
     }));

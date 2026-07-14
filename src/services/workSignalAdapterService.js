@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -42,6 +42,7 @@ const teamworkWorkSignalClient = require('./teamworkWorkSignalClient');
 const basecampWorkSignalClient = require('./basecampWorkSignalClient');
 const redmineWorkSignalClient = require('./redmineWorkSignalClient');
 const microsoftPlannerWorkSignalClient = require('./microsoftPlannerWorkSignalClient');
+const youTrackWorkSignalClient = require('./youTrackWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -774,6 +775,18 @@ microsoftPlannerAdapter.capabilities.credentialBackedSync = true;
 microsoftPlannerAdapter.list = async account => (await microsoftPlannerWorkSignalClient.fetchDelta(account, null)).records;
 microsoftPlannerAdapter.fetchDelta = (account, cursor) => microsoftPlannerWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('microsoft_planner', microsoftPlannerAdapter);
+
+const youTrackAdapter = buildAdapter('youtrack', 'YouTrack issue metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: 'issue', title: titleFromText(item.name, 'YouTrack issue'), description: '',
+  status: item.resolvedAt ? 'done' : statusFromText(item.status), priority: priorityFromText(item.priority), url: pick(item.url), owners: userNames(item.owners),
+  labels: compact(['youtrack', item.project?.name, item.status, item.priority]), dueAt: undefined,
+  providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.resolvedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'YouTrack issue metadata'),
+  raw: { id: item.id, issueId: item.issueId, issueKey: item.issueKey, project: item.project, status: item.status, priority: item.priority, owners: item.owners, resolvedAt: item.resolvedAt, createdAt: item.createdAt, updatedAt: item.updatedAt, url: item.url }
+}));
+youTrackAdapter.capabilities.credentialBackedSync = true;
+youTrackAdapter.list = async account => (await youTrackWorkSignalClient.fetchDelta(account, null)).records;
+youTrackAdapter.fetchDelta = (account, cursor) => youTrackWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('youtrack', youTrackAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

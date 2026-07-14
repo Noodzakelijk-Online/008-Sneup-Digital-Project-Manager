@@ -206,6 +206,8 @@ Live credential-backed ingestion is available for Trello, Jira, Asana, Slack, Gi
 
 Microsoft Planner uses a dedicated Microsoft OAuth account with `Tasks.Read` only. It reads bounded assigned-task metadata from `/me/planner/tasks`, excludes descriptions, checklists, attachments, labels, comments, and provider writes, and retains only plan/bucket identifiers for work-graph context.
 
+YouTrack uses a permanent token and a public HTTPS base URL. It makes only paginated `GET /api/issues` metadata reads, requests an allowlisted response shape, strips descriptions, comments, attachments, and custom-field values before storage, and fails visibly at its configured issue cap.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations
