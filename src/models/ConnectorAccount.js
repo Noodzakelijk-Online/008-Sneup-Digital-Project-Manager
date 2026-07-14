@@ -75,6 +75,7 @@ const connectorAccountSchema = new mongoose.Schema({
     default: 'local-user'
   },
   lastValidatedAt: Date,
+  credentialsLastRotatedAt: Date,
   lastSyncAt: Date,
   lastError: String
 }, {

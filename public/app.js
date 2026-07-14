@@ -3156,6 +3156,12 @@ function renderConnectors() {
   document.querySelectorAll('[data-connect]').forEach((button) => {
     button.addEventListener('click', () => startConnection(button.dataset.connect));
   });
+  document.querySelectorAll('[data-rotate-credential]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const account = state.accounts.find(item => item.id === button.dataset.rotateCredential);
+      if (account) startConnection(account.connectorId, { account });
+    });
+  });
   document.querySelectorAll('[data-connector-sync]').forEach((button) => {
     button.addEventListener('click', () => syncConnectorAccount(button.dataset.connectorSync));
   });
@@ -3258,9 +3264,9 @@ function renderConnector(connector, account) {
         ${isJira && account ? `<button class="button" data-jira-site="${escapeHtml(account.id)}" type="button">${selectedJiraCloudId ? 'Jira site selected' : 'Select Jira site'}</button>` : ''}
         ${isAsana && account ? `<button class="button" data-asana-workspace="${escapeHtml(account.id)}" type="button">${selectedAsanaWorkspaceGid ? 'Asana workspace selected' : 'Select Asana workspace'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
-        <button class="button ${configured || connector.auth.type !== 'oauth2' ? 'primary' : ''}" data-connect="${connector.id}" type="button">
-          ${connected ? 'Reconnect' : 'Connect'}
-        </button>
+        ${connected && connector.auth.type !== 'oauth2'
+          ? `<button class="button primary" data-rotate-credential="${escapeHtml(account.id)}" type="button">Rotate credential</button>`
+          : `<button class="button ${configured ? 'primary' : ''}" data-connect="${connector.id}" type="button">${connected ? 'Reconnect' : 'Connect'}</button>`}
       </div>
     </div>
   `;
@@ -3401,7 +3407,7 @@ async function startConnection(connectorId, options = {}) {
     if (!data.success) throw new Error(data.error || 'Could not start connection');
 
     if (data.scopeReviewRequired) {
-      openConnectorSafetyReview(connector, data);
+      openConnectorSafetyReview(connector, data, options.account);
       return;
     }
 
@@ -3410,13 +3416,13 @@ async function startConnection(connectorId, options = {}) {
       return;
     }
 
-    openCredentialModal(connector, data);
+    openCredentialModal(connector, data, options.account);
   } catch (error) {
     openNotice(connector.name, error.message);
   }
 }
 
-function openConnectorSafetyReview(connector, data) {
+function openConnectorSafetyReview(connector, data, account) {
   const safety = data.safety || connector.safety || {};
   els.modalTitle.textContent = `Review ${connector.name} access`;
   els.modalBody.innerHTML = `
@@ -3437,13 +3443,14 @@ function openConnectorSafetyReview(connector, data) {
   document.getElementById('cancelScopeReview').addEventListener('click', closeModal);
   document.getElementById('continueScopeReview').addEventListener('click', () => {
     closeModal();
-    startConnection(connector.id, { scopeAcknowledged: true });
+    startConnection(connector.id, { scopeAcknowledged: true, account });
   });
 }
 
-function openCredentialModal(connector, data) {
+function openCredentialModal(connector, data, account) {
   const fields = data.fields || connector.auth.fields || [];
-  els.modalTitle.textContent = `Connect ${connector.name}`;
+  const rotating = Boolean(account);
+  els.modalTitle.textContent = `${rotating ? 'Rotate' : 'Connect'} ${connector.name}`;
   els.modalBody.innerHTML = `
     <form id="credentialForm">
       ${fields.map(field => `
@@ -3456,10 +3463,10 @@ function openCredentialModal(connector, data) {
         <label for="accountName">Account name</label>
         <input id="accountName" name="accountName" type="text" placeholder="${escapeHtml(connector.name)}">
       </div>
-      <div class="notice">Credential storage is locked until MongoDB plus CONNECTOR_ENCRYPTION_KEY are configured. Saving records the scope review without storing your credential in the audit ledger.</div>
+      <div class="notice">Credential storage is locked until MongoDB plus CONNECTOR_ENCRYPTION_KEY are configured. ${rotating ? 'Replacing this credential retains the linked account, renews its scope evidence, and records a secret-free audit event.' : 'Saving records the scope review without storing your credential in the audit ledger.'}</div>
       <div class="toolbar modal-actions">
         <button class="button" type="button" id="cancelCredential">Cancel</button>
-        <button class="button primary" type="submit">Save account</button>
+        <button class="button primary" type="submit">${rotating ? 'Replace credential' : 'Save account'}</button>
       </div>
     </form>
   `;
@@ -3472,7 +3479,7 @@ function openCredentialModal(connector, data) {
       scopeAcknowledged: data.scopeAcknowledged === true
     };
     try {
-      const response = await apiFetch(`/api/connectors/${connector.id}/accounts`, {
+      const response = await apiFetch(rotating ? `/api/connectors/accounts/${account.id}/rotate-credentials` : `/api/connectors/${connector.id}/accounts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)

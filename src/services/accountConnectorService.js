@@ -313,7 +313,6 @@ class AccountConnectorService {
 
   async saveCredentialAccount(connectorId, body = {}, options = {}) {
     const connector = this.requireConnector(connectorId);
-    const safety = buildConnectorSafetyProfile(connector);
 
     if (connector.auth.type === 'oauth2') {
       const error = new Error('Use the OAuth connect endpoint for this connector');
@@ -323,33 +322,7 @@ class AccountConnectorService {
 
     this.requireDatabase();
     this.requireEncryptionKey();
-    if (safety.scopeReviewRequired && body.scopeAcknowledged !== true) {
-      const error = new Error('Review and acknowledge the requested provider scopes before saving credentials');
-      error.statusCode = 400;
-      throw error;
-    }
-
-    const fields = connector.auth.fields || [];
-    const missing = fields
-      .filter(field => field.required && !body[field.name])
-      .map(field => field.name);
-
-    if (missing.length > 0) {
-      const error = new Error(`Missing required fields: ${missing.join(', ')}`);
-      error.statusCode = 400;
-      throw error;
-    }
-
-    const secretPayload = {};
-    const metadataFields = {};
-    for (const field of fields) {
-      if (body[field.name] === undefined) continue;
-      if (field.secret) {
-        secretPayload[field.name] = body[field.name];
-      } else {
-        metadataFields[field.name] = body[field.name];
-      }
-    }
+    const { secretPayload, metadataFields } = this.prepareCredentialPayload(connector, body);
 
     const accountName = body.accountName || metadataFields.workspaceUrl || metadataFields.baseUrl || connector.name;
     const account = new ConnectorAccount({
@@ -380,6 +353,100 @@ class AccountConnectorService {
     await account.save();
     await this.recordConnectionAudit(account, options.actorId);
     return this.sanitizeAccount(account);
+  }
+
+  async rotateCredentialAccount(accountId, body = {}, options = {}) {
+    this.requireDatabase();
+    this.requireEncryptionKey();
+
+    const account = await this.getManagedAccount(accountId, options);
+    const connector = this.requireConnector(account.connectorId);
+    if (connector.auth.type === 'oauth2' || account.authType === 'oauth2') {
+      const error = new Error('OAuth accounts must be reconnected through their provider authorization flow');
+      error.statusCode = 400;
+      throw error;
+    }
+    if (account.authType !== connector.auth.type) {
+      const error = new Error('Connector account authentication type does not match its catalog definition');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const { secretPayload, metadataFields } = this.prepareCredentialPayload(connector, body);
+    const beforeState = this.sanitizeAccount(account);
+    const rollback = {
+      credentials: { ...(account.credentials || {}) },
+      metadata: this.cloneMetadata(account.metadata),
+      accountName: account.accountName,
+      externalAccountId: account.externalAccountId,
+      consent: { ...(account.consent || {}) },
+      status: account.status,
+      lastValidatedAt: account.lastValidatedAt,
+      lastError: account.lastError,
+      credentialsLastRotatedAt: account.credentialsLastRotatedAt
+    };
+
+    account.credentials = {
+      apiKey: Object.keys(secretPayload).length > 0 ? this.encrypt(JSON.stringify(secretPayload)) : undefined
+    };
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: { ...(account.metadata?.fields || {}), ...metadataFields },
+      sync: connector.sync || account.metadata?.sync || []
+    };
+    account.accountName = body.accountName || account.accountName || metadataFields.workspaceUrl || metadataFields.baseUrl || connector.name;
+    account.externalAccountId = body.externalAccountId || account.externalAccountId || account.accountName;
+    account.consent = this.createConsentEvidence(connector, {
+      ...options,
+      scopeAcknowledged: body.scopeAcknowledged === true
+    });
+    account.status = 'connected';
+    account.lastValidatedAt = new Date();
+    account.lastError = undefined;
+    account.credentialsLastRotatedAt = new Date();
+
+    await account.save();
+    try {
+      await this.recordCredentialRotationAudit(account, options.actorId, beforeState);
+    } catch (error) {
+      Object.assign(account, rollback);
+      await account.save();
+      const auditError = new Error('Connector credentials were not rotated because audit evidence could not be recorded');
+      auditError.statusCode = 503;
+      throw auditError;
+    }
+
+    return this.sanitizeAccount(account);
+  }
+
+  prepareCredentialPayload(connector, body = {}) {
+    const safety = buildConnectorSafetyProfile(connector);
+    if (safety.scopeReviewRequired && body.scopeAcknowledged !== true) {
+      const error = new Error('Review and acknowledge the requested provider scopes before saving credentials');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const fields = connector.auth.fields || [];
+    const missing = fields
+      .filter(field => field.required && !body[field.name])
+      .map(field => field.name);
+    if (missing.length > 0) {
+      const error = new Error(`Missing required fields: ${missing.join(', ')}`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return fields.reduce((result, field) => {
+      if (body[field.name] === undefined) return result;
+      if (field.secret) result.secretPayload[field.name] = body[field.name];
+      else result.metadataFields[field.name] = body[field.name];
+      return result;
+    }, { secretPayload: {}, metadataFields: {} });
+  }
+
+  cloneMetadata(metadata = {}) {
+    return JSON.parse(JSON.stringify(metadata || {}));
   }
 
   async deleteAccount(accountId, options = {}) {
@@ -625,6 +692,20 @@ class AccountConnectorService {
     }
   }
 
+  async recordCredentialRotationAudit(account, actor, beforeState) {
+    await AuditEvent.create({
+      workspaceId: account.workspaceId,
+      entityType: 'connector_account',
+      entityId: account._id,
+      action: 'connector_account_credentials_rotated',
+      actor: actor || account.connectedBy || 'local-user',
+      source: 'api',
+      riskLevel: account.consent?.scopeReviewRequired ? 'medium' : 'low',
+      beforeState,
+      afterState: this.sanitizeAccount(account)
+    });
+  }
+
   sanitizeConnector(connector) {
     return {
       id: connector.id,
@@ -660,6 +741,7 @@ class AccountConnectorService {
       consent: this.sanitizeConsent(account.consent),
       metadata: this.sanitizeAccountMetadata(account.metadata),
       lastValidatedAt: account.lastValidatedAt,
+      credentialsLastRotatedAt: account.credentialsLastRotatedAt || null,
       lastSyncAt: account.lastSyncAt,
       lastError: account.lastError,
       createdAt: account.createdAt,

@@ -1308,6 +1308,57 @@ describe('connector registry', () => {
     expect(account).not.toHaveProperty('credentials');
   });
 
+  test('rotates token connector credentials in place with renewed consent and secret-free audit evidence', async () => {
+    const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
+    process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';
+    const account = {
+      _id: 'account-rotation-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'azure_devops',
+      connectorName: 'Azure DevOps',
+      category: 'software_delivery',
+      authType: 'personal_access_token',
+      status: 'failed',
+      accountName: 'Delivery organization',
+      externalAccountId: 'delivery',
+      credentials: { apiKey: accountConnectorService.encrypt(JSON.stringify({ token: 'old-secret' })) },
+      metadata: { fields: { organizationUrl: 'https://dev.azure.com/delivery' }, sync: ['projects', 'work_items'] },
+      consent: { acknowledgedBy: 'previous-operator', scopeReviewRequired: true },
+      lastError: 'Provider rejected the old token',
+      save: jest.fn().mockResolvedValue(undefined)
+    };
+    const managedAccount = jest.spyOn(accountConnectorService, 'getManagedAccount').mockResolvedValue(account);
+    const databaseReady = jest.spyOn(accountConnectorService, 'isDatabaseReady').mockReturnValue(true);
+    const auditRotation = jest.spyOn(accountConnectorService, 'recordCredentialRotationAudit').mockResolvedValue(undefined);
+
+    try {
+      const rotated = await accountConnectorService.rotateCredentialAccount('account-rotation-1', {
+        organizationUrl: 'https://dev.azure.com/delivery',
+        token: 'new-secret',
+        scopeAcknowledged: true
+      }, { workspaceId: 'workspace-1', actorId: 'operator-1' });
+
+      expect(accountConnectorService.getAccountCredentials(account)).toEqual({ token: 'new-secret' });
+      expect(account.credentials.apiKey).not.toContain('old-secret');
+      expect(account.status).toBe('connected');
+      expect(account.lastError).toBeUndefined();
+      expect(account.credentialsLastRotatedAt).toBeInstanceOf(Date);
+      expect(rotated).not.toHaveProperty('credentials');
+      expect(rotated.credentialsLastRotatedAt).toBe(account.credentialsLastRotatedAt);
+      expect(auditRotation).toHaveBeenCalledWith(account, 'operator-1', expect.objectContaining({
+        connectorId: 'azure_devops'
+      }));
+      expect(JSON.stringify(auditRotation.mock.calls[0])).not.toContain('new-secret');
+      expect(JSON.stringify(auditRotation.mock.calls[0])).not.toContain('old-secret');
+    } finally {
+      managedAccount.mockRestore();
+      databaseReady.mockRestore();
+      auditRotation.mockRestore();
+      if (originalEncryptionKey === undefined) delete process.env.CONNECTOR_ENCRYPTION_KEY;
+      else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;
+    }
+  });
+
   test('lists Jira sites with an in-process token and persists only the selected cloud ID', async () => {
     const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
     process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';

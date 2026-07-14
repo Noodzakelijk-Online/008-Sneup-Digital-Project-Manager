@@ -96,6 +96,20 @@ router.post('/accounts/:accountId/validate', requirePermission('connectors:manag
   }
 });
 
+router.post('/accounts/:accountId/rotate-credentials', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.rotateCredentialAccount(
+      req.params.accountId,
+      req.body,
+      connectorRequestOptions(req)
+    );
+    res.json({ success: true, account });
+  } catch (error) {
+    logger.error('Failed to rotate connector credentials:', error);
+    sendError(res, error);
+  }
+});
+
 router.delete('/accounts/:accountId', requirePermission('connectors:manage'), async (req, res) => {
   try {
     const result = await accountConnectorService.deleteAccount(req.params.accountId, connectorRequestOptions(req));
