@@ -8,6 +8,7 @@ const { safeExternalSourceUrl } = require('../src/utils/externalSourceUrl');
 const {
   getPermissionsForRoles,
   hasPermission,
+  createApiRateLimiter,
   requireApiAccess,
   requirePermission,
   verifyTrelloWebhook
@@ -6181,6 +6182,56 @@ describe('command-center response timing telemetry', () => {
     expect(telemetry.getView({ method: 'POST', path: '/api/recommendations' })).toBeNull();
     expect(telemetry.getView({ method: 'GET', path: '/api/cards/private-card' })).toBeNull();
     expect(telemetry.getView({ method: 'GET', path: '/api/connectors' })).toBe('connectors');
+  });
+});
+
+describe('bounded API rate limiting', () => {
+  test('prunes aggregate bucket state before admitting unbounded route diversity', () => {
+    let now = 1000;
+    const limiter = createApiRateLimiter({
+      now: () => now,
+      maxBuckets: 3,
+      pruneSlack: 1,
+      maxRequests: 5,
+      windowMs: 60000
+    });
+    const request = (path, ip) => createRequest({
+      path,
+      ip,
+      connection: { remoteAddress: ip },
+      socket: { remoteAddress: ip }
+    });
+
+    for (let index = 0; index < 4; index += 1) {
+      const req = request(`/api/boards/${index}`, `203.0.113.${index + 1}`);
+      const res = createResponse();
+      limiter(req, res, jest.fn());
+      now += 1;
+    }
+
+    const metrics = limiter.getMetrics();
+    expect(metrics).toMatchObject({
+      retention: 'in_memory_bounded_rate_buckets',
+      maxBuckets: 3,
+      pruneSlack: 1,
+      bucketCount: 2,
+      leastRecentlyUsedBucketsPruned: 2
+    });
+    expect(JSON.stringify(metrics)).not.toContain('203.0.113');
+    expect(JSON.stringify(metrics)).not.toContain('/api/boards');
+  });
+
+  test('keeps rate enforcement while reporting only aggregate rejected-request pressure', () => {
+    const limiter = createApiRateLimiter({ maxBuckets: 3, pruneSlack: 1, maxRequests: 1 });
+    const first = createResponse();
+    const second = createResponse();
+
+    limiter(createRequest(), first, jest.fn());
+    limiter(createRequest(), second, jest.fn());
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(429);
+    expect(limiter.getMetrics()).toMatchObject({ rejectedRequests: 1, bucketCount: 1 });
   });
 });
 

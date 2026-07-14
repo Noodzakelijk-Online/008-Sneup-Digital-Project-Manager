@@ -42,6 +42,7 @@ Reduced avoidable resource use:
 - OpenAI client is not constructed unless `OPENAI_API_KEY` is present.
 - Duplicate Mongoose index declarations were removed to reduce startup warnings and index churn.
 - The command center loads hidden views on demand and exposes bounded, recent response-time p50/p95 summaries for the known view APIs. The telemetry retains neither request data nor unbounded history.
+- API rate limiting has a hard bounded bucket map, expires stale state first, evicts least-recently-used pressure state only when needed, and exposes aggregate capacity metrics without request identifiers.
 
 Installer footprint:
 

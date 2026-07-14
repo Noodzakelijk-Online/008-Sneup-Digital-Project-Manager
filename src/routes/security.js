@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const responseTimingService = require('../services/responseTimingService');
-const { requirePermission } = require('../utils/requestSecurity');
+const { getRateLimitMetrics, requirePermission } = require('../utils/requestSecurity');
 
 const publicAuthContext = (auth = {}) => ({
   authenticated: Boolean(auth.authenticated),
@@ -35,7 +35,8 @@ router.get('/context', (req, res) => {
 router.get('/response-timing', requirePermission('audit:read'), (req, res) => {
   res.json({
     success: true,
-    timing: responseTimingService.getSummary()
+    timing: responseTimingService.getSummary(),
+    rateLimit: getRateLimitMetrics()
   });
 });
 

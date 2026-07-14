@@ -6,6 +6,7 @@ const state = {
   operationsBrief: null,
   jobDashboard: null,
   responseTiming: null,
+  rateLimitMetrics: null,
   connectors: [],
   categories: [],
   accounts: [],
@@ -647,10 +648,12 @@ async function loadJobDashboard() {
     if (!data.success) throw new Error(data.error || 'Job health unavailable');
     state.jobDashboard = data.dashboard;
     state.responseTiming = timing.timing || null;
+    state.rateLimitMetrics = timing.rateLimit || null;
     renderJobDashboard();
   } catch (error) {
     state.jobDashboard = null;
     state.responseTiming = null;
+    state.rateLimitMetrics = null;
     els.jobHealthCount.textContent = '0 tracked';
     els.jobHealthList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
   }
@@ -934,13 +937,15 @@ function renderJobDashboard() {
 
 function renderResponseTiming() {
   const timing = state.responseTiming;
+  const rateLimit = state.rateLimitMetrics;
   const views = (timing?.views || []).filter(view => view.samples > 0).slice(0, 8);
-  if (!timing || views.length === 0) return '';
+  if ((!timing || views.length === 0) && !rateLimit) return '';
   return `
     <div class="item">
       <div class="item-title"><strong>Command-center response timing</strong><span class="pill healthy">bounded</span></div>
       <div class="meta">Recent in-memory samples only. No request bodies, identifiers, query strings, or credentials are retained.</div>
-      <div class="meta">${views.map(view => `<span>${escapeHtml(view.view)}: p50 ${view.p50Ms}ms, p95 ${view.p95Ms}ms (${view.samples})</span>`).join('')}</div>
+      ${views.length > 0 ? `<div class="meta">${views.map(view => `<span>${escapeHtml(view.view)}: p50 ${view.p50Ms}ms, p95 ${view.p95Ms}ms (${view.samples})</span>`).join('')}</div>` : ''}
+      ${rateLimit ? `<div class="meta"><span>Rate-limit buckets: ${rateLimit.bucketCount}/${rateLimit.maxBuckets} (${rateLimit.utilizationPercent}%)</span><span>${rateLimit.leastRecentlyUsedBucketsPruned} pressure pruned</span><span>${rateLimit.rejectedRequests} rejected</span></div>` : ''}
     </div>
   `;
 }

@@ -3,39 +3,6 @@ const mongoose = require('mongoose');
 const logger = require('./logger');
 const { isDatabaseConnected } = require('./database');
 
-const rateBuckets = new Map();
-const MAX_RATE_BUCKETS = Number(process.env.SNEUP_RATE_LIMIT_MAX_BUCKETS || 10000);
-const RATE_BUCKET_PRUNE_SLACK = Number(process.env.SNEUP_RATE_LIMIT_PRUNE_SLACK || 2500);
-
-const pruneRateBuckets = (now = Date.now()) => {
-  if (rateBuckets.size <= MAX_RATE_BUCKETS) {
-    return;
-  }
-
-  for (const [bucketKey, value] of rateBuckets.entries()) {
-    if (value.resetAt <= now) {
-      rateBuckets.delete(bucketKey);
-    }
-  }
-
-  if (rateBuckets.size <= MAX_RATE_BUCKETS) {
-    return;
-  }
-
-  const sorted = [...rateBuckets.entries()]
-    .map(([bucketKey, value]) => ({
-      bucketKey,
-      lastSeenAt: value.lastSeenAt || value.resetAt || 0
-    }))
-    .sort((left, right) => left.lastSeenAt - right.lastSeenAt);
-
-  const targetSize = Math.max(128, MAX_RATE_BUCKETS - RATE_BUCKET_PRUNE_SLACK);
-  const removeCount = Math.max(1, rateBuckets.size - targetSize);
-  sorted.slice(0, removeCount).forEach((entry) => {
-    rateBuckets.delete(entry.bucketKey);
-  });
-};
-
 const localAddresses = new Set([
   '127.0.0.1',
   '::1',
@@ -367,38 +334,125 @@ const requireApiAccess = async (req, res, next) => {
   });
 };
 
-const apiRateLimit = (req, res, next) => {
-  if (!req.path.startsWith('/api/')) {
-    return next();
-  }
-
-  const windowMs = Number(process.env.SNEUP_RATE_LIMIT_WINDOW_MS || 60 * 1000);
-  const maxRequests = Number(process.env.SNEUP_RATE_LIMIT_MAX || (isLocalRequest(req) ? 600 : 120));
-  const now = Date.now();
-  const key = `${getClientIp(req)}:${req.path.split('/').slice(0, 3).join('/')}`;
-  const bucket = rateBuckets.get(key);
-
-  if (!bucket || bucket.resetAt <= now) {
-    rateBuckets.set(key, { count: 1, resetAt: now + windowMs, lastSeenAt: now });
-    pruneRateBuckets(now);
-    return next();
-  }
-
-  bucket.count += 1;
-  bucket.lastSeenAt = now;
-  if (bucket.count > maxRequests) {
-    return res.status(429).json({
-      success: false,
-      error: 'Too many requests. Please wait a moment and try again.'
-    });
-  }
-
-  if (rateBuckets.size > MAX_RATE_BUCKETS) {
-    pruneRateBuckets(now);
-  }
-
-  return next();
+const boundedInteger = (value, fallback, min, max) => {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
 };
+
+const createApiRateLimiter = (options = {}) => {
+  const rateBuckets = new Map();
+  const maxBuckets = boundedInteger(
+    options.maxBuckets ?? process.env.SNEUP_RATE_LIMIT_MAX_BUCKETS,
+    10000,
+    1,
+    100000
+  );
+  const pruneSlack = boundedInteger(
+    options.pruneSlack ?? process.env.SNEUP_RATE_LIMIT_PRUNE_SLACK,
+    Math.min(2500, Math.max(0, maxBuckets - 1)),
+    0,
+    Math.max(0, maxBuckets - 1)
+  );
+  const now = options.now || (() => Date.now());
+  const stats = {
+    expiredBucketsPruned: 0,
+    leastRecentlyUsedBucketsPruned: 0,
+    rejectedRequests: 0,
+    lastPrunedAt: null
+  };
+
+  const pruneBuckets = (timestamp, reserve = 0) => {
+    let expiredBucketsPruned = 0;
+    for (const [bucketKey, value] of rateBuckets.entries()) {
+      if (value.resetAt <= timestamp) {
+        rateBuckets.delete(bucketKey);
+        expiredBucketsPruned += 1;
+      }
+    }
+
+    let leastRecentlyUsedBucketsPruned = 0;
+    if (rateBuckets.size + reserve > maxBuckets) {
+      const targetSize = Math.max(0, maxBuckets - pruneSlack - reserve);
+      const removeCount = Math.max(1, rateBuckets.size - targetSize);
+      const oldestBuckets = [...rateBuckets.entries()]
+        .map(([bucketKey, value]) => ({
+          bucketKey,
+          lastSeenAt: value.lastSeenAt || value.resetAt || 0
+        }))
+        .sort((left, right) => left.lastSeenAt - right.lastSeenAt)
+        .slice(0, removeCount);
+
+      oldestBuckets.forEach(({ bucketKey }) => rateBuckets.delete(bucketKey));
+      leastRecentlyUsedBucketsPruned = oldestBuckets.length;
+    }
+
+    if (expiredBucketsPruned || leastRecentlyUsedBucketsPruned) {
+      stats.expiredBucketsPruned += expiredBucketsPruned;
+      stats.leastRecentlyUsedBucketsPruned += leastRecentlyUsedBucketsPruned;
+      stats.lastPrunedAt = new Date(timestamp).toISOString();
+    }
+  };
+
+  const middleware = (req, res, next) => {
+    if (!req.path.startsWith('/api/')) {
+      return next();
+    }
+
+    const windowMs = boundedInteger(
+      options.windowMs ?? process.env.SNEUP_RATE_LIMIT_WINDOW_MS,
+      60 * 1000,
+      1000,
+      24 * 60 * 60 * 1000
+    );
+    const defaultMaxRequests = isLocalRequest(req) ? 600 : 120;
+    const maxRequests = boundedInteger(
+      options.maxRequests ?? process.env.SNEUP_RATE_LIMIT_MAX,
+      defaultMaxRequests,
+      1,
+      100000
+    );
+    const timestamp = now();
+    const key = `${getClientIp(req)}:${req.path.split('/').slice(0, 3).join('/')}`;
+    const bucket = rateBuckets.get(key);
+
+    if (!bucket || bucket.resetAt <= timestamp) {
+      if (bucket) rateBuckets.delete(key);
+      pruneBuckets(timestamp, 1);
+      rateBuckets.set(key, { count: 1, resetAt: timestamp + windowMs, lastSeenAt: timestamp });
+      return next();
+    }
+
+    bucket.count += 1;
+    bucket.lastSeenAt = timestamp;
+    if (bucket.count > maxRequests) {
+      stats.rejectedRequests += 1;
+      return res.status(429).json({
+        success: false,
+        error: 'Too many requests. Please wait a moment and try again.'
+      });
+    }
+
+    return next();
+  };
+
+  middleware.getMetrics = () => ({
+    retention: 'in_memory_bounded_rate_buckets',
+    bucketCount: rateBuckets.size,
+    maxBuckets,
+    pruneSlack,
+    utilizationPercent: Math.round((rateBuckets.size / maxBuckets) * 100),
+    expiredBucketsPruned: stats.expiredBucketsPruned,
+    leastRecentlyUsedBucketsPruned: stats.leastRecentlyUsedBucketsPruned,
+    rejectedRequests: stats.rejectedRequests,
+    lastPrunedAt: stats.lastPrunedAt
+  });
+
+  return middleware;
+};
+
+const apiRateLimit = createApiRateLimiter();
+const getRateLimitMetrics = () => apiRateLimit.getMetrics();
 
 const buildAllowedOrigins = () => {
   const localPort = String(process.env.PORT || 3000).trim();
@@ -527,7 +581,9 @@ module.exports = {
   buildAuthContext,
   clampInteger,
   corsOptions,
+  createApiRateLimiter,
   extractApiKey,
+  getRateLimitMetrics,
   getPermissionsForRoles,
   hasPermission,
   isPublicInviteAcceptance,
