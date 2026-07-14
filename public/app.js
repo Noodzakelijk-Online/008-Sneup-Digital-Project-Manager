@@ -32,6 +32,7 @@ const state = {
   enhancementStatus: 'all',
   reports: [],
   forecast: null,
+  loadedViews: new Set(),
   ledger: {
     decisions: [],
     recommendations: [],
@@ -149,7 +150,7 @@ document.querySelectorAll('[data-view-button]').forEach((button) => {
   button.addEventListener('click', () => showView(button.dataset.viewButton));
 });
 
-document.getElementById('refreshButton').addEventListener('click', loadAll);
+document.getElementById('refreshButton').addEventListener('click', () => loadAll({ force: true }));
 document.getElementById('approvalButton').addEventListener('click', () => showView('approvals'));
 document.getElementById('connectorButton').addEventListener('click', () => showView('connectors'));
 els.setupButton.addEventListener('click', () => openFirstRunSetup());
@@ -162,7 +163,7 @@ els.workspaceSelect.addEventListener('change', async (event) => {
   } else {
     localStorage.removeItem('sneup.workspaceId');
   }
-  await loadAll();
+  await loadAll({ force: true });
 });
 document.getElementById('closeModal').addEventListener('click', closeModal);
 els.modal.addEventListener('click', (event) => {
@@ -203,7 +204,7 @@ els.enhancementAreaFilter.addEventListener('change', () => {
   loadEnhancements();
 });
 
-function showView(viewName) {
+async function showView(viewName) {
   document.querySelectorAll('[data-view-button]').forEach((button) => {
     button.classList.toggle('active', button.dataset.viewButton === viewName);
   });
@@ -220,6 +221,7 @@ function showView(viewName) {
     workspaces: 'Workspace administration'
   };
   document.getElementById('pageTitle').textContent = titles[viewName] || titles.overview;
+  await loadView(viewName);
 }
 
 function openFirstRunSetup() {
@@ -283,21 +285,51 @@ function openFirstRunSetup() {
   });
 }
 
-async function loadAll() {
-  await loadSecurityContext();
-  renderEnhancementFilters();
-  await Promise.all([
+const viewLoaders = {
+  overview: () => Promise.all([
     loadMissionControl(),
     loadOperationsBrief(),
-    loadJobDashboard(),
-    loadConnectors(),
-    loadEnhancements(),
-    loadForecast(),
-    loadReports(),
-    loadWorkSignals(),
-    loadOperationsLedger(),
-    loadWorkspaceAdmin()
-  ]);
+    loadJobDashboard()
+  ]),
+  approvals: loadOperationsLedger,
+  connectors: loadConnectors,
+  enhancements: loadEnhancements,
+  signals: loadWorkSignals,
+  forecasts: loadForecast,
+  reports: loadReports,
+  workspaces: loadWorkspaceAdmin
+};
+
+const deferredViewCounts = {
+  approvals: els.approvalCount,
+  connectors: els.connectorCount,
+  enhancements: els.enhancementCount,
+  signals: els.workSignalCount,
+  forecasts: els.forecastCount,
+  reports: els.reportCount,
+  workspaces: els.workspaceCount
+};
+
+function markDeferredViewCounts() {
+  Object.entries(deferredViewCounts).forEach(([viewName, element]) => {
+    if (!state.loadedViews.has(viewName)) element.textContent = '...';
+  });
+}
+
+async function loadView(viewName, options = {}) {
+  const loader = viewLoaders[viewName];
+  if (!loader || (!options.force && state.loadedViews.has(viewName))) return;
+  await loader();
+  state.loadedViews.add(viewName);
+}
+
+async function loadAll(options = {}) {
+  await loadSecurityContext();
+  renderEnhancementFilters();
+  if (options.force) state.loadedViews.clear();
+  if (options.force || state.loadedViews.size === 0) markDeferredViewCounts();
+  const activeView = document.querySelector('[data-view-button].active')?.dataset.viewButton || 'overview';
+  await loadView(activeView, { force: options.force });
 }
 
 async function loadReports() {
@@ -3698,7 +3730,7 @@ function openInviteAcceptance(rawToken) {
       state.activeWorkspaceId = data.workspace.id;
       localStorage.setItem('sneup.workspaceId', state.activeWorkspaceId);
       closeModal();
-      await loadAll();
+      await loadAll({ force: true });
       showView('overview');
     } catch (error) {
       openNotice('Unable to join workspace', error.message);

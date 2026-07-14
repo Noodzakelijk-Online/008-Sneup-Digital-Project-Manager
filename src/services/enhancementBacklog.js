@@ -313,6 +313,22 @@ const enhancements = [
       'Scheduled intervention follow-up and escalation scans stay within the requested workspace.',
       'A failed candidate path leaves the original intervention eligible for a later safe retry.'
     ]
+  },
+  {
+    id: 'ENH-020',
+    priority: 'P2',
+    area: 'resource',
+    title: 'Load command-center data only when its view is opened',
+    evidence: 'The initial overview no longer fans out to every hidden dashboard view. Sneup loads the overview, operations brief, and job health immediately, then loads each ledger, connector, signal, forecast, report, and workspace surface on demand. Explicit refreshes and workspace changes invalidate the cache so operators always receive fresh scoped data.',
+    impact: 'Cuts avoidable initial API and database work while keeping each view responsive when Robert opens it.',
+    effort: 'S',
+    status: 'done',
+    nextStep: 'Add bounded response timing telemetry to quantify live workspace load improvements.',
+    acceptanceCriteria: [
+      'Initial overview loading avoids requests for hidden feature views.',
+      'Opening a navigation view loads its data exactly when needed.',
+      'Refresh and workspace changes invalidate cached view data.'
+    ]
   }
 ];
 
