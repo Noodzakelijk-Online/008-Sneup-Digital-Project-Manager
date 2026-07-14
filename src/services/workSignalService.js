@@ -41,6 +41,7 @@ const TYPE_ALIASES = {
   pr: 'pull_request',
   document: 'document',
   doc: 'document',
+  survey: 'survey',
   file: 'file',
   folder: 'folder',
   directory: 'folder',

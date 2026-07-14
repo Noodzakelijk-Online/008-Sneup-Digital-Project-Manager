@@ -18,6 +18,7 @@ This backlog turns the high-level improvement plan into concrete engineering fin
 - ENH-001: TestRail is now the 75th bounded read-only credential-backed connector. It reads selected-project active test-run metadata only, rejects private-network and paginated-overflow targets, and excludes cases, results, descriptions, references, custom fields, attachments, and provider writes.
 - ENH-001: BrowserStack is now the 76th bounded read-only credential-backed connector. It reads one capped Automate build page from BrowserStack's fixed API host and excludes public URLs, tags, sessions, logs, browser/device data, and provider writes.
 - ENH-001: OneDrive is now the 77th bounded read-only credential-backed connector. It uses a standalone Microsoft OAuth connection with Files.Read only for one capped root-item page and excludes file content, web URLs, permissions, versions, shared links, and provider writes.
+- ENH-001: SurveyMonkey is now the 78th bounded read-only credential-backed connector. It reads one capped survey-list page with a View Surveys token and excludes questions, responses, collectors, contacts, links, and provider writes.
 
 ## Findings
 

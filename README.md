@@ -213,6 +213,8 @@ BrowserStack is available with a username and access key. Sneup performs one fix
 
 OneDrive is available as a separate Microsoft OAuth connection with `Files.Read` only. Sneup makes one bounded GET to the signed-in user's drive root, fails visibly if Graph signals a further page, and retains only redacted item names, type, and created/updated metadata. It excludes file content, web URLs, permissions, versions, shared links, and provider writes.
 
+SurveyMonkey is available with a View Surveys access token. Sneup makes one bounded survey-list GET and retains only redacted survey title and ID. It excludes questions, responses, collectors, contacts, links, and provider writes.
+
 Businessmap (formerly Kanbanize) is additionally available with its API-v2 account endpoint and API key. Sneup accepts one public `https://account.kanbanize.com` URL, uses GET-only bounded active-board and paginated active-card reads, and excludes descriptions, comments, custom fields, files, dependencies, users, time data, workflow configuration, and provider writes.
 
 Microsoft Planner uses a dedicated Microsoft OAuth account with `Tasks.Read` only. It reads bounded assigned-task metadata from `/me/planner/tasks`, excludes descriptions, checklists, attachments, labels, comments, and provider writes, and retains only plan/bucket identifiers for work-graph context.

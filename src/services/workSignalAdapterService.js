@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'zoom', 'miro', 'dropbox', 'onedrive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -65,6 +65,7 @@ const makeWorkSignalClient = require('./makeWorkSignalClient');
 const testRailWorkSignalClient = require('./testRailWorkSignalClient');
 const browserStackWorkSignalClient = require('./browserStackWorkSignalClient');
 const oneDriveWorkSignalClient = require('./oneDriveWorkSignalClient');
+const surveyMonkeyWorkSignalClient = require('./surveyMonkeyWorkSignalClient');
 const datadogWorkSignalClient = require('./datadogWorkSignalClient');
 const zendeskWorkSignalClient = require('./zendeskWorkSignalClient');
 const freshdeskWorkSignalClient = require('./freshdeskWorkSignalClient');
@@ -1261,6 +1262,27 @@ oneDriveAdapter.capabilities.credentialBackedSync = true;
 oneDriveAdapter.list = async account => (await oneDriveWorkSignalClient.fetchDelta(account, null)).records;
 oneDriveAdapter.fetchDelta = (account, cursor) => oneDriveWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('onedrive', oneDriveAdapter);
+
+const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'survey'),
+  title: titleFromText(item.name, 'SurveyMonkey survey'),
+  description: '',
+  status: item.status || 'open',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['survey_monkey', item.sourceType]),
+  dueAt: undefined,
+  providerCreatedAt: undefined,
+  providerUpdatedAt: undefined,
+  evidenceRefs: baseEvidence(account, item, 'SurveyMonkey survey metadata'),
+  raw: { id: item.id, sourceType: item.sourceType, surveyId: item.surveyId, status: item.status }
+}));
+surveyMonkeyAdapter.capabilities.credentialBackedSync = true;
+surveyMonkeyAdapter.list = async account => (await surveyMonkeyWorkSignalClient.fetchDelta(account, null)).records;
+surveyMonkeyAdapter.fetchDelta = (account, cursor) => surveyMonkeyWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('survey_monkey', surveyMonkeyAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

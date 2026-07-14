@@ -15,7 +15,7 @@ const enhancements = [
     impact: 'Turns the connector marketplace from account linking into cross-tool project ingestion.',
     effort: 'XL',
     status: 'in-progress',
-    nextStep: 'Add the next credential-backed provider client, preserving bounded read-only sync and provider-specific health evidence. TestRail provides selected-project active test-run health metadata, BrowserStack provides one fixed-host build-health page, and OneDrive provides one Files.Read-only root-item page.',
+    nextStep: 'Add the next credential-backed provider client, preserving bounded read-only sync and provider-specific health evidence. TestRail provides selected-project active test-run health metadata, BrowserStack provides one fixed-host build-health page, OneDrive provides one Files.Read-only root-item page, and SurveyMonkey provides one View Surveys metadata page.',
     acceptanceCriteria: [
       'Each adapter exposes list, fetchDelta, normalize, and applyAction methods.',
       'A scheduled job syncs connected accounts with retries and per-provider rate limits.',

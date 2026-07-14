@@ -98,6 +98,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/testRailWorkSignalClient');
     jest.dontMock('../src/services/browserStackWorkSignalClient');
     jest.dontMock('../src/services/oneDriveWorkSignalClient');
+    jest.dontMock('../src/services/surveyMonkeyWorkSignalClient');
     jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/zendeskWorkSignalClient');
     jest.dontMock('../src/services/freshdeskWorkSignalClient');
@@ -2609,6 +2610,21 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(workSignalAdapterService.getAdapter('onedrive').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
     expect(workSignalService.normalizeProviderRecord(account, { id: 'file:item-1', sourceType: 'file', itemId: 'item-1', name: 'Release brief', status: 'open' })).toMatchObject({ sourceType: 'file', status: 'open' });
+  });
+
+  test('SurveyMonkey adapter delegates bounded survey reads and preserves survey state through normalization', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'survey:survey-1' }] });
+    jest.doMock('../src/services/surveyMonkeyWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const workSignalService = require('../src/services/workSignalService');
+    const account = { connectorId: 'survey_monkey', _id: new mongoose.Types.ObjectId() };
+
+    await workSignalAdapterService.fetchDelta(account, 'opaque-cursor');
+
+    expect(fetchDelta).toHaveBeenCalledWith(account, 'opaque-cursor');
+    expect(workSignalAdapterService.getAdapter('survey_monkey').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+    expect(workSignalService.normalizeProviderRecord(account, { id: 'survey:survey-1', sourceType: 'survey', surveyId: 'survey-1', name: 'Customer feedback', status: 'open' })).toMatchObject({ sourceType: 'survey', status: 'open' });
   });
 
   test('Datadog adapter delegates live delta reads to the credential-backed client', async () => {
@@ -5229,6 +5245,32 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_ONEDRIVE_MAX_ITEMS; process.env.SNEUP_ONEDRIVE_MAX_ITEMS = '1';
     const capped = new OneDriveWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: { value: [{ id: 'item-1', name: 'One' }], '@odata.nextLink': 'https://graph.microsoft.com/next' } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'onedrive-token' })) } });
     try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_ONEDRIVE_MAX_ITEMS; else process.env.SNEUP_ONEDRIVE_MAX_ITEMS = previous; }
+  });
+
+  test('SurveyMonkey sync reads one bounded survey page without questions, responses, collectors, contacts, links, or provider writes', async () => {
+    jest.dontMock('../src/services/surveyMonkeyWorkSignalClient');
+    jest.resetModules();
+    const { SurveyMonkeyWorkSignalClient } = require('../src/services/surveyMonkeyWorkSignalClient');
+    const http = { get: jest.fn(() => Promise.resolve({ data: { data: [{ id: 'survey-1', title: 'Customer private@email.test https://private.example/survey', nickname: 'private', href: 'https://api.surveymonkey.com/v3/surveys/survey-1', pages: [{ questions: [{ heading: 'Private question' }] }], collectors: [{ id: 'private-collector' }], responses: [{ id: 'private-response' }] }], total: 1, links: { self: 'https://api.surveymonkey.com/v3/surveys?page=1' } } })) };
+    const client = new SurveyMonkeyWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'surveymonkey-token' })) } });
+    const result = await client.fetchDelta({}, 'opaque-cursor');
+
+    expect(http.get).toHaveBeenCalledWith('https://api.surveymonkey.com/v3/surveys', expect.objectContaining({ params: { page: 1, per_page: 50 }, headers: expect.objectContaining({ Authorization: 'Bearer surveymonkey-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/private@email\.test|private\.example|private-collector|private-response|Private question|surveymonkey-token/);
+    expect(result).toMatchObject({ metadata: { source: 'surveymonkey_api', surveys: 1 }, nextCursor: 'opaque-cursor' });
+    expect(result.records).toEqual([expect.objectContaining({ id: 'survey:survey-1', sourceType: 'survey', status: 'open' })]);
+  });
+
+  test('SurveyMonkey sync rejects missing credentials and fails closed at the survey cap', async () => {
+    jest.dontMock('../src/services/surveyMonkeyWorkSignalClient');
+    jest.resetModules();
+    const { SurveyMonkeyWorkSignalClient } = require('../src/services/surveyMonkeyWorkSignalClient');
+    const invalid = new SurveyMonkeyWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({})) } });
+    await expect(invalid.fetchDelta({})).rejects.toMatchObject({ statusCode: 503 });
+    const previous = process.env.SNEUP_SURVEYMONKEY_MAX_SURVEYS; process.env.SNEUP_SURVEYMONKEY_MAX_SURVEYS = '1';
+    const capped = new SurveyMonkeyWorkSignalClient({ http: { get: jest.fn(() => Promise.resolve({ data: { data: [{ id: 'survey-1', title: 'One' }], total: 2, links: { next: 'https://api.surveymonkey.com/v3/surveys?page=2' } } })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'surveymonkey-token' })) } });
+    try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_SURVEYMONKEY_MAX_SURVEYS; else process.env.SNEUP_SURVEYMONKEY_MAX_SURVEYS = previous; }
   });
 
   test('Datadog sync reads bounded monitor and active incident metadata without queries, messages, tags, or provider writes', async () => {
