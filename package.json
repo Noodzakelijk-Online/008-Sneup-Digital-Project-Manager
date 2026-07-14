@@ -10,6 +10,7 @@
     "dist:win": "npm run build:installer",
     "dev": "nodemon src/index.js",
     "migrate:workspace": "node scripts/migrate-workspace-scope.js",
+    "evaluate:recommendations": "node scripts/evaluate-recommendations.js",
     "test": "jest",
     "lint": "eslint src/**/*.js"
   },

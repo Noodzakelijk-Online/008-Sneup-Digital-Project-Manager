@@ -1,6 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const enhancementBacklog = require('../services/enhancementBacklog');
+const recommendationEvaluationService = require('../services/recommendationEvaluationService');
+
+router.get('/evaluations/recommendations', (req, res) => {
+  const report = recommendationEvaluationService.runSuite();
+  res.json({ success: true, report });
+});
 
 router.get('/', (req, res) => {
   const filters = {

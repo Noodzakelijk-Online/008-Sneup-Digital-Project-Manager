@@ -27,6 +27,7 @@ const state = {
   sessionToken: sessionStorage.getItem(SESSION_TOKEN_KEY) || '',
   enhancements: [],
   enhancementSummary: {},
+  recommendationEvaluation: null,
   enhancementPriority: 'all',
   enhancementArea: 'all',
   enhancementStatus: 'all',
@@ -551,13 +552,18 @@ async function loadEnhancements() {
     if (state.enhancementPriority !== 'all') params.set('priority', state.enhancementPriority);
     if (state.enhancementArea !== 'all') params.set('area', state.enhancementArea);
     if (state.enhancementStatus !== 'all') params.set('status', state.enhancementStatus);
-    const response = await fetchApi(`/api/enhancements${params.toString() ? `?${params}` : ''}`);
+    const [response, evaluationResponse] = await Promise.all([
+      fetchApi(`/api/enhancements${params.toString() ? `?${params}` : ''}`),
+      fetchApi('/api/enhancements/evaluations/recommendations')
+    ]);
     state.enhancements = response.enhancements || [];
     state.enhancementSummary = response.summary || {};
+    state.recommendationEvaluation = evaluationResponse.report || null;
     renderEnhancements();
   } catch (error) {
     state.enhancements = [];
     state.enhancementSummary = {};
+    state.recommendationEvaluation = null;
     renderEnhancements(error.message);
   }
 }
@@ -2657,6 +2663,7 @@ function renderEnhancements(errorMessage = '') {
   const byPriority = summary.byPriority || {};
   const byArea = summary.byArea || {};
   const byStatus = summary.byStatus || {};
+  const evaluation = state.recommendationEvaluation;
   els.enhancementCount.textContent = enhancements.length;
   els.enhancementStatusSummary.textContent = `${enhancements.length} total`;
 
@@ -2673,7 +2680,8 @@ function renderEnhancements(errorMessage = '') {
     ['In progress', byStatus['in-progress'] || statuses['in-progress'] || 0],
     ['Needs research', byStatus['needs-research'] || statuses['needs-research'] || 0],
     ['Done', byStatus.done || statuses.done || 0],
-    ['Blocked', byStatus.blocked || 0]
+    ['Blocked', byStatus.blocked || 0],
+    ['AI evaluation', evaluation ? `${evaluation.score}%` : 'not run']
   ].map(([label, value]) => `
     <div class="metric">
       <span>${escapeHtml(label)}</span>
@@ -2687,6 +2695,9 @@ function renderEnhancements(errorMessage = '') {
     .join(' | ');
   if (areas) {
     els.enhancementMetrics.innerHTML += `<div class="metric"><span>By area</span><strong>${escapeHtml(areas)}</strong></div>`;
+  }
+  if (evaluation) {
+    els.enhancementMetrics.innerHTML += `<div class="metric"><span>Evaluation scenarios</span><strong>${escapeHtml(`${evaluation.passed}/${evaluation.total} passed`)}</strong></div>`;
   }
 
   els.enhancementsList.innerHTML = notice + listOrEmpty(enhancements, renderEnhancement);

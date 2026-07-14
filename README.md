@@ -315,6 +315,7 @@ Stores patterns, feedback, and recommendations for continuous improvement.
 ### Running Tests
 ```bash
 npm test
+npm run evaluate:recommendations
 ```
 
 ### Linting
