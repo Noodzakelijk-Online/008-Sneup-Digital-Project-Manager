@@ -4508,6 +4508,142 @@ describe('Trello action reconciliation safety', () => {
   });
 });
 
+describe('intervention outcome verification', () => {
+  afterEach(() => {
+    jest.dontMock('mongoose');
+    jest.dontMock('../src/models/Recommendation');
+    jest.dontMock('../src/models/TrelloActionAttempt');
+    jest.dontMock('../src/models/WorkerResponse');
+    jest.dontMock('../src/models/OutcomeRecord');
+    jest.dontMock('../src/models/AuditEvent');
+    jest.dontMock('../src/models/Intervention');
+    jest.dontMock('../src/models/Card');
+    jest.dontMock('../src/models/List');
+    jest.dontMock('../src/models/Approval');
+    jest.dontMock('../src/models/DecisionQueueItem');
+    jest.dontMock('../src/models/FollowUpPlan');
+    jest.dontMock('../src/models/CardFinding');
+    jest.dontMock('../src/models/BoardHealthSnapshot');
+    jest.dontMock('../src/models/Board');
+    jest.dontMock('../src/models/Member');
+    jest.dontMock('../src/models/WorkItem');
+    jest.dontMock('../src/services/trelloClient');
+    jest.dontMock('../src/services/workspaceScopeService');
+    jest.dontMock('../src/services/operationsLedgerService');
+    jest.resetModules();
+  });
+
+  test('confirms a synced label outcome without storing worker response text', async () => {
+    jest.resetModules();
+
+    const workspaceId = new mongoose.Types.ObjectId();
+    const recommendationId = new mongoose.Types.ObjectId();
+    const actionAttemptId = new mongoose.Types.ObjectId();
+    const cardId = new mongoose.Types.ObjectId();
+    const recommendation = {
+      _id: recommendationId,
+      workspaceId,
+      cardId,
+      actionType: 'add_label',
+      actionPayload: { labelName: 'BLOCKED' },
+      riskLevel: 'medium',
+      status: 'executed'
+    };
+    const attempt = {
+      _id: actionAttemptId,
+      workspaceId,
+      recommendationId,
+      status: 'succeeded',
+      finishedAt: new Date('2026-07-14T10:00:00.000Z')
+    };
+    const outcome = {
+      _id: new mongoose.Types.ObjectId(),
+      status: 'confirmed_improved',
+      evaluatedBy: 'owner-1',
+      toObject() {
+        return {
+          _id: this._id,
+          status: this.status,
+          evaluatedBy: this.evaluatedBy,
+          evidence: [{ source: 'card_state', summary: 'Current synced card state was checked against the approved action payload.' }]
+        };
+      }
+    };
+    const attemptQuery = { sort: jest.fn().mockResolvedValue(attempt) };
+    const cardQuery = {
+      select: jest.fn(() => cardQuery),
+      lean: jest.fn().mockResolvedValue({
+        _id: cardId,
+        labels: [{ name: 'blocked' }],
+        members: [],
+        checklists: []
+      })
+    };
+    const responseQuery = {
+      sort: jest.fn(() => responseQuery),
+      select: jest.fn(() => responseQuery),
+      lean: jest.fn().mockResolvedValue(null)
+    };
+    const existingOutcomeQuery = { lean: jest.fn().mockResolvedValue(null) };
+    const auditCreate = jest.fn().mockResolvedValue({ _id: new mongoose.Types.ObjectId() });
+    const outcomeUpdate = jest.fn().mockResolvedValue(outcome);
+
+    jest.doMock('mongoose', () => ({ ...mongoose, connection: { readyState: 1 } }));
+    jest.doMock('../src/models/Recommendation', () => ({ findOne: jest.fn().mockResolvedValue(recommendation) }));
+    jest.doMock('../src/models/TrelloActionAttempt', () => ({ findOne: jest.fn(() => attemptQuery) }));
+    jest.doMock('../src/models/Card', () => ({ findOne: jest.fn(() => cardQuery) }));
+    jest.doMock('../src/models/WorkerResponse', () => ({ findOne: jest.fn(() => responseQuery) }));
+    jest.doMock('../src/models/OutcomeRecord', () => ({
+      findOne: jest.fn(() => existingOutcomeQuery),
+      findOneAndUpdate: outcomeUpdate
+    }));
+    jest.doMock('../src/models/AuditEvent', () => ({ create: auditCreate }));
+    jest.doMock('../src/models/Intervention', () => ({ findOne: jest.fn().mockResolvedValue(null) }));
+    [
+      '../src/models/Approval',
+      '../src/models/DecisionQueueItem',
+      '../src/models/FollowUpPlan',
+      '../src/models/CardFinding',
+      '../src/models/BoardHealthSnapshot',
+      '../src/models/Board',
+      '../src/models/Member',
+      '../src/models/List',
+      '../src/models/WorkItem'
+    ].forEach((modelPath) => jest.doMock(modelPath, () => ({})));
+    jest.doMock('../src/services/trelloClient', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn((value) => value || workspaceId)
+    }));
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const result = await operationsLedgerService.evaluateRecommendationOutcome(recommendationId, {
+      workspaceId,
+      evaluatedBy: 'owner-1'
+    });
+
+    expect(result.status).toBe('confirmed_improved');
+    expect(outcomeUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId, actionAttemptId }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: 'confirmed_improved',
+          summary: 'The approved label is present on the current synced card.',
+          evidence: expect.arrayContaining([
+            expect.objectContaining({ source: 'card_state' })
+          ])
+        })
+      }),
+      expect.objectContaining({ upsert: true })
+    );
+    expect(JSON.stringify(outcomeUpdate.mock.calls)).not.toContain('responseText');
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'intervention_outcome_evaluated',
+      trelloActionAttemptId: actionAttemptId
+    }));
+  });
+});
+
 describe('operating ledger analyzer', () => {
   test('detects stale, blocked, Robert-required, and missing-next-action findings without Trello writes', () => {
     const analyzer = require('../src/services/operatingLedgerAnalyzer');

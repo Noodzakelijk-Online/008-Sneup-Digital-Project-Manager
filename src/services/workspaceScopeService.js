@@ -19,6 +19,7 @@ const TrelloActionAttempt = require('../models/TrelloActionAttempt');
 const AuditEvent = require('../models/AuditEvent');
 const FollowUpPlan = require('../models/FollowUpPlan');
 const WorkerResponse = require('../models/WorkerResponse');
+const OutcomeRecord = require('../models/OutcomeRecord');
 const CardFinding = require('../models/CardFinding');
 const BoardHealthSnapshot = require('../models/BoardHealthSnapshot');
 const WorkActor = require('../models/WorkActor');
@@ -88,6 +89,7 @@ const workspaceScopedModels = [
   ['auditEvents', AuditEvent],
   ['followUpPlans', FollowUpPlan],
   ['workerResponses', WorkerResponse],
+  ['outcomeRecords', OutcomeRecord],
   ['cardFindings', CardFinding],
   ['boardHealthSnapshots', BoardHealthSnapshot],
   ['workActors', WorkActor],

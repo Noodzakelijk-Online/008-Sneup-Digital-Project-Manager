@@ -42,6 +42,7 @@ const reportRoutes = require('./routes/reports');
 const forecastRoutes = require('./routes/forecasts');
 const notificationRoutes = require('./routes/notifications');
 const policyRuleRoutes = require('./routes/policyRules');
+const outcomeRoutes = require('./routes/outcomes');
 
 // Initialize Express app
 const app = express();
@@ -124,6 +125,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/forecasts', forecastRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/policy-rules', policyRuleRoutes);
+app.use('/api/outcomes', outcomeRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

@@ -38,6 +38,9 @@ const boundedInteger = (value, fallback, minimum, maximum) => {
   return Math.max(minimum, Math.min(maximum, parsed));
 };
 
+const getOutcomeRecordModel = () => require('../models/OutcomeRecord');
+const getListModel = () => require('../models/List');
+
 class OperationsLedgerService {
   isDatabaseReady() {
     return mongoose.connection.readyState === 1;
@@ -1413,6 +1416,243 @@ class OperationsLedgerService {
       interventionUpdated,
       followUpScheduled,
       auditRecorded
+    };
+  }
+
+  async listInterventionOutcomes(filters = {}) {
+    this.requireDatabase();
+    const OutcomeRecord = getOutcomeRecordModel();
+    const query = this.workspaceQuery(filters);
+    if (filters.status) query.status = filters.status;
+    if (filters.boardId) query.boardId = filters.boardId;
+    if (filters.cardId) query.cardId = filters.cardId;
+    if (filters.recommendationId) query.recommendationId = filters.recommendationId;
+
+    return OutcomeRecord.find(query)
+      .sort({ evaluatedAt: -1, createdAt: -1 })
+      .populate('recommendationId interventionId actionAttemptId boardId cardId')
+      .limit(filters.limit || 100);
+  }
+
+  async evaluateRecommendationOutcome(recommendationId, body = {}) {
+    this.requireDatabase();
+    const OutcomeRecord = getOutcomeRecordModel();
+
+    const recommendation = await Recommendation.findOne(this.workspaceQuery(body, { _id: recommendationId }));
+    if (!recommendation) {
+      const error = new Error('Recommendation not found');
+      error.statusCode = 404;
+      throw error;
+    }
+    if (recommendation.status !== 'executed') {
+      const error = new Error('Only executed recommendations can be evaluated for outcome');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const attempt = await TrelloActionAttempt.findOne({
+      workspaceId: recommendation.workspaceId,
+      recommendationId: recommendation._id,
+      status: 'succeeded'
+    }).sort({ finishedAt: -1, createdAt: -1 });
+    if (!attempt) {
+      const error = new Error('A successful Trello action attempt is required before outcome evaluation');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const [card, response, existingOutcome] = await Promise.all([
+      recommendation.cardId
+        ? Card.findOne({ _id: recommendation.cardId, workspaceId: recommendation.workspaceId })
+          .select('closed due dueComplete listId members labels checklists lastActivity')
+          .lean()
+        : null,
+      WorkerResponse.findOne({
+        workspaceId: recommendation.workspaceId,
+        recommendationId: recommendation._id,
+        receivedAt: { $gte: attempt.finishedAt || attempt.createdAt }
+      })
+        .sort({ receivedAt: -1 })
+        .select('responseType receivedAt source')
+        .lean(),
+      OutcomeRecord.findOne({
+        workspaceId: recommendation.workspaceId,
+        actionAttemptId: attempt._id
+      }).lean()
+    ]);
+
+    const evaluation = await this.buildInterventionOutcomeEvaluation({
+      recommendation,
+      attempt,
+      card,
+      response
+    });
+    const now = new Date();
+    const outcome = await OutcomeRecord.findOneAndUpdate(
+      {
+        workspaceId: recommendation.workspaceId,
+        actionAttemptId: attempt._id
+      },
+      {
+        $set: {
+          recommendationId: recommendation._id,
+          interventionId: recommendation.interventionId,
+          boardId: recommendation.boardId,
+          cardId: recommendation.cardId,
+          actionType: recommendation.actionType,
+          status: evaluation.status,
+          summary: evaluation.summary,
+          evidence: evaluation.evidence,
+          evaluatedAt: now,
+          evaluatedBy: body.evaluatedBy || 'sneup'
+        },
+        $setOnInsert: {
+          workspaceId: recommendation.workspaceId,
+          actionAttemptId: attempt._id
+        }
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    if (recommendation.interventionId && ['confirmed_improved', 'not_verified'].includes(evaluation.status)) {
+      const intervention = await Intervention.findOne({
+        _id: recommendation.interventionId,
+        workspaceId: recommendation.workspaceId
+      });
+      if (intervention) {
+        intervention.outcome = evaluation.status === 'confirmed_improved' ? 'successful' : 'unsuccessful';
+        await intervention.save();
+      }
+    }
+
+    await this.recordAudit({
+      entityType: 'outcome_record',
+      entityId: outcome._id,
+      action: 'intervention_outcome_evaluated',
+      actor: outcome.evaluatedBy,
+      source: 'system',
+      riskLevel: recommendation.riskLevel,
+      recommendationId: recommendation._id,
+      trelloActionAttemptId: attempt._id,
+      beforeState: existingOutcome || null,
+      afterState: outcome.toObject()
+    });
+
+    return outcome;
+  }
+
+  async buildInterventionOutcomeEvaluation({ recommendation, attempt, card, response }) {
+    const evidence = [{
+      source: 'trello_action_attempt',
+      observedAt: attempt.finishedAt || attempt.updatedAt || attempt.createdAt || new Date(),
+      summary: 'The approved Trello action attempt completed successfully.'
+    }];
+    const awaitingCardState = () => ({
+      status: 'awaiting_evidence',
+      summary: 'The provider action succeeded, but Sneup has no current synced card state to verify its effect.',
+      evidence
+    });
+    const cardEvidence = () => evidence.push({
+      source: 'card_state',
+      observedAt: card.lastActivity || card.updatedAt || new Date(),
+      summary: 'Current synced card state was checked against the approved action payload.'
+    });
+    const responseEvidence = () => evidence.push({
+      source: 'worker_response',
+      observedAt: response.receivedAt || new Date(),
+      summary: `A worker response was recorded as ${response.responseType || 'other'}.`
+    });
+    const payload = recommendation.actionPayload || {};
+    const actionType = recommendation.actionType;
+
+    if (['comment', 'follow_up', 'escalate', 'performance_notification'].includes(actionType)) {
+      if (!response) {
+        return {
+          status: 'awaiting_evidence',
+          summary: 'The communication was posted, but no linked worker response has been recorded yet.',
+          evidence
+        };
+      }
+      responseEvidence();
+      if (response.responseType === 'completed') {
+        return {
+          status: 'confirmed_improved',
+          summary: 'A linked worker response reports the work as completed.',
+          evidence
+        };
+      }
+      if (['blocked', 'needs_help', 'ignored'].includes(response.responseType)) {
+        return {
+          status: 'needs_attention',
+          summary: 'The linked worker response indicates the work still needs attention.',
+          evidence
+        };
+      }
+      return {
+        status: 'awaiting_evidence',
+        summary: 'A response was recorded, but it does not yet verify that the work improved.',
+        evidence
+      };
+    }
+
+    if (!card) return awaitingCardState();
+    cardEvidence();
+    const memberIds = new Set((card.members || []).map((member) => String(member?._id || member)));
+
+    if (actionType === 'reassign') {
+      return memberIds.has(String(payload.toMemberId || ''))
+        ? { status: 'confirmed_improved', summary: 'The approved target member is present on the current synced card.', evidence }
+        : { status: 'not_verified', summary: 'The approved target member is not present on the current synced card.', evidence };
+    }
+
+    if (actionType === 'move_card') {
+      const List = getListModel();
+      const targetList = payload.targetListId
+        ? await List.findOne({ trelloId: payload.targetListId, workspaceId: recommendation.workspaceId }).select('_id').lean()
+        : null;
+      if (!targetList) {
+        return {
+          status: 'awaiting_evidence',
+          summary: 'The provider action succeeded, but Sneup cannot map the approved target list into current synced state.',
+          evidence
+        };
+      }
+      return String(card.listId || '') === String(targetList._id)
+        ? { status: 'confirmed_improved', summary: 'The card is in the approved target list in current synced state.', evidence }
+        : { status: 'not_verified', summary: 'The card is not in the approved target list in current synced state.', evidence };
+    }
+
+    if (actionType === 'add_label') {
+      const expectedLabel = String(payload.labelName || '').trim().toLowerCase();
+      const labelPresent = expectedLabel && (card.labels || []).some((label) => String(label.name || '').trim().toLowerCase() === expectedLabel);
+      return labelPresent
+        ? { status: 'confirmed_improved', summary: 'The approved label is present on the current synced card.', evidence }
+        : { status: 'not_verified', summary: 'The approved label is not present on the current synced card.', evidence };
+    }
+
+    if (actionType === 'set_due_date') {
+      const expectedDue = new Date(payload.due || '');
+      const observedDue = new Date(card.due || '');
+      const dueMatches = !Number.isNaN(expectedDue.getTime())
+        && !Number.isNaN(observedDue.getTime())
+        && expectedDue.getTime() === observedDue.getTime();
+      return dueMatches
+        ? { status: 'confirmed_improved', summary: 'The current synced due date matches the approved change.', evidence }
+        : { status: 'not_verified', summary: 'The current synced due date does not match the approved change.', evidence };
+    }
+
+    if (actionType === 'add_checklist') {
+      const expectedName = String(payload.checklistName || '').trim().toLowerCase();
+      const checklistPresent = expectedName && (card.checklists || []).some((checklist) => String(checklist.name || '').trim().toLowerCase() === expectedName);
+      return checklistPresent
+        ? { status: 'confirmed_improved', summary: 'The approved checklist is present on the current synced card.', evidence }
+        : { status: 'not_verified', summary: 'The approved checklist is not present on the current synced card.', evidence };
+    }
+
+    return {
+      status: 'awaiting_evidence',
+      summary: 'The provider action succeeded, but Sneup does not have an outcome verifier for this action type yet.',
+      evidence
     };
   }
 

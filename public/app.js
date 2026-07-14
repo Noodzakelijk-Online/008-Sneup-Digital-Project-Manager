@@ -39,6 +39,7 @@ const state = {
     auditEvents: [],
     followUps: [],
     accountability: null,
+    outcomes: [],
     findings: [],
     healthSnapshots: [],
     reconciliationHealth: null,
@@ -92,6 +93,8 @@ const els = {
   followUpCount: document.getElementById('followUpCount'),
   accountabilityList: document.getElementById('accountabilityList'),
   accountabilityCount: document.getElementById('accountabilityCount'),
+  outcomeList: document.getElementById('outcomeList'),
+  outcomeCount: document.getElementById('outcomeCount'),
   auditTrail: document.getElementById('auditTrail'),
   auditCount: document.getElementById('auditCount'),
   connectorCount: document.getElementById('connectorCount'),
@@ -699,6 +702,7 @@ async function loadOperationsLedger() {
     auditEvents: fetchApi('/api/audit?limit=50'),
     followUps: fetchApi('/api/follow-ups/due?limit=50'),
     accountability: fetchApi('/api/team/accountability?days=30&limit=50'),
+    outcomes: fetchApi('/api/outcomes?limit=50'),
     findings: fetchApi('/api/findings?status=open&limit=50'),
     healthSnapshots: fetchApi('/api/findings/board-health?limit=20'),
     reconciliationHealth: fetchApi('/api/trello-actions/reconciliation/health?limit=100'),
@@ -728,6 +732,7 @@ async function loadOperationsLedger() {
     if (key === 'auditEvents') state.ledger.auditEvents = data.auditEvents || [];
     if (key === 'followUps') state.ledger.followUps = data.followUps || [];
     if (key === 'accountability') state.ledger.accountability = data.accountability || null;
+    if (key === 'outcomes') state.ledger.outcomes = data.outcomes || [];
     if (key === 'findings') state.ledger.findings = data.findings || [];
     if (key === 'healthSnapshots') state.ledger.healthSnapshots = data.snapshots || [];
     if (key === 'reconciliationHealth') state.ledger.reconciliationHealth = data.health || null;
@@ -876,6 +881,7 @@ function renderOperationsLedger() {
   const auditEvents = state.ledger.auditEvents || [];
   const followUps = state.ledger.followUps || [];
   const accountability = state.ledger.accountability;
+  const outcomes = state.ledger.outcomes || [];
   const findings = state.ledger.findings || [];
   const healthSnapshots = state.ledger.healthSnapshots || [];
   const reconciliationHealth = state.ledger.reconciliationHealth;
@@ -888,6 +894,7 @@ function renderOperationsLedger() {
   const pendingRecommendations = recommendations.filter(item => ['pending', 'approved', 'change_requested'].includes(item.status)).length;
   const failedActions = actions.filter(item => item.status === 'failed').length;
   const highRiskFindings = findings.filter(item => ['critical', 'high'].includes(item.severity)).length;
+  const outcomesNeedingAttention = outcomes.filter(item => item.status === 'needs_attention' || item.status === 'not_verified').length;
 
   els.approvalCount.textContent = openRobert + pendingRecommendations;
   els.ledgerMetrics.innerHTML = [
@@ -901,6 +908,7 @@ function renderOperationsLedger() {
     ['High-risk findings', highRiskFindings],
     ['Overdue follow-ups', accountability?.summary?.overdueFollowUps || 0],
     ['Workers needing attention', accountability?.summary?.membersNeedingAttention || 0],
+    ['Outcome reviews', outcomesNeedingAttention],
     ['Audit events', auditEvents.length]
   ].map(([label, value]) => `
     <div class="metric">
@@ -938,6 +946,8 @@ function renderOperationsLedger() {
   els.accountabilityList.innerHTML = accountability
     ? listOrEmpty(accountability.members || [], renderWorkerAccountability)
     : '<div class="notice">Worker accountability needs ledger access.</div>';
+  els.outcomeCount.textContent = `${outcomesNeedingAttention} review`;
+  els.outcomeList.innerHTML = listOrEmpty(outcomes, renderInterventionOutcome);
   els.auditCount.textContent = `${auditEvents.length} events`;
   els.auditTrail.innerHTML = listOrEmpty(auditEvents, renderAuditEvent);
 
@@ -962,6 +972,9 @@ function renderOperationsLedger() {
   });
   document.querySelectorAll('[data-trello-action-reconcile]').forEach((button) => {
     button.addEventListener('click', () => openTrelloActionReconciliation(button.dataset.trelloActionReconcile));
+  });
+  document.querySelectorAll('[data-outcome-evaluate]').forEach((button) => {
+    button.addEventListener('click', () => runOutcomeEvaluation(button.dataset.outcomeEvaluate));
   });
   document.querySelectorAll('[data-notification-policy-activate]').forEach((button) => {
     button.addEventListener('click', () => openNotificationActivation(button.dataset.notificationPolicyActivate));
@@ -1319,6 +1332,32 @@ function renderWorkerAccountability(member) {
   `;
 }
 
+function renderInterventionOutcome(outcome) {
+  const statusClass = outcome.status === 'confirmed_improved'
+    ? 'healthy'
+    : outcome.status === 'awaiting_evidence'
+      ? 'review'
+      : 'critical';
+  const recommendation = outcome.recommendationId || {};
+  const recommendationId = getId(recommendation._id || outcome.recommendationId);
+  const canEvaluate = Boolean(recommendationId)
+    && ['awaiting_evidence', 'needs_attention', 'not_verified'].includes(outcome.status);
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(recommendation.title || `${outcome.actionType || 'Intervention'} outcome`)}</strong>
+        <span class="pill ${statusClass}">${escapeHtml((outcome.status || 'awaiting_evidence').replaceAll('_', ' '))}</span>
+      </div>
+      <div class="meta">
+        <span>${escapeHtml(outcome.actionType || 'action')}</span>
+        <span>Checked ${formatDate(outcome.evaluatedAt)}</span>
+      </div>
+      <div class="meta"><span>${escapeHtml(outcome.summary || 'Outcome evidence is pending.')}</span></div>
+      ${canEvaluate ? `<div class="item-actions"><button class="button" data-outcome-evaluate="${escapeHtml(recommendationId)}" type="button">Refresh evidence</button></div>` : ''}
+    </div>
+  `;
+}
+
 function renderAuditEvent(event) {
   return `
     <div class="item">
@@ -1446,6 +1485,22 @@ async function runFollowUpAction(followUpId, action) {
     await loadOperationsLedger();
   } catch (error) {
     openNotice('Follow-up update failed', error.message);
+  }
+}
+
+async function runOutcomeEvaluation(recommendationId) {
+  if (!recommendationId) return;
+
+  try {
+    const result = await fetchApi(`/api/outcomes/recommendations/${recommendationId}/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    openNotice('Outcome evidence refreshed', result.outcome?.summary || 'Sneup refreshed the available outcome evidence.');
+    await loadOperationsLedger();
+  } catch (error) {
+    openNotice('Outcome evaluation failed', error.message);
   }
 }
 
