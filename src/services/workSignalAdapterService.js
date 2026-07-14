@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -59,6 +59,7 @@ const statuspageWorkSignalClient = require('./statuspageWorkSignalClient');
 const genericRestApiWorkSignalClient = require('./genericRestApiWorkSignalClient');
 const datadogWorkSignalClient = require('./datadogWorkSignalClient');
 const zendeskWorkSignalClient = require('./zendeskWorkSignalClient');
+const freshdeskWorkSignalClient = require('./freshdeskWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -905,6 +906,12 @@ zendeskAdapter.capabilities.credentialBackedSync = true;
 zendeskAdapter.list = async account => (await zendeskWorkSignalClient.fetchDelta(account, null)).records;
 zendeskAdapter.fetchDelta = (account, cursor) => zendeskWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('zendesk', zendeskAdapter);
+
+const freshdeskAdapter = buildAdapter('freshdesk', 'Freshdesk ticket metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'ticket'), title: titleFromText(item.name, 'Freshdesk ticket'), description: '', status: item.status || 'open', priority: item.priority === 'urgent' ? 'critical' : item.priority === 'high' ? 'high' : item.priority || 'unknown', owners: [], labels: compact(['freshdesk', item.sourceType, item.ticketType, item.status, item.priority, item.groupId ? `group:${item.groupId}` : undefined]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Freshdesk ticket metadata'), raw: { id: item.id, sourceType: item.sourceType, ticketId: item.ticketId, ticketType: item.ticketType, status: item.status, priority: item.priority, groupId: item.groupId, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+freshdeskAdapter.capabilities.credentialBackedSync = true;
+freshdeskAdapter.list = async account => (await freshdeskWorkSignalClient.fetchDelta(account, null)).records;
+freshdeskAdapter.fetchDelta = (account, cursor) => freshdeskWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('freshdesk', freshdeskAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

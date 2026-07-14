@@ -92,6 +92,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/genericRestApiWorkSignalClient');
     jest.dontMock('../src/services/datadogWorkSignalClient');
     jest.dontMock('../src/services/zendeskWorkSignalClient');
+    jest.dontMock('../src/services/freshdeskWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2127,6 +2128,17 @@ describe('work signal normalization', () => {
     await workSignalAdapterService.fetchDelta(account, 'opaque-cursor');
     expect(fetchDelta).toHaveBeenCalledWith(account, 'opaque-cursor');
     expect(workSignalAdapterService.getAdapter('zendesk').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
+  test('Freshdesk adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'ticket:19' }] });
+    jest.doMock('../src/services/freshdeskWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'freshdesk' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-12T12:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-12T12:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('freshdesk').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
@@ -4248,6 +4260,25 @@ describe('work signal normalization', () => {
       if (previous === undefined) delete process.env.SNEUP_ZENDESK_MAX_TICKETS;
       else process.env.SNEUP_ZENDESK_MAX_TICKETS = previous;
     }
+  });
+
+  test('Freshdesk sync pages bounded ticket metadata without rich customer content or provider writes', async () => {
+    jest.dontMock('../src/services/freshdeskWorkSignalClient');
+    jest.resetModules();
+    const { FreshdeskWorkSignalClient } = require('../src/services/freshdeskWorkSignalClient');
+    const privateEmail = ['private', 'example.test'].join('@');
+    const http = { get: jest.fn().mockResolvedValueOnce({ data: [{ id: 19, subject: `Support blocker for ${privateEmail}`, description: 'Private body', requester_id: 3, responder_id: 4, tags: ['private'], custom_fields: { key: 'secret' }, status: 2, priority: 4, type: 'Incident', group_id: 9, due_by: '2026-07-15T12:00:00.000Z', created_at: '2026-07-10T12:00:00.000Z', updated_at: '2026-07-12T12:00:00.000Z' }] }).mockResolvedValueOnce({ data: [] }) };
+    const client = new FreshdeskWorkSignalClient({ http, now: () => new Date('2026-07-14T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiKey: 'freshdesk-key' })) } });
+    const previous = { max: process.env.SNEUP_FRESHDESK_MAX_TICKETS, page: process.env.SNEUP_FRESHDESK_PAGE_SIZE };
+    process.env.SNEUP_FRESHDESK_MAX_TICKETS = '2'; process.env.SNEUP_FRESHDESK_PAGE_SIZE = '1';
+    try {
+      const result = await client.fetchDelta({ metadata: { fields: { subdomain: 'sneup-demo' } } }, '2026-07-10T00:00:00.000Z');
+      expect(http.get).toHaveBeenCalledWith('https://sneup-demo.freshdesk.com/api/v2/tickets', expect.objectContaining({ auth: { username: 'freshdesk-key', password: 'X' }, params: expect.objectContaining({ updated_since: '2026-07-09T23:59:00.000Z', order_by: 'updated_at', order_type: 'asc', page: 1, per_page: 1 }), maxRedirects: 0, proxy: false }));
+      expect(http).not.toHaveProperty('post');
+      expect(result).toMatchObject({ metadata: { source: 'freshdesk_api', tickets: 1, pages: 2 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+      expect(JSON.stringify(result.records)).not.toMatch(/Private body|private|secret/);
+      expect(result.records[0].name).not.toContain(privateEmail);
+    } finally { if (previous.max === undefined) delete process.env.SNEUP_FRESHDESK_MAX_TICKETS; else process.env.SNEUP_FRESHDESK_MAX_TICKETS = previous.max; if (previous.page === undefined) delete process.env.SNEUP_FRESHDESK_PAGE_SIZE; else process.env.SNEUP_FRESHDESK_PAGE_SIZE = previous.page; }
   });
 
   test('projects provider signals into normalized work graph records', () => {
