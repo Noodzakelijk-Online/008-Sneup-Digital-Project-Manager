@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -39,6 +39,7 @@ const bitbucketWorkSignalClient = require('./bitbucketWorkSignalClient');
 const harvestWorkSignalClient = require('./harvestWorkSignalClient');
 const codaWorkSignalClient = require('./codaWorkSignalClient');
 const teamworkWorkSignalClient = require('./teamworkWorkSignalClient');
+const basecampWorkSignalClient = require('./basecampWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -693,6 +694,32 @@ teamworkAdapter.capabilities.credentialBackedSync = true;
 teamworkAdapter.list = async account => (await teamworkWorkSignalClient.fetchDelta(account, null)).records;
 teamworkAdapter.fetchDelta = (account, cursor) => teamworkWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('teamwork', teamworkAdapter);
+
+const basecampStatus = (item) => item.completedAt || item.status === 'completed' ? 'done' : statusFromText(item.status);
+const basecampAdapter = buildAdapter('basecamp', 'Basecamp project and to-do metadata adapter', (account, item) => ({
+  externalId: pick(item.externalId, item.id),
+  sourceType: pick(item.sourceType, 'todo'),
+  title: titleFromText(item.name, 'Basecamp work item'),
+  description: '',
+  status: basecampStatus(item),
+  priority: priorityFromText(item.priority, item.status),
+  url: undefined,
+  owners: [],
+  labels: compact(['basecamp', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.todoListId ? `todo_list:${item.todoListId}` : undefined, item.status]),
+  dueAt: pick(item.dueAt),
+  providerCreatedAt: pick(item.createdAt),
+  providerUpdatedAt: pick(item.updatedAt, item.completedAt, item.createdAt),
+  evidenceRefs: baseEvidence(account, item, 'Basecamp metadata'),
+  raw: {
+    id: item.id, sourceType: item.sourceType, projectId: item.projectId, todoId: item.todoId,
+    todoListId: item.todoListId, name: item.name, status: item.status, dueAt: item.dueAt,
+    createdAt: item.createdAt, updatedAt: item.updatedAt, completedAt: item.completedAt
+  }
+}));
+basecampAdapter.capabilities.credentialBackedSync = true;
+basecampAdapter.list = async account => (await basecampWorkSignalClient.fetchDelta(account, null)).records;
+basecampAdapter.fetchDelta = (account, cursor) => basecampWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('basecamp', basecampAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

@@ -180,6 +180,30 @@ router.post('/accounts/:accountId/asana-workspace', requirePermission('connector
   }
 });
 
+router.get('/accounts/:accountId/basecamp-accounts', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const accounts = await accountConnectorService.getBasecampAccounts(req.params.accountId, connectorRequestOptions(req));
+    res.json({ success: true, accounts });
+  } catch (error) {
+    logger.error('Failed to list Basecamp accounts:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/basecamp-account', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.selectBasecampAccount(
+      req.params.accountId,
+      req.body.basecampAccountId,
+      connectorRequestOptions(req)
+    );
+    res.json({ success: true, account });
+  } catch (error) {
+    logger.error('Failed to select Basecamp account:', error);
+    sendError(res, error);
+  }
+});
+
 router.get('/:connectorId', (req, res) => {
   try {
     const connector = accountConnectorService.getConnectorDetails(req.params.connectorId);

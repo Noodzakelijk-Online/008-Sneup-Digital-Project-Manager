@@ -3224,6 +3224,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-asana-workspace]').forEach((button) => {
     button.addEventListener('click', () => openAsanaWorkspaceModal(button.dataset.asanaWorkspace));
   });
+  document.querySelectorAll('[data-basecamp-account]').forEach((button) => {
+    button.addEventListener('click', () => openBasecampAccountModal(button.dataset.basecampAccount));
+  });
 }
 
 function renderConnectorSafety() {
@@ -3270,6 +3273,8 @@ function renderConnector(connector, account) {
   const isAsana = connector.id === 'asana';
   const selectedJiraCloudId = account?.metadata?.fields?.cloudId;
   const selectedAsanaWorkspaceGid = account?.metadata?.fields?.asanaWorkspaceGid;
+  const selectedBasecampAccountId = account?.metadata?.fields?.basecampAccountId;
+  const isBasecamp = connector.id === 'basecamp';
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
@@ -3289,9 +3294,10 @@ function renderConnector(connector, account) {
                                 : lastSync.source === 'todoist_api' ? 'Todoist API'
                                   : lastSync.source === 'shortcut_api' ? 'Shortcut API'
                                     : lastSync.source === 'bitbucket_api' ? 'Bitbucket API'
-                                : 'Sync';
+                                      : lastSync.source === 'basecamp_api' ? 'Basecamp API'
+                                        : 'Sync';
   const syncSummary = canSync && lastSync.finishedAt
-    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}${lastSync.workspaces ? `<span>${lastSync.workspaces} Asana workspace${lastSync.workspaces === 1 ? '' : 's'}</span>` : ''}${lastSync.projects ? `<span>${lastSync.projects} projects</span>` : ''}${lastSync.channels ? `<span>${lastSync.channels} channels</span>` : ''}${lastSync.calendars ? `<span>${lastSync.calendars} calendars</span>` : ''}${lastSync.events ? `<span>${lastSync.events} events</span>` : ''}${lastSync.taskLists ? `<span>${lastSync.taskLists} task lists</span>` : ''}${lastSync.todoTasks ? `<span>${lastSync.todoTasks} To Do tasks</span>` : ''}${lastSync.files ? `<span>${lastSync.files} files</span>` : ''}${lastSync.issues ? `<span>${lastSync.issues} issues</span>` : ''}${lastSync.items ? `<span>${lastSync.items} items</span>` : ''}${lastSync.pages ? `<span>${lastSync.pages} pages</span>` : ''}${lastSync.dataSources ? `<span>${lastSync.dataSources} data sources</span>` : ''}</div>`
+    ? `<div class="meta"><span>${sourceLabel} ${formatDate(lastSync.finishedAt)}</span><span>${lastSync.signalCount || 0} signals</span>${lastSync.repositories ? `<span>${lastSync.repositories} repos</span>` : ''}${lastSync.boards ? `<span>${lastSync.boards} boards</span>` : ''}${lastSync.sites ? `<span>${lastSync.sites} Jira site${lastSync.sites === 1 ? '' : 's'}</span>` : ''}${lastSync.workspaces ? `<span>${lastSync.workspaces} Asana workspace${lastSync.workspaces === 1 ? '' : 's'}</span>` : ''}${lastSync.projects ? `<span>${lastSync.projects} projects</span>` : ''}${lastSync.todoLists ? `<span>${lastSync.todoLists} to-do lists</span>` : ''}${lastSync.channels ? `<span>${lastSync.channels} channels</span>` : ''}${lastSync.calendars ? `<span>${lastSync.calendars} calendars</span>` : ''}${lastSync.events ? `<span>${lastSync.events} events</span>` : ''}${lastSync.taskLists ? `<span>${lastSync.taskLists} task lists</span>` : ''}${lastSync.todoTasks ? `<span>${lastSync.todoTasks} To Do tasks</span>` : ''}${lastSync.files ? `<span>${lastSync.files} files</span>` : ''}${lastSync.issues ? `<span>${lastSync.issues} issues</span>` : ''}${lastSync.items ? `<span>${lastSync.items} items</span>` : ''}${lastSync.pages ? `<span>${lastSync.pages} pages</span>` : ''}${lastSync.dataSources ? `<span>${lastSync.dataSources} data sources</span>` : ''}</div>`
     : '';
   const consentSummary = account?.consent?.acknowledgedAt
     ? `<div class="meta"><span>scope review ${escapeHtml(formatDate(account.consent.acknowledgedAt))}</span><span>${escapeHtml(account.consent.acknowledgedBy || 'local user')}</span></div>`
@@ -3316,6 +3322,7 @@ function renderConnector(connector, account) {
         <span class="meta">${connector.sync.slice(0, 3).map(escapeHtml).join('  |  ')}</span>
         ${isJira && account ? `<button class="button" data-jira-site="${escapeHtml(account.id)}" type="button">${selectedJiraCloudId ? 'Jira site selected' : 'Select Jira site'}</button>` : ''}
         ${isAsana && account ? `<button class="button" data-asana-workspace="${escapeHtml(account.id)}" type="button">${selectedAsanaWorkspaceGid ? 'Asana workspace selected' : 'Select Asana workspace'}</button>` : ''}
+        ${isBasecamp && account ? `<button class="button" data-basecamp-account="${escapeHtml(account.id)}" type="button">${selectedBasecampAccountId ? 'Basecamp account selected' : 'Select Basecamp account'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         ${connected && connector.auth.type !== 'oauth2'
           ? `<button class="button primary" data-rotate-credential="${escapeHtml(account.id)}" type="button">Rotate credential</button>`
@@ -3323,6 +3330,57 @@ function renderConnector(connector, account) {
       </div>
     </div>
   `;
+}
+
+async function openBasecampAccountModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  try {
+    const data = await fetchApi(`/api/connectors/accounts/${accountId}/basecamp-accounts`);
+    const accounts = data.accounts || [];
+    if (accounts.length === 0) {
+      openNotice('Basecamp account selection', 'No Basecamp 3 accounts are currently authorized for this connection. Reconnect it with Basecamp access.');
+      return;
+    }
+
+    const selectedAccountId = account.metadata?.fields?.basecampAccountId || (accounts.length === 1 ? accounts[0].basecampAccountId : '');
+    els.modalTitle.textContent = 'Select Basecamp account';
+    els.modalBody.innerHTML = `
+      <form id="basecampAccountForm">
+        <div class="field">
+          <label for="basecampAccountId">Authorized Basecamp account</label>
+          <select id="basecampAccountId" name="basecampAccountId" required>
+            <option value="" ${selectedAccountId ? '' : 'selected'} disabled>Select an account</option>
+            ${accounts.map(basecampAccount => `<option value="${escapeHtml(basecampAccount.basecampAccountId)}" ${basecampAccount.basecampAccountId === selectedAccountId ? 'selected' : ''}>${escapeHtml(basecampAccount.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="notice">Sneup will only ingest read-only project and to-do metadata from this account.</div>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelBasecampAccount">Cancel</button>
+          <button class="button primary" type="submit">Use this account</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelBasecampAccount').addEventListener('click', closeModal);
+    document.getElementById('basecampAccountForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target).entries());
+      try {
+        await fetchApi(`/api/connectors/accounts/${accountId}/basecamp-account`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        closeModal();
+        openNotice('Basecamp account selected', 'Sneup will use this account for the next read-only sync.');
+        await loadConnectors();
+      } catch (error) {
+        openNotice('Basecamp account selection', error.message);
+      }
+    });
+  } catch (error) {
+    openNotice('Basecamp account selection', error.message);
+  }
 }
 
 async function openAsanaWorkspaceModal(accountId) {

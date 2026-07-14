@@ -107,6 +107,46 @@ class AccountConnectorService {
     return this.sanitizeAccount(account);
   }
 
+  async getBasecampAccounts(accountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireBasecampAccount(account);
+    return this.fetchBasecampAccounts(account);
+  }
+
+  async selectBasecampAccount(accountId, basecampAccountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireBasecampAccount(account);
+    const requestedAccountId = String(basecampAccountId || '').trim();
+    if (!/^\d{1,20}$/.test(requestedAccountId)) {
+      const error = new Error('A valid Basecamp account ID is required.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const accounts = await this.fetchBasecampAccounts(account);
+    const selected = accounts.find(item => item.basecampAccountId === requestedAccountId);
+    if (!selected) {
+      const error = new Error('That Basecamp account is no longer authorized for this connection.');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: {
+        ...(account.metadata?.fields || {}),
+        basecampAccountId: selected.basecampAccountId,
+        basecampApiUrl: selected.apiUrl
+      }
+    };
+    account.accountName = `${account.connectorName} - ${selected.name}`;
+    account.externalAccountId = selected.basecampAccountId;
+    account.status = 'connected';
+    account.lastError = undefined;
+    await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   getCatalog(filters = {}) {
     const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
     const filteredConnectors = this.filterConnectors(category, search);
@@ -496,6 +536,14 @@ class AccountConnectorService {
     }
   }
 
+  requireBasecampAccount(account) {
+    if (account.connectorId !== 'basecamp') {
+      const error = new Error('Basecamp account selection is only available for Basecamp connector accounts.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   async fetchJiraSites(account) {
     const credentials = this.getAccountCredentials(account);
     const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
@@ -550,6 +598,68 @@ class AccountConnectorService {
         name: String(workspace.name || workspace.gid || workspace.id),
         organization: Boolean(workspace.is_organization)
       }));
+  }
+
+  getBasecampLaunchpadUrl() {
+    const raw = String(process.env.SNEUP_BASECAMP_LAUNCHPAD_URL || 'https://launchpad.37signals.com').trim();
+    let url;
+    try {
+      url = new URL(raw);
+    } catch {
+      const error = new Error('Basecamp Launchpad URL must be https://launchpad.37signals.com.');
+      error.statusCode = 500;
+      throw error;
+    }
+    if (url.protocol !== 'https:' || url.hostname !== 'launchpad.37signals.com' || url.port || url.pathname !== '/' || url.search || url.hash || url.username || url.password) {
+      const error = new Error('Basecamp Launchpad URL must be https://launchpad.37signals.com.');
+      error.statusCode = 500;
+      throw error;
+    }
+    return url.origin;
+  }
+
+  normalizeBasecampApiUrl(value, accountId) {
+    let url;
+    try {
+      url = new URL(String(value || ''));
+    } catch {
+      return null;
+    }
+    const expectedPath = `/${accountId}`;
+    if (url.protocol !== 'https:' || url.hostname !== '3.basecampapi.com' || url.port || url.pathname !== expectedPath || url.search || url.hash || url.username || url.password) return null;
+    return url.toString().replace(/\/$/, '');
+  }
+
+  async fetchBasecampAccounts(account) {
+    const credentials = this.getAccountCredentials(account);
+    const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
+    if (!accessToken) {
+      const error = new Error('Basecamp access token is missing. Reconnect this account to continue.');
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const response = await this.http.get(`${this.getBasecampLaunchpadUrl()}/authorization.json`, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'User-Agent': 'Sneup Digital Project Manager'
+      },
+      timeout: 15000
+    });
+
+    return (Array.isArray(response.data?.accounts) ? response.data.accounts : [])
+      .filter(item => item?.product === 'bc3' && /^\d{1,20}$/.test(String(item.id || '')))
+      .map(item => {
+        const basecampAccountId = String(item.id);
+        const apiUrl = this.normalizeBasecampApiUrl(item.href, basecampAccountId);
+        return apiUrl ? {
+          basecampAccountId,
+          name: String(item.name || `Basecamp account ${basecampAccountId}`),
+          apiUrl
+        } : null;
+      })
+      .filter(Boolean);
   }
 
   async markAccountValidated(accountId, options = {}) {

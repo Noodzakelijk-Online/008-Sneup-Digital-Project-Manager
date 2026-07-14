@@ -72,6 +72,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/harvestWorkSignalClient');
     jest.dontMock('../src/services/codaWorkSignalClient');
     jest.dontMock('../src/services/teamworkWorkSignalClient');
+    jest.dontMock('../src/services/basecampWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -1881,6 +1882,18 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('teamwork').capabilities.credentialBackedSync).toBe(true);
   });
 
+  test('Basecamp adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'todo:1' }] });
+    jest.doMock('../src/services/basecampWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'basecamp' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('basecamp').capabilities.credentialBackedSync).toBe(true);
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3194,6 +3207,83 @@ describe('work signal normalization', () => {
     });
     expect(normalized).toMatchObject({
       externalId: 'task:18', sourceType: 'task', title: 'Ship Teamwork connector', description: '', status: 'in_progress', priority: 'high', labels: ['teamwork', 'task', 'project:9', 'tasklist:4', 'in progress']
+    });
+    expect(JSON.stringify(normalized.raw)).not.toMatch(/Private detail|Private comment/);
+  });
+
+  test('Basecamp sync reads bounded project and to-do metadata without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/basecampWorkSignalClient');
+    jest.resetModules();
+    const { BasecampWorkSignalClient } = require('../src/services/basecampWorkSignalClient');
+    const http = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ data: [{
+          id: 9, name: 'Sneup release', status: 'active', updated_at: '2026-07-11T10:00:00.000Z',
+          description: 'Private project description', dock: [{ name: 'todoset', id: 4, enabled: true }]
+        }], headers: {} })
+        .mockResolvedValueOnce({ data: [{ id: 7, name: 'Launch tasks', description: 'Private list detail' }], headers: {} })
+        .mockResolvedValueOnce({ data: [{
+          id: 18, content: 'Ship Basecamp connector', due_on: '2026-07-15', updated_at: '2026-07-12T12:00:00.000Z',
+          description: 'Private task description', comments: [{ content: 'Private comment' }], attachments: [{ name: 'secret.pdf' }]
+        }], headers: {} })
+    };
+    const client = new BasecampWorkSignalClient({
+      http,
+      accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'basecamp-token' })) }
+    });
+    const account = { metadata: { fields: { basecampAccountId: '123', basecampApiUrl: 'https://3.basecampapi.com/123' } } };
+    const result = await client.fetchDelta(account, '2026-07-10T10:00:00.000Z');
+
+    expect(http.get).toHaveBeenCalledWith('https://3.basecampapi.com/123/projects.json', expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer basecamp-token', 'User-Agent': expect.any(String) })
+    }));
+    expect(http.get).toHaveBeenCalledWith('https://3.basecampapi.com/123/buckets/9/todosets/4/todolists.json', expect.any(Object));
+    expect(http.get).toHaveBeenCalledWith('https://3.basecampapi.com/123/todolists/7/todos.json', expect.any(Object));
+    expect(http).not.toHaveProperty('post');
+    const requested = http.get.mock.calls.map(call => call[0]).join(' ');
+    expect(requested).not.toMatch(/messages|comments|files|attachments|schedules|documents/i);
+    expect(JSON.stringify(result.records)).not.toMatch(/Private project|Private list|Private task|Private comment|secret\.pdf/);
+    expect(result).toMatchObject({ metadata: { source: 'basecamp_api', projects: 1, todoLists: 1, todos: 1, contentPolicy: 'project_todo_metadata_only_selected_account' }, hasMore: false, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'project:9', name: 'Sneup release', status: 'active' }),
+      expect.objectContaining({ id: 'todo:18', name: 'Ship Basecamp connector', projectId: 9, dueAt: '2026-07-15' })
+    ]));
+  });
+
+  test('Basecamp sync rejects a missing selected account and fails closed at a pagination cap', async () => {
+    jest.dontMock('../src/services/basecampWorkSignalClient');
+    jest.resetModules();
+    const { BasecampWorkSignalClient } = require('../src/services/basecampWorkSignalClient');
+    const unselectedHttp = { get: jest.fn() };
+    const unselectedClient = new BasecampWorkSignalClient({ http: unselectedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'basecamp-token' })) } });
+    await expect(unselectedClient.fetchDelta({ metadata: { fields: {} } })).rejects.toMatchObject({ statusCode: 409 });
+    expect(unselectedHttp.get).not.toHaveBeenCalled();
+
+    const previousLimit = process.env.SNEUP_BASECAMP_MAX_PROJECTS;
+    process.env.SNEUP_BASECAMP_MAX_PROJECTS = '1';
+    const cappedHttp = { get: jest.fn().mockResolvedValue({
+      data: [{ id: 9, name: 'One project' }],
+      headers: { link: '<https://3.basecampapi.com/123/projects.json?page=2>; rel="next"' }
+    }) };
+    const cappedClient = new BasecampWorkSignalClient({ http: cappedHttp, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'basecamp-token' })) } });
+    try {
+      await expect(cappedClient.fetchDelta({ metadata: { fields: { basecampAccountId: '123', basecampApiUrl: 'https://3.basecampapi.com/123' } } })).rejects.toMatchObject({ statusCode: 413 });
+      expect(cappedHttp.get).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousLimit === undefined) delete process.env.SNEUP_BASECAMP_MAX_PROJECTS;
+      else process.env.SNEUP_BASECAMP_MAX_PROJECTS = previousLimit;
+    }
+  });
+
+  test('Basecamp adapter retains only approved project and to-do metadata in normalized work signals', () => {
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    expect(workSignalAdapterService.getAdapter('basecamp').capabilities.credentialBackedSync).toBe(true);
+    const normalized = workSignalAdapterService.normalize({ connectorId: 'basecamp' }, {
+      id: 'todo:18', sourceType: 'todo', todoId: 18, projectId: 9, todoListId: 7, name: 'Ship Basecamp connector',
+      status: 'open', dueAt: '2026-07-15', updatedAt: '2026-07-12T12:00:00.000Z', description: 'Private detail', comments: ['Private comment']
+    });
+    expect(normalized).toMatchObject({
+      externalId: 'todo:18', sourceType: 'todo', title: 'Ship Basecamp connector', description: '', status: 'open', priority: 'normal', labels: ['basecamp', 'todo', 'project:9', 'todo_list:7', 'open']
     });
     expect(JSON.stringify(normalized.raw)).not.toMatch(/Private detail|Private comment/);
   });
