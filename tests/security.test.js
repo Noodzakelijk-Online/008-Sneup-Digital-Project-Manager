@@ -4145,6 +4145,57 @@ describe('Trello action reconciliation safety', () => {
       trelloActionAttemptId: 'attempt-1'
     }));
   });
+
+  test('classifies unresolved claimed actions by evidence age without calling Trello', async () => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const now = new Date('2026-07-14T12:00:00.000Z');
+    const freshAttempt = {
+      _id: 'attempt-fresh',
+      actionType: 'comment',
+      status: 'in_progress',
+      startedAt: new Date('2026-07-14T11:30:00.000Z'),
+      recommendationId: { _id: 'recommendation-fresh', status: 'executing' }
+    };
+    const warningAttempt = {
+      _id: 'attempt-warning',
+      actionType: 'move_card',
+      status: 'in_progress',
+      startedAt: new Date('2026-07-14T06:00:00.000Z'),
+      recommendationId: { _id: 'recommendation-warning', status: 'executing' }
+    };
+    const criticalAttempt = {
+      _id: 'attempt-critical',
+      actionType: 'reassign',
+      status: 'in_progress',
+      startedAt: new Date('2026-07-13T06:00:00.000Z'),
+      recommendationId: { _id: 'recommendation-critical', status: 'executing' }
+    };
+    const chain = {
+      sort: jest.fn(() => chain),
+      populate: jest.fn(() => chain),
+      limit: jest.fn().mockResolvedValue([freshAttempt, warningAttempt, criticalAttempt])
+    };
+
+    jest.doMock('../src/models/TrelloActionAttempt', () => ({ find: jest.fn(() => chain) }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({ normalizeWorkspaceObjectId: jest.fn(value => value) }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    jest.spyOn(operationsLedgerService, 'isDatabaseReady').mockReturnValue(true);
+
+    const health = await operationsLedgerService.getTrelloActionReconciliationHealth({
+      workspaceId: 'workspace-1',
+      now,
+      warningHours: 4,
+      criticalHours: 24
+    });
+
+    expect(health.summary).toMatchObject({ unresolved: 3, fresh: 1, warning: 1, critical: 1, requiresOperator: 2 });
+    expect(health.items.map(item => item.attemptId)).toEqual(['attempt-critical', 'attempt-warning', 'attempt-fresh']);
+    expect(health.items.map(item => item.severity)).toEqual(['critical', 'warning', 'fresh']);
+    expect(health.items[0].message).toContain('before any new action');
+  });
 });
 
 describe('operating ledger analyzer', () => {

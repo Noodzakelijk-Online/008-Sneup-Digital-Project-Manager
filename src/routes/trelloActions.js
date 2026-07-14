@@ -47,6 +47,24 @@ router.get('/reconciliation', requirePermission('audit:read'), async (req, res) 
   }
 });
 
+router.get('/reconciliation/health', requirePermission('audit:read'), async (req, res) => {
+  try {
+    const health = await operationsLedgerService.getTrelloActionReconciliationHealth({
+      workspaceId: getRequestWorkspaceObjectId(req),
+      limit: clampInteger(req.query.limit, 100, 1, 250),
+      warningHours: clampInteger(req.query.warningHours, undefined, 1, 168),
+      criticalHours: clampInteger(req.query.criticalHours, undefined, 2, 720)
+    });
+    res.json({ success: true, health });
+  } catch (error) {
+    logger.error('Failed to calculate Trello action reconciliation health:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to calculate Trello action reconciliation health'
+    });
+  }
+});
+
 router.post('/:actionAttemptId/reconcile', requirePermission('trello-actions:reconcile'), async (req, res) => {
   try {
     const result = await operationsLedgerService.reconcileTrelloActionAttempt(req.params.actionAttemptId, {

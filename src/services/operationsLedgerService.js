@@ -23,6 +23,14 @@ const logger = require('../utils/logger');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const HOURS = 60 * 60 * 1000;
+const DEFAULT_RECONCILIATION_WARNING_HOURS = 4;
+const DEFAULT_RECONCILIATION_CRITICAL_HOURS = 24;
+
+const boundedHours = (value, fallback, minimum, maximum) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(minimum, Math.min(maximum, parsed));
+};
 
 class OperationsLedgerService {
   isDatabaseReady() {
@@ -1177,6 +1185,82 @@ class OperationsLedgerService {
       const recommendation = attempt.recommendationId;
       return attempt.status === 'in_progress' || recommendation?.status === 'executing';
     });
+  }
+
+  async getTrelloActionReconciliationHealth(filters = {}) {
+    this.requireDatabase();
+
+    const warningHours = boundedHours(
+      filters.warningHours ?? process.env.SNEUP_TRELLO_RECONCILIATION_WARNING_HOURS,
+      DEFAULT_RECONCILIATION_WARNING_HOURS,
+      1,
+      168
+    );
+    const requestedCriticalHours = boundedHours(
+      filters.criticalHours ?? process.env.SNEUP_TRELLO_RECONCILIATION_CRITICAL_HOURS,
+      DEFAULT_RECONCILIATION_CRITICAL_HOURS,
+      2,
+      720
+    );
+    const criticalHours = Math.max(warningHours + 1, requestedCriticalHours);
+    const now = filters.now ? new Date(filters.now) : new Date();
+    const referenceNow = Number.isNaN(now.getTime()) ? new Date() : now;
+    const actions = await this.listTrelloActionsNeedingReconciliation({
+      ...filters,
+      limit: filters.limit || 100
+    });
+
+    const items = actions.map((attempt) => {
+      const candidateStartedAt = new Date(attempt.startedAt || attempt.createdAt || referenceNow);
+      const startedAt = Number.isNaN(candidateStartedAt.getTime()) ? referenceNow : candidateStartedAt;
+      const ageMinutes = Math.max(0, Math.floor((referenceNow.getTime() - startedAt.getTime()) / (60 * 1000)));
+      const ageHours = Number((ageMinutes / 60).toFixed(1));
+      const severity = ageHours >= criticalHours
+        ? 'critical'
+        : ageHours >= warningHours
+          ? 'warning'
+          : 'fresh';
+      const recommendation = attempt.recommendationId;
+
+      return {
+        attempt,
+        attemptId: String(attempt._id),
+        actionType: attempt.actionType,
+        startedAt,
+        ageMinutes,
+        ageHours,
+        severity,
+        recommendationId: recommendation?._id ? String(recommendation._id) : attempt.recommendationId ? String(attempt.recommendationId) : null,
+        message: severity === 'critical'
+          ? `Unresolved for ${ageHours}h. Confirm the observed Trello result before any new action.`
+          : severity === 'warning'
+            ? `Unresolved for ${ageHours}h. Operator evidence is due.`
+            : `Claimed ${ageMinutes} minutes ago. Awaiting provider-result evidence.`
+      };
+    }).sort((left, right) => {
+      const severityOrder = { critical: 0, warning: 1, fresh: 2 };
+      return severityOrder[left.severity] - severityOrder[right.severity]
+        || right.ageMinutes - left.ageMinutes;
+    });
+
+    const summary = items.reduce((counts, item) => {
+      counts[item.severity] += 1;
+      return counts;
+    }, {
+      unresolved: items.length,
+      fresh: 0,
+      warning: 0,
+      critical: 0
+    });
+    summary.requiresOperator = summary.warning + summary.critical;
+    summary.oldestAgeMinutes = items.reduce((oldest, item) => Math.max(oldest, item.ageMinutes), 0);
+
+    return {
+      generatedAt: referenceNow,
+      thresholds: { warningHours, criticalHours },
+      summary,
+      items
+    };
   }
 
   async reconcileTrelloActionAttempt(actionAttemptId, body = {}) {

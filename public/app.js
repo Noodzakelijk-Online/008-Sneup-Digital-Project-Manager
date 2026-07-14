@@ -36,6 +36,7 @@ const state = {
     followUps: [],
     findings: [],
     healthSnapshots: [],
+    reconciliationHealth: null,
     errors: []
   },
   category: 'all',
@@ -660,7 +661,8 @@ async function loadOperationsLedger() {
     auditEvents: fetchApi('/api/audit?limit=50'),
     followUps: fetchApi('/api/follow-ups/due?limit=50'),
     findings: fetchApi('/api/findings?status=open&limit=50'),
-    healthSnapshots: fetchApi('/api/findings/board-health?limit=20')
+    healthSnapshots: fetchApi('/api/findings/board-health?limit=20'),
+    reconciliationHealth: fetchApi('/api/trello-actions/reconciliation/health?limit=100')
   };
 
   const entries = await Promise.all(Object.entries(requests).map(async ([key, promise]) => {
@@ -674,7 +676,7 @@ async function loadOperationsLedger() {
   state.ledger.errors = [];
   entries.forEach(([key, data, error]) => {
     if (error) {
-      state.ledger[key] = [];
+      state.ledger[key] = key === 'reconciliationHealth' ? null : [];
       state.ledger.errors.push(error);
       return;
     }
@@ -686,6 +688,7 @@ async function loadOperationsLedger() {
     if (key === 'followUps') state.ledger.followUps = data.followUps || [];
     if (key === 'findings') state.ledger.findings = data.findings || [];
     if (key === 'healthSnapshots') state.ledger.healthSnapshots = data.snapshots || [];
+    if (key === 'reconciliationHealth') state.ledger.reconciliationHealth = data.health || null;
   });
 
   renderOperationsLedger();
@@ -830,6 +833,8 @@ function renderOperationsLedger() {
   const followUps = state.ledger.followUps || [];
   const findings = state.ledger.findings || [];
   const healthSnapshots = state.ledger.healthSnapshots || [];
+  const reconciliationHealth = state.ledger.reconciliationHealth;
+  const reconciliationSummary = reconciliationHealth?.summary || {};
 
   const openRobert = decisions.filter(item => item.ownerType === 'robert').length;
   const vaTeam = decisions.filter(item => ['va', 'team'].includes(item.ownerType)).length;
@@ -843,6 +848,8 @@ function renderOperationsLedger() {
     ['VA/team queue', vaTeam],
     ['Awaiting review', pendingRecommendations],
     ['Failed actions', failedActions],
+    ['Reconciliation alerts', reconciliationSummary.requiresOperator || 0],
+    ['Critical evidence gaps', reconciliationSummary.critical || 0],
     ['Open findings', findings.length],
     ['High-risk findings', highRiskFindings],
     ['Audit events', auditEvents.length]
@@ -868,8 +875,10 @@ function renderOperationsLedger() {
   els.findingsList.innerHTML = listOrEmpty(findings, renderFinding);
   els.boardHealthCount.textContent = `${healthSnapshots.length} snapshots`;
   els.boardHealthList.innerHTML = listOrEmpty(healthSnapshots, renderBoardHealth);
-  els.trelloAttemptCount.textContent = `${actions.length} attempts`;
-  els.trelloAttempts.innerHTML = listOrEmpty(actions, renderTrelloAttempt);
+  els.trelloAttemptCount.textContent = reconciliationSummary.requiresOperator
+    ? `${reconciliationSummary.requiresOperator} need evidence`
+    : `${actions.length} attempts`;
+  els.trelloAttempts.innerHTML = `${renderTrelloReconciliationHealth(reconciliationHealth)}${listOrEmpty(actions, renderTrelloAttempt)}`;
   els.followUpCount.textContent = `${followUps.length} due`;
   els.followUps.innerHTML = listOrEmpty(followUps, renderFollowUp);
   els.auditCount.textContent = `${auditEvents.length} events`;
@@ -1112,6 +1121,31 @@ function renderTrelloAttempt(attempt) {
           <button class="button warn" data-trello-action-reconcile="${escapeHtml(attemptId)}" type="button">Reconcile result</button>
         </div>
       ` : ''}
+    </div>
+  `;
+}
+
+function renderTrelloReconciliationHealth(health) {
+  if (!health) return '';
+  const summary = health.summary || {};
+  const alerts = (health.items || []).filter(item => item.severity === 'critical' || item.severity === 'warning');
+  if (alerts.length === 0) {
+    return `
+      <div class="item">
+        <div class="item-title"><strong>Reconciliation coverage</strong><span class="pill healthy">current</span></div>
+        <div class="meta"><span>${summary.unresolved || 0} unresolved claim${summary.unresolved === 1 ? '' : 's'}</span><span>Evidence warning at ${health.thresholds?.warningHours || 4}h</span></div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>Reconciliation attention</strong>
+        <span class="pill ${summary.critical ? 'critical' : 'high'}">${summary.critical || 0} critical, ${summary.warning || 0} warning</span>
+      </div>
+      <div class="meta"><span>Confirm the observed provider result in the matching action below.</span><span>Thresholds: ${health.thresholds?.warningHours || 4}h / ${health.thresholds?.criticalHours || 24}h</span></div>
+      <div class="meta">${alerts.slice(0, 3).map(item => `<span>${escapeHtml(item.actionType || 'Trello action')}: ${escapeHtml(item.message)}</span>`).join('')}</div>
     </div>
   `;
 }
