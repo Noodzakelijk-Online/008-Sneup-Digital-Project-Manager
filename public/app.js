@@ -2154,6 +2154,7 @@ function renderEvidenceAudit(event) {
   `;
 }
 function renderCommand(command) {
+  const readOnlyDemo = state.snapshot?.mode === 'demo' || state.securityContext?.demoMode;
   return `
     <div class="item">
       <div class="item-title">
@@ -2168,7 +2169,9 @@ function renderCommand(command) {
       <div class="meta">${escapeHtml(command.reason)}</div>
       ${renderSourceEvidence(command.sourceEvidence)}
       <div class="item-actions">
-        <button class="button primary" data-command-id="${escapeHtml(command.id)}" type="button">Queue for approval</button>
+        ${readOnlyDemo
+          ? '<span class="meta">Read-only demo preview</span>'
+          : `<button class="button primary" data-command-id="${escapeHtml(command.id)}" type="button">Queue for approval</button>`}
       </div>
     </div>
   `;
@@ -2181,6 +2184,11 @@ function bindAutopilotCommandActions() {
 }
 
 async function queueAutopilotCommand(commandId) {
+  if (state.snapshot?.mode === 'demo' || state.securityContext?.demoMode) {
+    openNotice('Read-only demo', 'Connect a database-backed workspace before queuing approval requests.');
+    return;
+  }
+
   const command = (state.snapshot?.commandQueue || []).find(item => item.id === commandId);
   if (!command) return;
 
