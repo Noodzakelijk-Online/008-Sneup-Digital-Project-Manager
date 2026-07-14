@@ -3,6 +3,7 @@ const User = require('../models/User');
 const SessionToken = require('../models/SessionToken');
 const operationsLedgerService = require('./operationsLedgerService');
 const { clampInteger } = require('../utils/requestSecurity');
+const { isProduction } = require('../utils/securityConfiguration');
 const logger = require('../utils/logger');
 
 const USER_ROLES = ['viewer', 'operator', 'manager', 'admin', 'owner', 'service'];
@@ -81,11 +82,21 @@ const publicAcceptedInvite = (invite, workspace, user, session, rawSessionToken)
   authorizationHeader: `Bearer ${rawSessionToken}`
 });
 
-const getInviteUrl = (rawToken) => {
-  const configuredUrl = process.env.SNEUP_PUBLIC_URL || 'http://localhost:3000';
+const isLocalHost = (host) => {
+  const normalized = String(host || '').toLowerCase();
+  return normalized === 'localhost' || normalized === '::1' || normalized === '[::1]'
+    || normalized.startsWith('127.');
+};
+
+const getInviteUrl = (rawToken, { environment = process.env, publicUrl } = {}) => {
+  const configuredUrl = publicUrl === undefined ? environment.SNEUP_PUBLIC_URL : publicUrl;
+  if (!configuredUrl && isProduction(environment)) {
+    throw invitationError('SNEUP_PUBLIC_URL must be an HTTPS URL before production invitations can be issued', 503);
+  }
+
   let url;
   try {
-    url = new URL(configuredUrl);
+    url = new URL(configuredUrl || 'http://localhost:3000');
   } catch (error) {
     throw invitationError('SNEUP_PUBLIC_URL must be an absolute HTTP(S) URL before invitations can be issued', 503);
   }
@@ -93,14 +104,20 @@ const getInviteUrl = (rawToken) => {
   if (!['http:', 'https:'].includes(url.protocol)) {
     throw invitationError('SNEUP_PUBLIC_URL must use HTTP or HTTPS before invitations can be issued', 503);
   }
+  if (url.username || url.password || url.search || url.hash) {
+    throw invitationError('SNEUP_PUBLIC_URL must not include credentials, query parameters, or a fragment before invitations can be issued', 503);
+  }
+  if (isProduction(environment) && (url.protocol !== 'https:' || isLocalHost(url.hostname))) {
+    throw invitationError('Production SNEUP_PUBLIC_URL must use a non-local HTTPS origin before invitations can be issued', 503);
+  }
 
   url.searchParams.set('invite', rawToken);
   return url.toString();
 };
 
-const sendInviteEmail = async ({ invite, inviteUrl }) => {
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.SNEUP_INVITE_FROM;
+const sendInviteEmail = async ({ invite, inviteUrl }, { fetchFn = fetch, environment = process.env } = {}) => {
+  const apiKey = environment.RESEND_API_KEY;
+  const from = environment.SNEUP_INVITE_FROM;
   if (!apiKey || !from) {
     throw invitationError('Email delivery is not configured. Set RESEND_API_KEY and SNEUP_INVITE_FROM, or use a manual invitation link.', 503);
   }
@@ -108,8 +125,9 @@ const sendInviteEmail = async ({ invite, inviteUrl }) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), MAX_EMAIL_DELIVERY_TIMEOUT_MS);
   try {
-    const response = await fetch('https://api.resend.com/emails', {
+    const response = await fetchFn('https://api.resend.com/emails', {
       method: 'POST',
+      redirect: 'error',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
@@ -117,7 +135,7 @@ const sendInviteEmail = async ({ invite, inviteUrl }) => {
       body: JSON.stringify({
         from,
         to: [invite.email],
-        subject: `Join ${process.env.SNEUP_INVITE_PRODUCT_NAME || 'Sneup'}`,
+        subject: `Join ${environment.SNEUP_INVITE_PRODUCT_NAME || 'Sneup'}`,
         text: `${invite.displayName}, you have been invited to join Sneup. Accept your invitation: ${inviteUrl}`
       }),
       signal: controller.signal
@@ -379,5 +397,6 @@ module.exports = {
   listInvites,
   publicInvite,
   revokeInvite,
+  sendInviteEmail,
   validateInviteInput
 };

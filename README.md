@@ -115,7 +115,7 @@ All components are battle-tested, production-ready open source libraries:
 
 ### Production token-secret boundary
 
-For a live production workspace, set independent random values of at least 32 characters for `SNEUP_API_TOKEN_PEPPER`, `SNEUP_SESSION_TOKEN_PEPPER`, and `SNEUP_INVITE_TOKEN_PEPPER`. Sneup refuses to start a non-demo production runtime when any of these is absent, weak, or still a placeholder. This prevents database API tokens, desktop sessions, and invitation tokens from being hashed with predictable development defaults.
+For a live production workspace, set independent random values of at least 32 characters for `SNEUP_API_TOKEN_PEPPER`, `SNEUP_SESSION_TOKEN_PEPPER`, and `SNEUP_INVITE_TOKEN_PEPPER`. Sneup refuses to start a non-demo production runtime when any of these is absent, weak, or still a placeholder. This prevents database API tokens, desktop sessions, and invitation tokens from being hashed with predictable development defaults. Before an invitation can be issued in production, configure `SNEUP_PUBLIC_URL` as a non-local HTTPS origin with no credentials, query parameters, or fragment; this keeps the one-time invite token out of a preconfigured URL component.
 
 The Windows installer uses the bundled Sneup icon. Release signing and automatic updates remain release-infrastructure tasks: configure a publisher certificate and update feed in the release environment before distributing a trusted production build.
 

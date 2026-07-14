@@ -43,11 +43,11 @@ const enhancements = [
     priority: 'P0',
     area: 'security',
     title: 'Add real users, workspaces, RBAC, and audit logs',
-    evidence: 'The API resolves request identity and workspace context, supports hashed database API tokens and hashed per-user session tokens, Workspace/User/ApiToken/SessionToken models exist, consequential write endpoints require explicit role permissions, workspace/user/session management APIs exist, and the dashboard lets an administrator inspect issued sessions and explicitly revoke active sessions with immediate server refresh. Multi-workspace identity operations are documented, and boards/cards/connector accounts plus core operations-ledger, analytics, chat, team, list/member/comment, intervention, learning, and performance collections are workspace-scoped.',
+    evidence: 'The API resolves request identity and workspace context, supports hashed database API tokens and hashed per-user session tokens, Workspace/User/ApiToken/SessionToken models exist, consequential write endpoints require explicit role permissions, workspace/user/session management APIs exist, and the dashboard lets an administrator inspect issued sessions, create/revoke time-bound invitations, and explicitly revoke active sessions with immediate server refresh. Identity administrators can explicitly send invitations through Resend or create manual one-time links; production invite links require a clean non-local HTTPS origin and delivery blocks redirects. Multi-workspace identity operations are documented, and boards/cards/connector accounts plus core operations-ledger, analytics, chat, team, list/member/comment, intervention, learning, and performance collections are workspace-scoped.',
     impact: 'Required before Sneup can safely run as a shared or internet-facing project-management control plane.',
     effort: 'XL',
     status: 'in-progress',
-    nextStep: 'Add invitation/email delivery and production migration scripts for existing shared deployments.',
+    nextStep: 'Add production migration scripts for existing shared deployments and invitation delivery retry controls with ledger evidence.',
     acceptanceCriteria: [
       'Every API request resolves a user or service identity.',
       'Connector accounts and project data are workspace-scoped.',

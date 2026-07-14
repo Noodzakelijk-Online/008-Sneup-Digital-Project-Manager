@@ -2,6 +2,7 @@ const {
   getTokenPepper,
   validateRuntimeSecurityConfiguration
 } = require('../src/utils/securityConfiguration');
+const { getInviteUrl, sendInviteEmail } = require('../src/services/workspaceInviteService');
 
 const strong = (suffix) => `sneup-${suffix}-a-unique-production-secret-value-2026`;
 
@@ -46,5 +47,50 @@ describe('production token-secret boundary', () => {
       NODE_ENV: 'production',
       SNEUP_API_TOKEN_PEPPER: strong('api')
     })).toThrow(/SNEUP_SESSION_TOKEN_PEPPER/);
+  });
+});
+
+describe('workspace invitation delivery boundary', () => {
+  test('requires a clean non-local HTTPS public URL for production invitations while retaining local development links', () => {
+    const token = 'sneup_invite_abcdefghijklmnopqrstuvwxyz';
+    expect(() => getInviteUrl(token, { environment: { NODE_ENV: 'production' } }))
+      .toThrow(/SNEUP_PUBLIC_URL.*HTTPS/i);
+    expect(() => getInviteUrl(token, { environment: { NODE_ENV: 'production', SNEUP_PUBLIC_URL: 'http://sneup.example.com' } }))
+      .toThrow(/non-local HTTPS/i);
+    expect(() => getInviteUrl(token, { environment: { NODE_ENV: 'production', SNEUP_PUBLIC_URL: 'https://localhost:3000' } }))
+      .toThrow(/non-local HTTPS/i);
+    expect(() => getInviteUrl(token, { environment: { NODE_ENV: 'production', SNEUP_PUBLIC_URL: 'https://user:secret@sneup.example.com' } }))
+      .toThrow(/credentials/i);
+    expect(() => getInviteUrl(token, { environment: { NODE_ENV: 'production', SNEUP_PUBLIC_URL: 'https://sneup.example.com/?session=secret' } }))
+      .toThrow(/query parameters/i);
+    expect(getInviteUrl(token, { environment: { NODE_ENV: 'development', SNEUP_PUBLIC_URL: 'http://localhost:3216/sneup' } }))
+      .toBe(`http://localhost:3216/sneup?invite=${token}`);
+    expect(getInviteUrl(token, { environment: { NODE_ENV: 'production', SNEUP_PUBLIC_URL: 'https://sneup.example.com/onboarding' } }))
+      .toBe(`https://sneup.example.com/onboarding?invite=${token}`);
+  });
+
+  test('sends invitations only to Resend with explicit redirect blocking and no credential in the URL', async () => {
+    const fetchFn = jest.fn().mockResolvedValue({ ok: true, status: 202 });
+    await sendInviteEmail({
+      invite: { email: 'invitee@example.com', displayName: 'Invitee' },
+      inviteUrl: 'https://sneup.example.com/onboarding?invite=sneup_invite_token'
+    }, {
+      fetchFn,
+      environment: {
+        RESEND_API_KEY: 'resend_api_key',
+        SNEUP_INVITE_FROM: 'team@sneup.example.com',
+        SNEUP_INVITE_PRODUCT_NAME: 'Sneup'
+      }
+    });
+
+    expect(fetchFn).toHaveBeenCalledWith('https://api.resend.com/emails', expect.objectContaining({
+      method: 'POST',
+      redirect: 'error',
+      headers: expect.objectContaining({ Authorization: 'Bearer resend_api_key' })
+    }));
+    const request = fetchFn.mock.calls[0][1];
+    expect(request.body).toContain('invitee@example.com');
+    expect(request.body).toContain('https://sneup.example.com/onboarding?invite=sneup_invite_token');
+    expect(request.body).not.toContain('resend_api_key');
   });
 });
