@@ -37,6 +37,11 @@ const notificationPolicySchema = new mongoose.Schema({
     enum: ['warning', 'critical'],
     default: 'warning'
   },
+  quietHours: {
+    enabled: { type: Boolean, default: false },
+    startHourUtc: { type: Number, min: 0, max: 23, default: 18 },
+    endHourUtc: { type: Number, min: 0, max: 23, default: 8 }
+  },
   status: {
     type: String,
     enum: ['active', 'paused'],

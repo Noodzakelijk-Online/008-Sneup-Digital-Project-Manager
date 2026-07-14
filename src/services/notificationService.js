@@ -107,13 +107,24 @@ class NotificationService {
       error.statusCode = 400;
       throw error;
     }
+    const quietHours = body.quietHours || {};
+    const startHourUtc = Number(quietHours.startHourUtc ?? 18);
+    const endHourUtc = Number(quietHours.endHourUtc ?? 8);
+    if (!Number.isInteger(startHourUtc) || !Number.isInteger(endHourUtc)
+      || startHourUtc < 0 || startHourUtc > 23 || endHourUtc < 0 || endHourUtc > 23
+      || (quietHours.enabled === true && startHourUtc === endHourUtc)) {
+      const error = new Error('Quiet hours must use distinct UTC hours from 0 through 23');
+      error.statusCode = 400;
+      throw error;
+    }
     return {
       name,
       channel,
       destinationLabel,
       minimumSeverity,
       status,
-      eventTypes: this.normalizeEventTypes(body.eventTypes)
+      eventTypes: this.normalizeEventTypes(body.eventTypes),
+      quietHours: { enabled: quietHours.enabled === true, startHourUtc, endHourUtc }
     };
   }
 
@@ -128,6 +139,7 @@ class NotificationService {
       destinationConfigured: Boolean(policy.destinationEncrypted),
       eventTypes: policy.eventTypes || [],
       minimumSeverity: policy.minimumSeverity,
+      quietHours: policy.quietHours || { enabled: false, startHourUtc: 18, endHourUtc: 8 },
       status: policy.status,
       activatedBy: policy.activatedBy || '',
       activatedAt: policy.activatedAt,
@@ -158,6 +170,7 @@ class NotificationService {
       responseStatus: delivery.responseStatus,
       errorMessage: delivery.errorMessage || '',
       attemptCount: delivery.attemptCount || 0,
+      deferredUntil: delivery.deferredUntil,
       createdAt: delivery.createdAt,
       updatedAt: delivery.updatedAt
     };
@@ -219,7 +232,8 @@ class NotificationService {
       destinationLabel: body.destinationLabel ?? policy.destinationLabel,
       minimumSeverity: body.minimumSeverity ?? policy.minimumSeverity,
       status: body.status ?? policy.status,
-      eventTypes: body.eventTypes ?? policy.eventTypes
+      eventTypes: body.eventTypes ?? policy.eventTypes,
+      quietHours: body.quietHours ?? policy.quietHours
     });
     const actor = options.actor || body.updatedBy || 'sneup-operator';
     const statusChangedToActive = input.status === 'active' && policy.status !== 'active';
@@ -274,12 +288,14 @@ class NotificationService {
     }).select('+destinationEncrypted');
     if (policies.length === 0) return { processedCount: 0, successCount: 0, failureCount: 0, metadata: { activePolicies: 0 } };
 
+    const deferred = await this.flushDeferredDeliveries(policies, options.now);
+
     const health = await operationsLedgerService.getTrelloActionReconciliationHealth({ workspaceId, limit: 250 });
     const alerts = health.items.filter(item => item.severity === 'warning' || item.severity === 'critical');
     const dayKey = new Date(health.generatedAt).toISOString().slice(0, 10);
-    let successCount = 0;
-    let failureCount = 0;
-    let processedCount = 0;
+    let successCount = deferred.successCount;
+    let failureCount = deferred.failureCount;
+    let processedCount = deferred.processedCount;
 
     for (const policy of policies) {
       for (const alert of alerts) {
@@ -295,7 +311,7 @@ class NotificationService {
             sourceType: 'trello_action_attempt',
             sourceId: alert.attemptId
           }, 'sneup-notification-worker');
-          if (result.status === 'delivered' || result.status === 'duplicate') successCount += 1;
+          if (['delivered', 'duplicate', 'deferred'].includes(result.status)) successCount += 1;
           else failureCount += 1;
         } catch (error) {
           failureCount += 1;
@@ -350,6 +366,59 @@ class NotificationService {
       throw error;
     }
 
+    if (event.severity !== 'critical' && this.isQuietHours(policy, event.now)) {
+      delivery.status = 'deferred';
+      delivery.deferredUntil = this.nextQuietHoursEnd(policy, event.now);
+      await delivery.save();
+      await this.recordAudit('notification_deferred', delivery, actor, { status: delivery.status, deferredUntil: delivery.deferredUntil });
+      return { status: 'deferred', delivery: this.sanitizeDelivery(delivery) };
+    }
+
+    return this.deliverExisting(policy, delivery, event, actor);
+  }
+
+  isQuietHours(policy, now = new Date()) {
+    const quietHours = policy.quietHours;
+    if (!quietHours?.enabled) return false;
+    const hour = new Date(now).getUTCHours();
+    const start = quietHours.startHourUtc;
+    const end = quietHours.endHourUtc;
+    return start > end ? hour >= start || hour < end : hour >= start && hour < end;
+  }
+
+  nextQuietHoursEnd(policy, now = new Date()) {
+    const value = new Date(now);
+    value.setUTCMinutes(0, 0, 0);
+    const { startHourUtc, endHourUtc } = policy.quietHours;
+    value.setUTCHours(endHourUtc);
+    if (startHourUtc > endHourUtc && new Date(now).getUTCHours() >= startHourUtc) value.setUTCDate(value.getUTCDate() + 1);
+    return value;
+  }
+
+  async flushDeferredDeliveries(policies, now = new Date()) {
+    const totals = { processedCount: 0, successCount: 0, failureCount: 0 };
+    for (const policy of policies) {
+      if (this.isQuietHours(policy, now)) continue;
+      const deliveries = await NotificationDelivery.find({
+        workspaceId: policy.workspaceId,
+        policyId: policy._id,
+        status: 'deferred',
+        deferredUntil: { $lte: new Date(now) }
+      }).sort({ deferredUntil: 1 }).limit(100);
+      for (const delivery of deliveries) {
+        totals.processedCount += 1;
+        try {
+          await this.deliverExisting(policy, delivery, delivery, 'sneup-notification-worker');
+          totals.successCount += 1;
+        } catch (error) {
+          totals.failureCount += 1;
+        }
+      }
+    }
+    return totals;
+  }
+
+  async deliverExisting(policy, delivery, event, actor) {
     delivery.status = 'sending';
     delivery.claimedAt = new Date();
     delivery.attemptCount = 1;

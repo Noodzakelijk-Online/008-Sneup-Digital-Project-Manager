@@ -1276,7 +1276,7 @@ function renderNotificationPolicy(policy) {
         <span>${escapeHtml(policy.destinationLabel || 'Unlabelled destination')}</span>
         <span>${escapeHtml(policy.minimumSeverity)} and above</span>
       </div>
-      <div class="meta"><span>${policy.destinationConfigured ? 'Encrypted destination configured' : 'Destination needs configuration'}</span><span>${(policy.eventTypes || []).map(type => escapeHtml(type.replaceAll('_', ' '))).join(', ')}</span></div>
+      <div class="meta"><span>${policy.destinationConfigured ? 'Encrypted destination configured' : 'Destination needs configuration'}</span><span>${policy.quietHours?.enabled ? `Warning alerts defer ${escapeHtml(policy.quietHours.startHourUtc)}:00-${escapeHtml(policy.quietHours.endHourUtc)}:00 UTC` : 'No quiet hours'}</span></div>
       <div class="item-actions">
         ${policy.status === 'active'
     ? `<button class="button" data-notification-policy-pause="${escapeHtml(policyId)}" type="button">Pause</button>`
@@ -3576,6 +3576,11 @@ function openNotificationPolicy() {
           <option value="critical">Critical only</option>
         </select>
       </label>
+      <label><input name="quietHoursEnabled" type="checkbox"> Defer warning alerts during quiet hours (critical alerts stay immediate)</label>
+      <div class="form-grid">
+        <label>Quiet start UTC<input name="quietStartHourUtc" type="number" min="0" max="23" value="18"></label>
+        <label>Quiet end UTC<input name="quietEndHourUtc" type="number" min="0" max="23" value="8"></label>
+      </div>
       <div class="notice">The policy starts paused. Activate it separately when this workspace is ready to deliver matching reconciliation alerts.</div>
       <div class="toolbar modal-actions">
         <button class="button" type="button" id="cancelNotificationPolicy">Cancel</button>
@@ -3594,7 +3599,14 @@ function openNotificationPolicy() {
       await fetchApi('/api/notifications/policies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget).entries()))
+        body: JSON.stringify({
+          ...Object.fromEntries(new FormData(event.currentTarget).entries()),
+          quietHours: {
+            enabled: event.currentTarget.elements.quietHoursEnabled.checked,
+            startHourUtc: Number(event.currentTarget.elements.quietStartHourUtc.value),
+            endHourUtc: Number(event.currentTarget.elements.quietEndHourUtc.value)
+          }
+        })
       });
       closeModal();
       await loadOperationsLedger();

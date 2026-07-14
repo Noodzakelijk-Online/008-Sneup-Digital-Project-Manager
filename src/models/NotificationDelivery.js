@@ -44,11 +44,12 @@ const notificationDeliverySchema = new mongoose.Schema({
   sourceUrl: String,
   status: {
     type: String,
-    enum: ['queued', 'sending', 'delivered', 'failed', 'suppressed'],
+    enum: ['queued', 'deferred', 'sending', 'delivered', 'failed', 'suppressed'],
     default: 'queued',
     index: true
   },
   claimedAt: Date,
+  deferredUntil: Date,
   deliveredAt: Date,
   failedAt: Date,
   responseStatus: Number,
