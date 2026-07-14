@@ -156,6 +156,11 @@ const ensureDefaultWorkspace = async () => {
   );
 };
 
+const listActiveWorkspaceIds = async () => {
+  const workspaces = await Workspace.find({ status: 'active' }).select('_id').lean();
+  return workspaces.map(workspace => workspace._id);
+};
+
 const backfillModelWorkspace = async (Model, workspaceId) => {
   const result = await Model.updateMany(
     missingWorkspaceQuery(),
@@ -267,6 +272,7 @@ module.exports = {
   getDefaultWorkspaceObjectId,
   getRequestWorkspaceObjectId,
   inspectDefaultWorkspaceBackfill,
+  listActiveWorkspaceIds,
   mapWithConcurrency,
   missingWorkspaceQuery,
   normalizeWorkspaceObjectId,

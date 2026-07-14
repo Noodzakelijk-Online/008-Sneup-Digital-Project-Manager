@@ -4,7 +4,7 @@ const interventionEngine = require('../services/interventionEngine');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const Board = require('../models/Board');
 const jobObservabilityService = require('../services/jobObservabilityService');
-const { defaultWorkspaceQuery, getDefaultWorkspaceObjectId } = require('../services/workspaceScopeService');
+const { listActiveWorkspaceIds } = require('../services/workspaceScopeService');
 
 class InterventionWorker {
   constructor() {
@@ -19,11 +19,7 @@ class InterventionWorker {
     this.jobs.processInterventions = schedule.scheduleJob(
       process.env.INTERVENTION_CRON || '*/30 * * * *',
       async () => {
-        await jobObservabilityService.trackJob({
-          jobName: 'interventions.process_all',
-          jobType: 'intervention',
-          triggerType: 'scheduled'
-        }, () => this.processAllInterventions());
+        await this.runForActiveWorkspaces('interventions.process_all', () => this.processAllInterventions());
       }
     );
 
@@ -31,11 +27,7 @@ class InterventionWorker {
     this.jobs.processFollowUps = schedule.scheduleJob(
       process.env.FOLLOWUP_CRON || '0 * * * *',
       async () => {
-        await jobObservabilityService.trackJob({
-          jobName: 'interventions.follow_ups',
-          jobType: 'intervention',
-          triggerType: 'scheduled'
-        }, () => this.processFollowUps());
+        await this.runForActiveWorkspaces('interventions.follow_ups', () => this.processFollowUps());
       }
     );
 
@@ -43,11 +35,7 @@ class InterventionWorker {
     this.jobs.processEscalations = schedule.scheduleJob(
       process.env.ESCALATION_CRON || '0 */2 * * *',
       async () => {
-        await jobObservabilityService.trackJob({
-          jobName: 'interventions.escalations',
-          jobType: 'intervention',
-          triggerType: 'scheduled'
-        }, () => this.processEscalations());
+        await this.runForActiveWorkspaces('interventions.escalations', () => this.processEscalations());
       }
     );
 
@@ -55,12 +43,18 @@ class InterventionWorker {
   }
 
   // Process interventions for all boards
-  async processAllInterventions() {
+  async runForActiveWorkspaces(jobName, handler) {
+    const workspaceIds = await listActiveWorkspaceIds();
+    for (const workspaceId of workspaceIds) {
+      await jobObservabilityService.trackJob({ jobName, jobType: 'intervention', triggerType: 'scheduled', workspaceId }, () => handler(workspaceId));
+    }
+  }
+
+  async processAllInterventions(workspaceId) {
     try {
       logger.info('Processing interventions for all boards...');
 
-      const workspaceId = getDefaultWorkspaceObjectId();
-      const boards = await Board.find(defaultWorkspaceQuery({ closed: false }));
+      const boards = await Board.find({ workspaceId, closed: false });
       let successCount = 0;
       let failureCount = 0;
 
@@ -87,10 +81,9 @@ class InterventionWorker {
   }
 
   // Process follow-ups
-  async processFollowUps() {
+  async processFollowUps(workspaceId) {
     try {
       logger.info('Processing follow-ups...');
-      const workspaceId = getDefaultWorkspaceObjectId();
       const ledgerResult = await operationsLedgerService.processDueFollowUps({ workspaceId });
       const queuedInterventions = await interventionEngine.processFollowUps({ workspaceId });
       return {
@@ -105,10 +98,9 @@ class InterventionWorker {
   }
 
   // Process escalations
-  async processEscalations() {
+  async processEscalations(workspaceId) {
     try {
       logger.info('Processing escalations...');
-      const workspaceId = getDefaultWorkspaceObjectId();
       const escalatedDecisionItems = await operationsLedgerService.processDueDecisionQueueEscalations({ workspaceId });
       const queuedInterventions = await interventionEngine.processEscalations({
         workspaceId
