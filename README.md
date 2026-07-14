@@ -226,6 +226,8 @@ Clockify uses an API key and requires one workspace ID. It reads only the authen
 
 Float uses a bearer API token. It reads bounded paginated project and date-filtered allocation metadata with server-side field allowlists, excludes people profiles and names, notes, clients, tags, rates, budgets, time off, logged time, and provider writes, and fails visibly at configured collection caps.
 
+Resource Guru uses authorization-code OAuth and requires selection of one authorized Resource Guru account before syncing. It reads bounded project and date-filtered booking metadata with GET only, excludes resource profiles and names, notes, clients, rates, availability, timesheets, and provider writes, and fails visibly at configured collection caps.
+
 ### Operations Ledger and Approvals
 
 - `GET /api/recommendations` - List approval-gated recommendations

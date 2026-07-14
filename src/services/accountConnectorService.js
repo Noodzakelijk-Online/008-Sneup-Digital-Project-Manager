@@ -147,6 +147,46 @@ class AccountConnectorService {
     return this.sanitizeAccount(account);
   }
 
+  async getResourceGuruAccounts(accountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireResourceGuruAccount(account);
+    return this.fetchResourceGuruAccounts(account);
+  }
+
+  async selectResourceGuruAccount(accountId, resourceGuruAccountId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireResourceGuruAccount(account);
+    const requestedAccountId = String(resourceGuruAccountId || '').trim();
+    if (!/^\d{1,20}$/.test(requestedAccountId)) {
+      const error = new Error('A valid Resource Guru account ID is required.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const accounts = await this.fetchResourceGuruAccounts(account);
+    const selected = accounts.find(item => item.resourceGuruAccountId === requestedAccountId);
+    if (!selected) {
+      const error = new Error('That Resource Guru account is no longer authorized for this connection.');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: {
+        ...(account.metadata?.fields || {}),
+        resourceGuruAccountId: selected.resourceGuruAccountId,
+        resourceGuruAccountUrlId: selected.accountUrlId
+      }
+    };
+    account.accountName = `${account.connectorName} - ${selected.name}`;
+    account.externalAccountId = selected.resourceGuruAccountId;
+    account.status = 'connected';
+    account.lastError = undefined;
+    await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   getCatalog(filters = {}) {
     const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
     const filteredConnectors = this.filterConnectors(category, search);
@@ -544,6 +584,14 @@ class AccountConnectorService {
     }
   }
 
+  requireResourceGuruAccount(account) {
+    if (account.connectorId !== 'resource_guru') {
+      const error = new Error('Resource Guru account selection is only available for Resource Guru connector accounts.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   async fetchJiraSites(account) {
     const credentials = this.getAccountCredentials(account);
     const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
@@ -658,6 +706,41 @@ class AccountConnectorService {
           name: String(item.name || `Basecamp account ${basecampAccountId}`),
           apiUrl
         } : null;
+      })
+      .filter(Boolean);
+  }
+
+  async fetchResourceGuruAccounts(account) {
+    const credentials = this.getAccountCredentials(account);
+    const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
+    if (!accessToken) {
+      const error = new Error('Resource Guru access token is missing. Reconnect this account to continue.');
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const response = await this.http.get('https://api.resourceguruapp.com/v1/accounts', {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'User-Agent': 'Sneup Digital Project Manager'
+      },
+      timeout: 15000,
+      maxRedirects: 0,
+      proxy: false
+    });
+
+    return (Array.isArray(response.data) ? response.data : [])
+      .filter(item => /^\d{1,20}$/.test(String(item?.id || '')))
+      .map(item => {
+        const accountUrlId = String(item.subdomain || '').trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(accountUrlId)) return null;
+        const resourceGuruAccountId = String(item.id);
+        return {
+          resourceGuruAccountId,
+          accountUrlId,
+          name: String(item.name || `Resource Guru account ${resourceGuruAccountId}`)
+        };
       })
       .filter(Boolean);
   }

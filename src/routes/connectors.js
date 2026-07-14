@@ -204,6 +204,30 @@ router.post('/accounts/:accountId/basecamp-account', requirePermission('connecto
   }
 });
 
+router.get('/accounts/:accountId/resource-guru-accounts', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const accounts = await accountConnectorService.getResourceGuruAccounts(req.params.accountId, connectorRequestOptions(req));
+    res.json({ success: true, accounts });
+  } catch (error) {
+    logger.error('Failed to list Resource Guru accounts:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/resource-guru-account', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.selectResourceGuruAccount(
+      req.params.accountId,
+      req.body.resourceGuruAccountId,
+      connectorRequestOptions(req)
+    );
+    res.json({ success: true, account });
+  } catch (error) {
+    logger.error('Failed to select Resource Guru account:', error);
+    sendError(res, error);
+  }
+});
+
 router.get('/:connectorId', (req, res) => {
   try {
     const connector = accountConnectorService.getConnectorDetails(req.params.connectorId);

@@ -3229,6 +3229,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-basecamp-account]').forEach((button) => {
     button.addEventListener('click', () => openBasecampAccountModal(button.dataset.basecampAccount));
   });
+  document.querySelectorAll('[data-resource-guru-account]').forEach((button) => {
+    button.addEventListener('click', () => openResourceGuruAccountModal(button.dataset.resourceGuruAccount));
+  });
 }
 
 function renderConnectorSafety() {
@@ -3283,6 +3286,8 @@ function renderConnector(connector, account) {
   const selectedAsanaWorkspaceGid = account?.metadata?.fields?.asanaWorkspaceGid;
   const selectedBasecampAccountId = account?.metadata?.fields?.basecampAccountId;
   const isBasecamp = connector.id === 'basecamp';
+  const selectedResourceGuruAccountId = account?.metadata?.fields?.resourceGuruAccountId;
+  const isResourceGuru = connector.id === 'resource_guru';
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
@@ -3332,6 +3337,7 @@ function renderConnector(connector, account) {
         ${isJira && account ? `<button class="button" data-jira-site="${escapeHtml(account.id)}" type="button">${selectedJiraCloudId ? 'Jira site selected' : 'Select Jira site'}</button>` : ''}
         ${isAsana && account ? `<button class="button" data-asana-workspace="${escapeHtml(account.id)}" type="button">${selectedAsanaWorkspaceGid ? 'Asana workspace selected' : 'Select Asana workspace'}</button>` : ''}
         ${isBasecamp && account ? `<button class="button" data-basecamp-account="${escapeHtml(account.id)}" type="button">${selectedBasecampAccountId ? 'Basecamp account selected' : 'Select Basecamp account'}</button>` : ''}
+        ${isResourceGuru && account ? `<button class="button" data-resource-guru-account="${escapeHtml(account.id)}" type="button">${selectedResourceGuruAccountId ? 'Resource Guru account selected' : 'Select Resource Guru account'}</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         ${connected && connector.auth.type !== 'oauth2'
           ? `<button class="button primary" data-rotate-credential="${escapeHtml(account.id)}" type="button">Rotate credential</button>`
@@ -3339,6 +3345,57 @@ function renderConnector(connector, account) {
       </div>
     </div>
   `;
+}
+
+async function openResourceGuruAccountModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  try {
+    const data = await fetchApi(`/api/connectors/accounts/${accountId}/resource-guru-accounts`);
+    const accounts = data.accounts || [];
+    if (accounts.length === 0) {
+      openNotice('Resource Guru account selection', 'No Resource Guru accounts are currently authorized for this connection. Reconnect it with Resource Guru access.');
+      return;
+    }
+
+    const selectedAccountId = account.metadata?.fields?.resourceGuruAccountId || (accounts.length === 1 ? accounts[0].resourceGuruAccountId : '');
+    els.modalTitle.textContent = 'Select Resource Guru account';
+    els.modalBody.innerHTML = `
+      <form id="resourceGuruAccountForm">
+        <div class="field">
+          <label for="resourceGuruAccountId">Authorized Resource Guru account</label>
+          <select id="resourceGuruAccountId" name="resourceGuruAccountId" required>
+            <option value="" ${selectedAccountId ? '' : 'selected'} disabled>Select an account</option>
+            ${accounts.map(resourceGuruAccount => `<option value="${escapeHtml(resourceGuruAccount.resourceGuruAccountId)}" ${resourceGuruAccount.resourceGuruAccountId === selectedAccountId ? 'selected' : ''}>${escapeHtml(resourceGuruAccount.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="notice">Sneup will only ingest read-only project and booking schedule metadata from this account.</div>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelResourceGuruAccount">Cancel</button>
+          <button class="button primary" type="submit">Use this account</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelResourceGuruAccount').addEventListener('click', closeModal);
+    document.getElementById('resourceGuruAccountForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.target).entries());
+      try {
+        await fetchApi(`/api/connectors/accounts/${accountId}/resource-guru-account`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        closeModal();
+        openNotice('Resource Guru account selected', 'Sneup will use this account for the next read-only sync.');
+        await loadConnectors();
+      } catch (error) {
+        openNotice('Resource Guru account selection', error.message);
+      }
+    });
+  } catch (error) {
+    openNotice('Resource Guru account selection', error.message);
+  }
 }
 
 async function openBasecampAccountModal(accountId) {

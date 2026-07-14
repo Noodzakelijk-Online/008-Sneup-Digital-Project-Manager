@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops',
   'wrike',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'coda', 'teamwork', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru'
 ];
 const githubWorkSignalClient = require('./githubWorkSignalClient');
 const gitlabWorkSignalClient = require('./gitlabWorkSignalClient');
@@ -52,6 +52,7 @@ const productboardWorkSignalClient = require('./productboardWorkSignalClient');
 const togglTrackWorkSignalClient = require('./togglTrackWorkSignalClient');
 const clockifyWorkSignalClient = require('./clockifyWorkSignalClient');
 const floatWorkSignalClient = require('./floatWorkSignalClient');
+const resourceGuruWorkSignalClient = require('./resourceGuruWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -856,6 +857,12 @@ floatAdapter.capabilities.credentialBackedSync = true;
 floatAdapter.list = async account => (await floatWorkSignalClient.fetchDelta(account, null)).records;
 floatAdapter.fetchDelta = (account, cursor) => floatWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('float', floatAdapter);
+
+const resourceGuruAdapter = buildAdapter('resource_guru', 'Resource Guru project and allocation schedule metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'booking'), title: item.sourceType === 'project' ? titleFromText(item.name, 'Resource Guru project') : `Resource Guru booking ${item.bookingId || item.id}`, description: '', status: item.sourceType === 'project' ? item.archived ? 'archived' : 'open' : 'in_progress', priority: 'unknown', owners: [], labels: compact(['resource_guru', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.resourceId ? `resource:${item.resourceId}` : undefined, item.approvalState]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt, item.startedAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt, item.startedAt), evidenceRefs: baseEvidence(account, item, 'Resource Guru schedule metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, bookingId: item.bookingId, resourceId: item.resourceId, archived: item.archived, approvalState: item.approvalState, startedAt: item.startedAt, dueAt: item.dueAt, scheduledMinutes: item.scheduledMinutes, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+resourceGuruAdapter.capabilities.credentialBackedSync = true;
+resourceGuruAdapter.list = async account => (await resourceGuruWorkSignalClient.fetchDelta(account, null)).records;
+resourceGuruAdapter.fetchDelta = (account, cursor) => resourceGuruWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('resource_guru', resourceGuruAdapter);
 
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {

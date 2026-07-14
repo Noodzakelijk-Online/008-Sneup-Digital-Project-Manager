@@ -85,6 +85,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/togglTrackWorkSignalClient');
     jest.dontMock('../src/services/clockifyWorkSignalClient');
     jest.dontMock('../src/services/floatWorkSignalClient');
+    jest.dontMock('../src/services/resourceGuruWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
   });
@@ -2042,6 +2043,17 @@ describe('work signal normalization', () => {
     expect(workSignalAdapterService.getAdapter('float').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
   });
 
+  test('Resource Guru adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'booking:18' }] });
+    jest.doMock('../src/services/resourceGuruWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'resource_guru' };
+    await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(workSignalAdapterService.getAdapter('resource_guru').capabilities).toMatchObject({ credentialBackedSync: true, applyAction: false });
+  });
+
   test('GitHub API sync stays read-only, bounded, and cursor-safe', async () => {
     const { GitHubWorkSignalClient } = require('../src/services/githubWorkSignalClient');
     const http = {
@@ -3901,6 +3913,33 @@ describe('work signal normalization', () => {
     const previous = process.env.SNEUP_FLOAT_MAX_PROJECTS; process.env.SNEUP_FLOAT_MAX_PROJECTS = '1';
     const capped = new FloatWorkSignalClient({ http: { get: jest.fn().mockResolvedValue({ data: [{ project_id: 1, name: 'One' }, { project_id: 2, name: 'Two' }], headers: { 'x-pagination-total-count': '2', 'x-pagination-current-page': '1', 'x-pagination-page-count': '1' } }) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ apiToken: 'float-token' })) } });
     try { await expect(capped.fetchDelta({})).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_FLOAT_MAX_PROJECTS; else process.env.SNEUP_FLOAT_MAX_PROJECTS = previous; }
+  });
+
+  test('Resource Guru sync reads bounded selected-account project and booking metadata without rich content or provider writes', async () => {
+    jest.dontMock('../src/services/resourceGuruWorkSignalClient');
+    jest.resetModules();
+    const { ResourceGuruWorkSignalClient } = require('../src/services/resourceGuruWorkSignalClient');
+    const http = { get: jest.fn()
+      .mockResolvedValueOnce({ data: [{ id: 9, name: 'Sneup release', archived: false, start_date: '2026-07-01', end_date: '2026-08-01', created_at: '2026-07-01T10:00:00.000Z', updated_at: '2026-07-11T12:00:00.000Z', notes: 'Private project notes', client: { name: 'Private client' }, team: [{ hourly_rate: 220 }] }] })
+      .mockResolvedValueOnce({ data: [{ id: 18, project_id: 9, resource_id: 7, start_date: '2026-07-12', end_date: '2026-07-15', duration: 720, approval_state: 'approved', created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-12T12:00:00.000Z', details: 'Private booking detail', booker: { name: 'Private person' }, client_name: 'Private client', rate: 220 }] }) };
+    const client = new ResourceGuruWorkSignalClient({ http, now: () => new Date('2026-07-12T12:00:00.000Z'), accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'resource-guru-token' })) } });
+    const account = { metadata: { fields: { resourceGuruAccountId: '123', resourceGuruAccountUrlId: 'sneup-team' } } };
+    const result = await client.fetchDelta(account, '2026-07-10T00:00:00.000Z');
+    expect(http.get).toHaveBeenCalledWith('https://api.resourceguruapp.com/v1/sneup-team/bookings', expect.objectContaining({ params: expect.objectContaining({ start_date: '2026-07-09', end_date: '2026-10-10', calendar: 0, include_non_bookable_resources: 0, limit: 100, offset: 0 }), headers: expect.objectContaining({ Authorization: 'Bearer resource-guru-token' }), maxRedirects: 0, proxy: false }));
+    expect(http).not.toHaveProperty('post');
+    expect(JSON.stringify(result.records)).not.toMatch(/Private project notes|Private booking detail|Private person|Private client|220/);
+    expect(result).toMatchObject({ metadata: { source: 'resource_guru_api', accountUrlId: 'sneup-team', projects: 1, bookings: 1 }, nextCursor: '2026-07-12T12:00:00.000Z' });
+  });
+
+  test('Resource Guru sync requires an authorized selected account and fails closed at collection caps', async () => {
+    jest.dontMock('../src/services/resourceGuruWorkSignalClient');
+    jest.resetModules();
+    const { ResourceGuruWorkSignalClient } = require('../src/services/resourceGuruWorkSignalClient');
+    const missingSelection = new ResourceGuruWorkSignalClient({ http: { get: jest.fn() }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'resource-guru-token' })) } });
+    await expect(missingSelection.fetchDelta({ metadata: { fields: {} } })).rejects.toMatchObject({ statusCode: 409 });
+    const previous = process.env.SNEUP_RESOURCE_GURU_MAX_PROJECTS; process.env.SNEUP_RESOURCE_GURU_MAX_PROJECTS = '1';
+    const capped = new ResourceGuruWorkSignalClient({ http: { get: jest.fn((url, options) => Promise.resolve({ data: url.endsWith('/projects') ? options.params.offset === 0 ? [{ id: 1, name: 'One' }] : [{ id: 2, name: 'Two' }] : [] })) }, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ accessToken: 'resource-guru-token' })) } });
+    try { await expect(capped.fetchDelta({ metadata: { fields: { resourceGuruAccountId: '123', resourceGuruAccountUrlId: 'sneup-team' } } })).rejects.toMatchObject({ statusCode: 413 }); } finally { if (previous === undefined) delete process.env.SNEUP_RESOURCE_GURU_MAX_PROJECTS; else process.env.SNEUP_RESOURCE_GURU_MAX_PROJECTS = previous; }
   });
 
   test('projects provider signals into normalized work graph records', () => {
