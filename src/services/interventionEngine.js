@@ -365,9 +365,14 @@ class InterventionEngine {
   // Process follow-ups for interventions that didn't get responses
   async processFollowUps(options = {}) {
     try {
-      const workspaceId = options.workspaceId ? normalizeWorkspaceObjectId(options.workspaceId) : undefined;
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
       const cooldownPolicy = await policyRuleService.getScheduledInterventionCooldownPolicy({ workspaceId });
-      const needingFollowUp = await Intervention.getNeedingFollowUp({ workspaceId });
+      const timingPolicy = await policyRuleService.getScheduledInterventionTimingPolicy({ workspaceId });
+      const timing = policyRuleService.resolveScheduledInterventionTiming({ policy: timingPolicy });
+      const needingFollowUp = await Intervention.getNeedingFollowUp({
+        workspaceId,
+        followUpAfterHours: timing.followUpAfterHours
+      });
       const queuedFollowUps = [];
 
       for (const intervention of needingFollowUp) {
@@ -404,9 +409,14 @@ class InterventionEngine {
   // Process escalations for interventions that still didn't get responses
   async processEscalations(options = {}) {
     try {
-      const workspaceId = options.workspaceId ? normalizeWorkspaceObjectId(options.workspaceId) : undefined;
+      const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
       const cooldownPolicy = await policyRuleService.getScheduledInterventionCooldownPolicy({ workspaceId });
-      const needingEscalation = await Intervention.getNeedingEscalation({ workspaceId });
+      const timingPolicy = await policyRuleService.getScheduledInterventionTimingPolicy({ workspaceId });
+      const timing = policyRuleService.resolveScheduledInterventionTiming({ policy: timingPolicy });
+      const needingEscalation = await Intervention.getNeedingEscalation({
+        workspaceId,
+        escalationAfterHours: timing.escalationAfterHours
+      });
       const queuedEscalations = [];
 
       for (const intervention of needingEscalation) {

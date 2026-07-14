@@ -304,14 +304,16 @@ const enhancements = [
     priority: 'P1',
     area: 'operations',
     title: 'Make scheduled follow-up transitions durable and auditable',
-    evidence: 'The scheduled worker atomically moves overdue workspace-scoped follow-up plans from scheduled to due and writes an audit event. Legacy intervention follow-up and escalation candidate scans are workspace-scoped and only record a queued state after a successful approval-gated candidate path. Decision queue routing uses bounded workspace defaults and atomically escalates overdue VA or team decisions to Robert without contacting a provider.',
+    evidence: 'The scheduled worker atomically moves overdue workspace-scoped follow-up plans from scheduled to due and writes an audit event. Workspace timing policies set the internal no-response follow-up baseline from 24 to 168 hours and escalation baseline from 48 to 168 hours, while requiring escalation to remain at or after follow-up. Scheduled scans load that policy once per pass, and approved action follow-up plans inherit it. Candidate paths remain approval-gated and never contact a provider.',
     impact: 'Gives operators a durable lifecycle trail while preventing one workspace from processing another workspace\'s queued work or a transient failure from silently suppressing a retry.',
     effort: 'S',
     status: 'done',
-    nextStep: 'Add bounded, workspace-scoped follow-up timing policies.',
+    nextStep: 'Add filterable timing-policy history and retention controls after collecting live operator evidence.',
     acceptanceCriteria: [
       'Overdue scheduled follow-up plans transition to due once and include audit evidence.',
       'Scheduled intervention follow-up and escalation scans stay within the requested workspace.',
+      'Workspace timing can retain or extend the follow-up and escalation baselines without placing escalation before follow-up.',
+      'Scheduled scans load workspace timing once per pass and approved actions schedule follow-ups from the same policy.',
       'A failed candidate path leaves the original intervention eligible for a later safe retry.',
       'Overdue internal VA and team decisions move to Robert exactly once with audit evidence and no provider write.'
     ]

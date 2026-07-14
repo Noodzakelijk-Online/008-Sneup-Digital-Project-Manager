@@ -2374,6 +2374,7 @@ function renderPolicyRule(policy) {
   const isWorkflowPolicy = policy.policyKind === 'workflow';
   const isRoutingPolicy = policy.workflowType === 'decision_queue_routing';
   const isCooldownPolicy = policy.workflowType === 'scheduled_intervention_cooldown';
+  const isTimingPolicy = policy.workflowType === 'scheduled_intervention_timing';
   const stateLabel = policy.enabled ? 'active' : 'paused';
   const stateClass = policy.enabled ? 'healthy' : 'critical';
   const riskClass = policy.riskLevel === 'critical' ? 'critical' : policy.riskLevel === 'high' ? 'high' : 'review';
@@ -2394,6 +2395,7 @@ function renderPolicyRule(policy) {
   const cooldownSummary = cooldowns.length > 0
     ? `${cooldowns.length} signals, ${Math.min(...cooldowns)}-${Math.max(...cooldowns)}h suppression`
     : 'scheduled duplicate suppression';
+  const timingSummary = `${Number(policy.followUpAfterHours || 24)}h follow-up / ${Number(policy.escalationAfterHours || 48)}h escalation`;
   return `
     <div class="item">
       <div class="item-title">
@@ -2401,7 +2403,9 @@ function renderPolicyRule(policy) {
         <span class="pill ${stateClass}">${escapeHtml(stateLabel)}</span>
       </div>
       <div class="meta">
-        ${isCooldownPolicy
+        ${isTimingPolicy
+          ? `<span>${escapeHtml(timingSummary)}</span><span>scheduled candidates only</span>`
+          : isCooldownPolicy
           ? `<span>${escapeHtml(cooldownSummary)}</span><span>scheduled signals only</span>`
           : isRoutingPolicy
           ? `<span>${escapeHtml(routingSummary || 'internal queue routing')}</span><span>overdue VA/team work goes to Robert</span>`
@@ -2457,6 +2461,62 @@ function bindPolicyRuleActions() {
 function openPolicyRuleEditor(actionType) {
   const policy = (state.policyRules || []).find(item => item.actionType === actionType);
   if (!policy) return;
+
+  if (policy.workflowType === 'scheduled_intervention_timing') {
+    els.modalTitle.textContent = policy.label;
+    els.modalBody.innerHTML = `
+      <form id="policyRuleForm" class="notice-stack">
+        <div class="notice">This policy only controls when Sneup creates internal follow-up or escalation candidates. It can retain or lengthen the 24-hour follow-up and 48-hour escalation baselines up to 7 days. Escalation cannot precede follow-up, and this policy never prepares or performs a provider write.</div>
+        <div class="workflow-routing-grid">
+          <fieldset class="workflow-routing-row">
+            <legend>Follow-up candidate</legend>
+            <label>Create after no response (hours)
+              <input name="followUpAfterHours" type="number" min="24" max="168" step="1" value="${escapeHtml(String(policy.followUpAfterHours || 24))}" required>
+            </label>
+          </fieldset>
+          <fieldset class="workflow-routing-row">
+            <legend>Escalation candidate</legend>
+            <label>Create after no response (hours)
+              <input name="escalationAfterHours" type="number" min="48" max="168" step="1" value="${escapeHtml(String(policy.escalationAfterHours || 48))}" required>
+            </label>
+          </fieldset>
+        </div>
+        <label>Reason<textarea name="reason" rows="3" maxlength="500" placeholder="Why this workspace needs longer follow-up timing">${escapeHtml(policy.reason || '')}</textarea></label>
+        <div class="toolbar modal-actions">
+          <button class="button" type="button" id="cancelPolicyRule">Cancel</button>
+          <button class="button primary" type="submit">Save timing defaults</button>
+        </div>
+      </form>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('cancelPolicyRule').addEventListener('click', closeModal);
+    document.getElementById('policyRuleForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const submitButton = form.querySelector('button[type="submit"]');
+      const values = new FormData(form);
+      submitButton.disabled = true;
+      submitButton.textContent = 'Saving...';
+      try {
+        await fetchApi(`/api/policy-rules/${encodeURIComponent(actionType)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            followUpAfterHours: Number(values.get('followUpAfterHours')),
+            escalationAfterHours: Number(values.get('escalationAfterHours')),
+            reason: values.get('reason')
+          })
+        });
+        closeModal();
+        await loadWorkspaceAdmin();
+      } catch (error) {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Save timing defaults';
+        openNotice('Timing defaults blocked', error.message);
+      }
+    });
+    return;
+  }
 
   if (policy.workflowType === 'scheduled_intervention_cooldown') {
     const cooldowns = policy.cooldownHoursByTrigger || {};

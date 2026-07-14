@@ -11,10 +11,13 @@ const MAX_REASON_LENGTH = 500;
 const DECISION_QUEUE_SNOOZE_ACTION = 'decision_queue_snooze';
 const DECISION_QUEUE_ROUTING_ACTION = 'decision_queue_routing';
 const SCHEDULED_INTERVENTION_COOLDOWN_ACTION = 'scheduled_intervention_cooldown';
+const SCHEDULED_INTERVENTION_TIMING_ACTION = 'scheduled_intervention_timing';
 const DEFAULT_SNOOZE_HOURS = 24;
 const MIN_SNOOZE_HOURS = 1;
 const MAX_SNOOZE_HOURS = 168;
 const DEFAULT_INTERVENTION_COOLDOWN_HOURS = 24;
+const DEFAULT_FOLLOW_UP_AFTER_HOURS = 24;
+const DEFAULT_ESCALATION_AFTER_HOURS = 48;
 const SCHEDULED_INTERVENTION_TRIGGERS = Object.freeze([
   'card_stuck',
   'no_activity',
@@ -39,9 +42,11 @@ const getPolicyRuleModel = () => require('../models/PolicyRule');
 const isDecisionQueueSnoozeAction = actionType => actionType === DECISION_QUEUE_SNOOZE_ACTION;
 const isDecisionQueueRoutingAction = actionType => actionType === DECISION_QUEUE_ROUTING_ACTION;
 const isScheduledInterventionCooldownAction = actionType => actionType === SCHEDULED_INTERVENTION_COOLDOWN_ACTION;
+const isScheduledInterventionTimingAction = actionType => actionType === SCHEDULED_INTERVENTION_TIMING_ACTION;
 const isWorkflowAction = actionType => isDecisionQueueSnoozeAction(actionType)
   || isDecisionQueueRoutingAction(actionType)
-  || isScheduledInterventionCooldownAction(actionType);
+  || isScheduledInterventionCooldownAction(actionType)
+  || isScheduledInterventionTimingAction(actionType);
 const parseSnoozeHours = value => {
   const parsed = typeof value === 'string' && !value.trim() ? Number.NaN : Number(value);
   return Number.isInteger(parsed) && parsed >= MIN_SNOOZE_HOURS && parsed <= MAX_SNOOZE_HOURS ? parsed : null;
@@ -49,6 +54,10 @@ const parseSnoozeHours = value => {
 const parseScheduledCooldownHours = value => {
   const parsed = typeof value === 'string' && !value.trim() ? Number.NaN : Number(value);
   return Number.isInteger(parsed) && parsed >= DEFAULT_INTERVENTION_COOLDOWN_HOURS && parsed <= MAX_SNOOZE_HOURS ? parsed : null;
+};
+const parseScheduledTimingHours = (value, minimum) => {
+  const parsed = typeof value === 'string' && !value.trim() ? Number.NaN : Number(value);
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= MAX_SNOOZE_HOURS ? parsed : null;
 };
 const toValidDate = (value) => {
   if (!value) return null;
@@ -304,6 +313,70 @@ class PolicyRuleService {
       || DEFAULT_INTERVENTION_COOLDOWN_HOURS;
   }
 
+  scheduledInterventionTimingBaseline() {
+    return {
+      actionType: SCHEDULED_INTERVENTION_TIMING_ACTION,
+      label: 'Scheduled intervention timing',
+      policyKind: 'workflow',
+      workflowType: 'scheduled_intervention_timing',
+      enabled: true,
+      configured: false,
+      riskLevel: 'low',
+      baselineRiskLevel: 'low',
+      ownerType: 'robert',
+      baselineOwnerType: 'robert',
+      requiresApproval: false,
+      approvalReason: 'Timing only controls when internal follow-up and escalation candidates are considered; it never executes, approves, or prepares a provider write.',
+      followUpAfterHours: DEFAULT_FOLLOW_UP_AFTER_HOURS,
+      escalationAfterHours: DEFAULT_ESCALATION_AFTER_HOURS,
+      baselineFollowUpAfterHours: DEFAULT_FOLLOW_UP_AFTER_HOURS,
+      baselineEscalationAfterHours: DEFAULT_ESCALATION_AFTER_HOURS,
+      policyRuleId: null,
+      updatedAt: null,
+      updatedBy: null,
+      reason: ''
+    };
+  }
+
+  mergeScheduledInterventionTimingPolicy(rule) {
+    const baseline = this.scheduledInterventionTimingBaseline();
+    if (!rule) return baseline;
+    const followUpAfterHours = parseScheduledTimingHours(
+      rule.conditions?.followUpAfterHours,
+      DEFAULT_FOLLOW_UP_AFTER_HOURS
+    ) || DEFAULT_FOLLOW_UP_AFTER_HOURS;
+    const requestedEscalationHours = parseScheduledTimingHours(
+      rule.conditions?.escalationAfterHours,
+      DEFAULT_ESCALATION_AFTER_HOURS
+    ) || DEFAULT_ESCALATION_AFTER_HOURS;
+    return {
+      ...baseline,
+      configured: true,
+      followUpAfterHours,
+      escalationAfterHours: Math.max(followUpAfterHours, requestedEscalationHours),
+      policyRuleId: rule._id ? String(rule._id) : null,
+      updatedAt: rule.updatedAt || null,
+      updatedBy: rule.updatedBy || 'system',
+      reason: rule.reason || ''
+    };
+  }
+
+  resolveScheduledInterventionTiming({ policy } = {}) {
+    const effectivePolicy = policy || this.scheduledInterventionTimingBaseline();
+    const followUpAfterHours = parseScheduledTimingHours(
+      effectivePolicy.followUpAfterHours,
+      DEFAULT_FOLLOW_UP_AFTER_HOURS
+    ) || DEFAULT_FOLLOW_UP_AFTER_HOURS;
+    const escalationAfterHours = parseScheduledTimingHours(
+      effectivePolicy.escalationAfterHours,
+      DEFAULT_ESCALATION_AFTER_HOURS
+    ) || DEFAULT_ESCALATION_AFTER_HOURS;
+    return {
+      followUpAfterHours,
+      escalationAfterHours: Math.max(followUpAfterHours, escalationAfterHours)
+    };
+  }
+
   async listEffectivePolicies(options = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
@@ -319,7 +392,8 @@ class PolicyRuleService {
       ...writePolicies,
       this.mergeDecisionQueueSnoozePolicy(rulesByAction.get(DECISION_QUEUE_SNOOZE_ACTION)),
       this.mergeDecisionQueueRoutingPolicy(rulesByAction.get(DECISION_QUEUE_ROUTING_ACTION)),
-      this.mergeScheduledInterventionCooldownPolicy(rulesByAction.get(SCHEDULED_INTERVENTION_COOLDOWN_ACTION))
+      this.mergeScheduledInterventionCooldownPolicy(rulesByAction.get(SCHEDULED_INTERVENTION_COOLDOWN_ACTION)),
+      this.mergeScheduledInterventionTimingPolicy(rulesByAction.get(SCHEDULED_INTERVENTION_TIMING_ACTION))
     ];
   }
 
@@ -335,7 +409,8 @@ class PolicyRuleService {
           'trello_action_policy_updated',
           'decision_queue_snooze_policy_updated',
           'decision_queue_routing_policy_updated',
-          'scheduled_intervention_cooldown_policy_updated'
+          'scheduled_intervention_cooldown_policy_updated',
+          'scheduled_intervention_timing_policy_updated'
         ]
       }
     })
@@ -380,6 +455,14 @@ class PolicyRuleService {
     return this.mergeScheduledInterventionCooldownPolicy(rule);
   }
 
+  async getScheduledInterventionTimingPolicy(options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const PolicyRule = getPolicyRuleModel();
+    const rule = await PolicyRule.findOne({ workspaceId, actionType: SCHEDULED_INTERVENTION_TIMING_ACTION });
+    return this.mergeScheduledInterventionTimingPolicy(rule);
+  }
+
   async updateActionPolicy(actionType, body = {}, options = {}) {
     this.requireDatabase();
     this.assertActionType(actionType);
@@ -391,6 +474,9 @@ class PolicyRuleService {
     }
     if (isScheduledInterventionCooldownAction(actionType)) {
       return this.updateScheduledInterventionCooldownPolicy(body, options);
+    }
+    if (isScheduledInterventionTimingAction(actionType)) {
+      return this.updateScheduledInterventionTimingPolicy(body, options);
     }
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const base = interventionPolicy.classifyAction(actionType);
@@ -651,6 +737,79 @@ class PolicyRuleService {
     return policy;
   }
 
+  async updateScheduledInterventionTimingPolicy(body = {}, options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const actor = options.actor || 'sneup-operator';
+    const PolicyRule = getPolicyRuleModel();
+    const existing = await PolicyRule.findOne({ workspaceId, actionType: SCHEDULED_INTERVENTION_TIMING_ACTION });
+    const beforePolicy = this.mergeScheduledInterventionTimingPolicy(existing);
+    const followUpAfterHours = body.followUpAfterHours === undefined
+      ? beforePolicy.followUpAfterHours
+      : parseScheduledTimingHours(body.followUpAfterHours, DEFAULT_FOLLOW_UP_AFTER_HOURS);
+    const escalationAfterHours = body.escalationAfterHours === undefined
+      ? beforePolicy.escalationAfterHours
+      : parseScheduledTimingHours(body.escalationAfterHours, DEFAULT_ESCALATION_AFTER_HOURS);
+
+    if (!followUpAfterHours) {
+      const error = new Error(`followUpAfterHours must be a whole number between ${DEFAULT_FOLLOW_UP_AFTER_HOURS} and ${MAX_SNOOZE_HOURS}`);
+      error.statusCode = 400;
+      throw error;
+    }
+    if (!escalationAfterHours) {
+      const error = new Error(`escalationAfterHours must be a whole number between ${DEFAULT_ESCALATION_AFTER_HOURS} and ${MAX_SNOOZE_HOURS}`);
+      error.statusCode = 400;
+      throw error;
+    }
+    if (escalationAfterHours < followUpAfterHours) {
+      const error = new Error('escalationAfterHours must be greater than or equal to followUpAfterHours');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const rule = await PolicyRule.findOneAndUpdate(
+      { workspaceId, actionType: SCHEDULED_INTERVENTION_TIMING_ACTION },
+      {
+        $set: {
+          name: 'Scheduled intervention timing workflow policy',
+          riskLevel: 'low',
+          requiresApproval: false,
+          ownerType: 'robert',
+          enabled: true,
+          pauseExpiresAt: null,
+          reason: body.reason === undefined ? existing?.reason || '' : clampText(body.reason),
+          updatedBy: actor,
+          conditions: {
+            ...(existing?.conditions || {}),
+            followUpAfterHours,
+            escalationAfterHours
+          }
+        },
+        $setOnInsert: { workspaceId, actionType: SCHEDULED_INTERVENTION_TIMING_ACTION }
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    const policy = this.mergeScheduledInterventionTimingPolicy(rule);
+    try {
+      await AuditEvent.create({
+        workspaceId,
+        entityType: 'policy_rule',
+        entityId: rule._id,
+        action: 'scheduled_intervention_timing_policy_updated',
+        actor,
+        source: 'api',
+        riskLevel: 'low',
+        beforeState: beforePolicy,
+        afterState: policy
+      });
+    } catch (error) {
+      logger.error('Scheduled intervention timing policy audit write failed:', error);
+    }
+
+    return policy;
+  }
+
   async updateDecisionQueueSnoozePolicy(body = {}, options = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
@@ -718,9 +877,12 @@ module.exports.OWNER_STRICTNESS = OWNER_STRICTNESS;
 module.exports.DECISION_QUEUE_SNOOZE_ACTION = DECISION_QUEUE_SNOOZE_ACTION;
 module.exports.DECISION_QUEUE_ROUTING_ACTION = DECISION_QUEUE_ROUTING_ACTION;
 module.exports.SCHEDULED_INTERVENTION_COOLDOWN_ACTION = SCHEDULED_INTERVENTION_COOLDOWN_ACTION;
+module.exports.SCHEDULED_INTERVENTION_TIMING_ACTION = SCHEDULED_INTERVENTION_TIMING_ACTION;
 module.exports.DEFAULT_SNOOZE_HOURS = DEFAULT_SNOOZE_HOURS;
 module.exports.MIN_SNOOZE_HOURS = MIN_SNOOZE_HOURS;
 module.exports.MAX_SNOOZE_HOURS = MAX_SNOOZE_HOURS;
 module.exports.DEFAULT_QUEUE_ROUTING = DEFAULT_QUEUE_ROUTING;
 module.exports.DEFAULT_INTERVENTION_COOLDOWN_HOURS = DEFAULT_INTERVENTION_COOLDOWN_HOURS;
 module.exports.SCHEDULED_INTERVENTION_TRIGGERS = SCHEDULED_INTERVENTION_TRIGGERS;
+module.exports.DEFAULT_FOLLOW_UP_AFTER_HOURS = DEFAULT_FOLLOW_UP_AFTER_HOURS;
+module.exports.DEFAULT_ESCALATION_AFTER_HOURS = DEFAULT_ESCALATION_AFTER_HOURS;

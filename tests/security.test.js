@@ -7188,6 +7188,8 @@ describe('operations ledger intervention policy', () => {
     jest.dontMock('mongoose');
     jest.dontMock('../src/models/AuditEvent');
     jest.dontMock('../src/models/Intervention');
+    jest.dontMock('../src/models/FollowUpPlan');
+    jest.dontMock('../src/models/PolicyRule');
     jest.dontMock('../src/services/workspaceScopeService');
     jest.dontMock('../src/services/policyRuleService');
     jest.dontMock('../src/services/operationsLedgerService');
@@ -7341,6 +7343,113 @@ describe('operations ledger intervention policy', () => {
     })).toBe(DEFAULT_INTERVENTION_COOLDOWN_HOURS);
   });
 
+  test('scheduled intervention timing stays bounded and keeps escalation after follow-up', () => {
+    const {
+      PolicyRuleService,
+      DEFAULT_FOLLOW_UP_AFTER_HOURS,
+      DEFAULT_ESCALATION_AFTER_HOURS
+    } = require('../src/services/policyRuleService');
+    const service = new PolicyRuleService();
+    const configured = service.mergeScheduledInterventionTimingPolicy({
+      _id: 'timing-policy',
+      conditions: {
+        followUpAfterHours: 72,
+        escalationAfterHours: 48
+      }
+    });
+
+    expect(configured).toMatchObject({
+      actionType: 'scheduled_intervention_timing',
+      policyKind: 'workflow',
+      configured: true,
+      followUpAfterHours: 72,
+      escalationAfterHours: 72
+    });
+    expect(service.resolveScheduledInterventionTiming({ policy: configured })).toEqual({
+      followUpAfterHours: 72,
+      escalationAfterHours: 72
+    });
+    expect(service.mergeScheduledInterventionTimingPolicy({
+      conditions: { followUpAfterHours: 23, escalationAfterHours: 169 }
+    })).toMatchObject({
+      followUpAfterHours: DEFAULT_FOLLOW_UP_AFTER_HOURS,
+      escalationAfterHours: DEFAULT_ESCALATION_AFTER_HOURS
+    });
+  });
+
+  test('timing policy updates reject shortened baselines and escalation before follow-up', async () => {
+    jest.resetModules();
+    const findOne = jest.fn().mockResolvedValue(null);
+    const findOneAndUpdate = jest.fn();
+    jest.doMock('mongoose', () => ({ ...mongoose, connection: { readyState: 1 } }));
+    jest.doMock('../src/models/PolicyRule', () => ({ findOne, findOneAndUpdate }));
+    jest.doMock('../src/models/AuditEvent', () => ({ create: jest.fn() }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({ normalizeWorkspaceObjectId: jest.fn(value => value) }));
+
+    const { PolicyRuleService } = require('../src/services/policyRuleService');
+    const service = new PolicyRuleService();
+    await expect(service.updateScheduledInterventionTimingPolicy({ followUpAfterHours: 23 }, {
+      workspaceId: 'workspace-1'
+    })).rejects.toMatchObject({ statusCode: 400, message: expect.stringContaining('followUpAfterHours') });
+    await expect(service.updateScheduledInterventionTimingPolicy({
+      followUpAfterHours: 72,
+      escalationAfterHours: 48
+    }, {
+      workspaceId: 'workspace-1'
+    })).rejects.toMatchObject({ statusCode: 400, message: expect.stringContaining('greater than or equal') });
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  test('scheduled follow-up and escalation scans load bounded timing once per scan', async () => {
+    jest.resetModules();
+    const getNeedingFollowUp = jest.fn().mockResolvedValue([]);
+    const getNeedingEscalation = jest.fn().mockResolvedValue([]);
+    const getTimingPolicy = jest.fn().mockResolvedValue({ followUpAfterHours: 72, escalationAfterHours: 96 });
+    const resolveTiming = jest.fn(() => ({ followUpAfterHours: 72, escalationAfterHours: 96 }));
+
+    jest.doMock('../src/models/Intervention', () => ({ getNeedingFollowUp, getNeedingEscalation }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-1'),
+      normalizeWorkspaceObjectId: jest.fn(value => value || 'workspace-1')
+    }));
+    jest.doMock('../src/services/policyRuleService', () => ({
+      getScheduledInterventionCooldownPolicy: jest.fn().mockResolvedValue({}),
+      getScheduledInterventionTimingPolicy: getTimingPolicy,
+      resolveScheduledInterventionTiming: resolveTiming
+    }));
+
+    const interventionEngine = require('../src/services/interventionEngine');
+    await interventionEngine.processFollowUps({ workspaceId: 'workspace-1' });
+    await interventionEngine.processEscalations({ workspaceId: 'workspace-1' });
+
+    expect(getTimingPolicy).toHaveBeenCalledTimes(2);
+    expect(getTimingPolicy).toHaveBeenNthCalledWith(1, { workspaceId: 'workspace-1' });
+    expect(getNeedingFollowUp).toHaveBeenCalledWith({ workspaceId: 'workspace-1', followUpAfterHours: 72 });
+    expect(getNeedingEscalation).toHaveBeenCalledWith({ workspaceId: 'workspace-1', escalationAfterHours: 96 });
+  });
+
+  test('approved interventions schedule follow-up plans with the workspace timing policy', async () => {
+    jest.resetModules();
+    const createFollowUp = jest.fn().mockResolvedValue({ _id: 'follow-up-1' });
+    jest.doMock('../src/models/FollowUpPlan', () => ({ create: createFollowUp }));
+    jest.doMock('../src/services/policyRuleService', () => ({
+      getScheduledInterventionTimingPolicy: jest.fn().mockResolvedValue({ followUpAfterHours: 72, escalationAfterHours: 96 }),
+      resolveScheduledInterventionTiming: jest.fn(() => ({ followUpAfterHours: 72, escalationAfterHours: 96 }))
+    }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    await operationsLedgerService.scheduleFollowUp({
+      _id: 'recommendation-1',
+      workspaceId: 'workspace-1',
+      actionType: 'comment'
+    });
+
+    const scheduled = createFollowUp.mock.calls[0][0];
+    const dueInHours = (scheduled.dueAt.getTime() - Date.now()) / (60 * 60 * 1000);
+    expect(dueInHours).toBeGreaterThanOrEqual(71.99);
+    expect(dueInHours).toBeLessThanOrEqual(72.01);
+  });
+
   test('decision queue routing keeps high-risk work with Robert and bounds internal escalation windows', () => {
     const { PolicyRuleService } = require('../src/services/policyRuleService');
     const service = new PolicyRuleService();
@@ -7472,7 +7581,8 @@ describe('operations ledger intervention policy', () => {
           'trello_action_policy_updated',
           'decision_queue_snooze_policy_updated',
           'decision_queue_routing_policy_updated',
-          'scheduled_intervention_cooldown_policy_updated'
+          'scheduled_intervention_cooldown_policy_updated',
+          'scheduled_intervention_timing_policy_updated'
         ]
       }
     });

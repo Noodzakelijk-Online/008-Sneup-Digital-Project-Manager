@@ -142,7 +142,11 @@ interventionSchema.statics.getPending = function() {
 
 // Get interventions needing follow-up
 interventionSchema.statics.getNeedingFollowUp = function(options = {}) {
-  const followUpThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours
+  const followUpAfterHours = Number.isInteger(options.followUpAfterHours) && options.followUpAfterHours >= 24
+    ? options.followUpAfterHours
+    : 24;
+  const referenceNow = options.now instanceof Date ? options.now : new Date();
+  const followUpThreshold = new Date(referenceNow.getTime() - followUpAfterHours * 60 * 60 * 1000);
   const query = {
     status: 'executed',
     type: { $in: ['comment', 'follow_up'] },
@@ -159,7 +163,11 @@ interventionSchema.statics.getNeedingFollowUp = function(options = {}) {
 
 // Get interventions needing escalation
 interventionSchema.statics.getNeedingEscalation = function(options = {}) {
-  const escalationThreshold = new Date(Date.now() - 48 * 60 * 60 * 1000); // 48 hours
+  const escalationAfterHours = Number.isInteger(options.escalationAfterHours) && options.escalationAfterHours >= 48
+    ? options.escalationAfterHours
+    : 48;
+  const referenceNow = options.now instanceof Date ? options.now : new Date();
+  const escalationThreshold = new Date(referenceNow.getTime() - escalationAfterHours * 60 * 60 * 1000);
   const query = {
     status: 'executed',
     'escalation.escalated': false,

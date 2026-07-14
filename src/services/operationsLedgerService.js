@@ -2147,6 +2147,10 @@ class OperationsLedgerService {
     if (!['comment', 'follow_up', 'escalate', 'performance_notification'].includes(recommendation.actionType)) {
       return null;
     }
+    const timingPolicy = await policyRuleService.getScheduledInterventionTimingPolicy({
+      workspaceId: recommendation.workspaceId
+    });
+    const timing = policyRuleService.resolveScheduledInterventionTiming({ policy: timingPolicy });
 
     return FollowUpPlan.create({
       workspaceId: recommendation.workspaceId,
@@ -2157,7 +2161,7 @@ class OperationsLedgerService {
       memberId: recommendation.memberId,
       reason: 'Verify whether the intervention received a useful response.',
       nextAction: 'Check worker response and escalate if no response arrives.',
-      dueAt: new Date(Date.now() + 24 * HOURS),
+      dueAt: new Date(Date.now() + timing.followUpAfterHours * HOURS),
       status: 'scheduled'
     });
   }
