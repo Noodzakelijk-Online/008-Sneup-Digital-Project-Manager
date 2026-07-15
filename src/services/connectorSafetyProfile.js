@@ -1,10 +1,11 @@
 const WRITE_CAPABLE_SCOPE = /(?:^|[.:/])(?:write|manage|admin|delete|create|update)(?:$|[.:/])|\b(?:repo|workflow|api)\b/i;
 const BROAD_READ_SCOPE = /^(?:Sites|Files|Mail|Calendars|Contacts|Notes|Directory|Group|ChannelMessage|Chat|TeamMember)\.Read\.All$/i;
+const BROAD_QUICKBOOKS_SCOPE = /^com\.intuit\.quickbooks\.accounting$/i;
 
 const hasSecretField = (connector) => (connector.auth?.fields || []).some((field) => field.secret);
 
 const isProviderScopeReviewRequired = (connector) => (connector.auth?.scopes || []).some(scope =>
-  WRITE_CAPABLE_SCOPE.test(scope) || BROAD_READ_SCOPE.test(scope)
+  WRITE_CAPABLE_SCOPE.test(scope) || BROAD_READ_SCOPE.test(scope) || BROAD_QUICKBOOKS_SCOPE.test(scope)
 );
 
 const buildConnectorSafetyProfile = (connector) => {

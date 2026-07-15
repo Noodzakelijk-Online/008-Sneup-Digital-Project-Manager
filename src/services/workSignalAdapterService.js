@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -101,6 +101,7 @@ const xeroWorkSignalClient = require('./xeroWorkSignalClient');
 const googleFormsWorkSignalClient = require('./googleFormsWorkSignalClient');
 const muralWorkSignalClient = require('./muralWorkSignalClient');
 const canvaWorkSignalClient = require('./canvaWorkSignalClient');
+const quickBooksWorkSignalClient = require('./quickBooksWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1365,6 +1366,12 @@ canvaAdapter.capabilities.credentialBackedSync = true;
 canvaAdapter.list = async account => (await canvaWorkSignalClient.fetchDelta(account, null)).records;
 canvaAdapter.fetchDelta = (account, cursor) => canvaWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('canva', canvaAdapter);
+
+const quickBooksAdapter = buildAdapter('quickbooks', 'QuickBooks selected-company sales-invoice metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: 'sales_invoice', title: 'QuickBooks sales invoice', description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['quickbooks', 'sales_invoice', item.status]), dueAt: item.dueAt, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt, evidenceRefs: baseEvidence(account, item, 'QuickBooks sales-invoice metadata'), raw: { id: item.id, sourceType: 'sales_invoice', invoiceId: item.invoiceId, realmId: item.realmId, status: item.status, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+quickBooksAdapter.capabilities.credentialBackedSync = true;
+quickBooksAdapter.list = async account => (await quickBooksWorkSignalClient.fetchDelta(account, null)).records;
+quickBooksAdapter.fetchDelta = (account, cursor) => quickBooksWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('quickbooks', quickBooksAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),

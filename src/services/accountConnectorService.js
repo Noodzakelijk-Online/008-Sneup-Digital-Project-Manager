@@ -566,11 +566,13 @@ class AccountConnectorService {
       throw error;
     }
 
+    const callbackMetadata = this.extractOAuthCallbackMetadata(connector, query);
     const pkceVerifier = connector.auth.pkce ? this.decryptStateValue(state.pkce) : undefined;
     const tokenResponse = await this.exchangeCodeForToken(connector, query.code, options.baseUrl, pkceVerifier);
     const account = await this.saveOAuthAccount(connector, tokenResponse, {
       workspaceId: state.workspaceId || options.workspaceId,
-      consent: state.consent
+      consent: state.consent,
+      callbackMetadata
     });
 
     return {
@@ -1123,6 +1125,7 @@ class AccountConnectorService {
       connector.name;
 
     const externalAccountId =
+      options.callbackMetadata?.quickBooksRealmId ||
       tokenResponse.team_id ||
       tokenResponse.workspace_id ||
       tokenResponse.enterprise_id ||
@@ -1149,7 +1152,10 @@ class AccountConnectorService {
         expiresAt
       },
       metadata: {
-        fields: this.extractOAuthMetadata(connector, tokenResponse),
+        fields: {
+          ...this.extractOAuthMetadata(connector, tokenResponse),
+          ...(options.callbackMetadata || {})
+        },
         providerResponseKeys: Object.keys(tokenResponse || {}),
         sync: connector.sync || []
       },
@@ -1175,6 +1181,21 @@ class AccountConnectorService {
         return fields;
       }
       const error = new Error(`Connector ${connector.id} declared an unsupported OAuth metadata validator`);
+      error.statusCode = 500;
+      throw error;
+    }, {});
+  }
+
+  extractOAuthCallbackMetadata(connector, query = {}) {
+    const declarations = connector.auth?.oauthCallbackMetadata || [];
+    return declarations.reduce((fields, declaration) => {
+      const value = query[declaration.queryKey];
+      if (!value && !declaration.required) return fields;
+      if (declaration.validator === 'quickBooksRealmId') {
+        fields[declaration.field] = this.validateQuickBooksRealmId(value);
+        return fields;
+      }
+      const error = new Error(`Connector ${connector.id} declared an unsupported OAuth callback metadata validator`);
       error.statusCode = 500;
       throw error;
     }, {});
@@ -1207,6 +1228,16 @@ class AccountConnectorService {
       throw error;
     }
     return teamId;
+  }
+
+  validateQuickBooksRealmId(value) {
+    const realmId = String(value || '').trim();
+    if (!/^\d{1,32}$/.test(realmId)) {
+      const error = new Error('QuickBooks OAuth did not return a valid company realm ID. Reconnect this account to continue.');
+      error.statusCode = 502;
+      throw error;
+    }
+    return realmId;
   }
 
   createConsentEvidence(connector, options = {}) {

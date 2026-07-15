@@ -235,6 +235,8 @@ Mural is available as a separate OAuth connection with `workspaces:read` and `mu
 
 Canva is available as a separate PKCE OAuth connection with `design:meta:read`. Sneup stores each one-time PKCE verifier encrypted inside its signed server state, then makes one capped design-metadata request. It retains only redacted design names, opaque identifiers, and timestamps; design content, pages, thumbnails, temporary links, owners, folders, assets, comments, approvals, and provider writes are excluded.
 
+QuickBooks Online is available as a reviewed OAuth connection with the Accounting API scope. Sneup validates and binds to the opaque company `realmId` returned in its signed OAuth callback, then makes one capped sales-invoice metadata request. It retains only opaque invoice and company IDs, status, and dates; customers, invoice numbers, amounts, balances, payments, estimates, expenses, projects, line items, descriptions, addresses, links, attachments, taxes, and provider writes are excluded.
+
 SurveyMonkey is available with a View Surveys access token. Sneup makes one bounded survey-list GET and retains only redacted survey title and ID. It excludes questions, responses, collectors, contacts, links, and provider writes.
 
 Google Drive is available as a separate metadata-only Google OAuth connection. Sneup reads one bounded user-Drive page, rejects incomplete pagination, and retains only redacted file or folder names plus timestamps. It excludes file content, web URLs, permissions, owners, shared drives, and provider writes.
