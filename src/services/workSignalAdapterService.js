@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi',
   'wrike',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -102,6 +102,7 @@ const googleFormsWorkSignalClient = require('./googleFormsWorkSignalClient');
 const muralWorkSignalClient = require('./muralWorkSignalClient');
 const canvaWorkSignalClient = require('./canvaWorkSignalClient');
 const quickBooksWorkSignalClient = require('./quickBooksWorkSignalClient');
+const powerBiWorkSignalClient = require('./powerBiWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1372,6 +1373,12 @@ quickBooksAdapter.capabilities.credentialBackedSync = true;
 quickBooksAdapter.list = async account => (await quickBooksWorkSignalClient.fetchDelta(account, null)).records;
 quickBooksAdapter.fetchDelta = (account, cursor) => quickBooksWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('quickbooks', quickBooksAdapter);
+
+const powerBiAdapter = buildAdapter('power_bi', 'Power BI bounded report-catalog metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: 'report', title: titleFromText(item.name, 'Power BI report'), description: '', status: 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['power_bi', 'report', item.reportType]), dueAt: undefined, providerCreatedAt: undefined, providerUpdatedAt: undefined, evidenceRefs: [{ provider: account.connectorId, externalId: String(pick(item.id, 'unknown')), label: 'Power BI report metadata', type: account.connectorId }], raw: { id: item.id, sourceType: 'report', reportId: item.reportId, reportType: item.reportType } }));
+powerBiAdapter.capabilities.credentialBackedSync = true;
+powerBiAdapter.list = async account => (await powerBiWorkSignalClient.fetchDelta(account, null)).records;
+powerBiAdapter.fetchDelta = (account, cursor) => powerBiWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('power_bi', powerBiAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),
