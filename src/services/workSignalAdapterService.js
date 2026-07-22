@@ -13,7 +13,7 @@ const FIRST_WAVE_ADAPTERS = [
   'monday',
   'clickup',
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi',
-  'wrike',
+  'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
 ];
@@ -67,6 +67,7 @@ const floatWorkSignalClient = lazyClient('./floatWorkSignalClient');
 const resourceGuruWorkSignalClient = lazyClient('./resourceGuruWorkSignalClient');
 const sentryWorkSignalClient = lazyClient('./sentryWorkSignalClient');
 const pagerDutyWorkSignalClient = lazyClient('./pagerDutyWorkSignalClient');
+const opsgenieWorkSignalClient = lazyClient('./opsgenieWorkSignalClient');
 const statuspageWorkSignalClient = lazyClient('./statuspageWorkSignalClient');
 const genericRestApiWorkSignalClient = lazyClient('./genericRestApiWorkSignalClient');
 const n8nWorkSignalClient = lazyClient('./n8nWorkSignalClient');
@@ -987,6 +988,12 @@ pagerDutyAdapter.capabilities.credentialBackedSync = true;
 pagerDutyAdapter.list = async account => (await pagerDutyWorkSignalClient.fetchDelta(account, null)).records;
 pagerDutyAdapter.fetchDelta = (account, cursor) => pagerDutyWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('pagerduty', pagerDutyAdapter);
+
+const opsgenieAdapter = buildAdapter('opsgenie', 'Opsgenie open alert metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: 'alert', title: titleFromText(item.name, 'Opsgenie alert'), description: '', status: item.status || 'open', priority: item.priority === 'P1' ? 'critical' : item.priority === 'P2' ? 'high' : item.priority === 'P3' ? 'normal' : item.priority === 'P4' || item.priority === 'P5' ? 'low' : 'unknown', owners: [], labels: compact(['opsgenie', 'alert', item.priority]), dueAt: undefined, providerCreatedAt: item.createdAt, providerUpdatedAt: pick(item.updatedAt, item.lastOccurredAt, item.createdAt), evidenceRefs: [{ provider: account.connectorId, externalId: String(pick(item.id, 'unknown')), label: 'Opsgenie alert metadata', type: account.connectorId }], raw: { id: item.id, sourceType: 'alert', alertId: item.alertId, tinyId: item.tinyId, status: item.status, priority: item.priority, occurrenceCount: item.occurrenceCount, createdAt: item.createdAt, updatedAt: item.updatedAt, lastOccurredAt: item.lastOccurredAt } }));
+opsgenieAdapter.capabilities.credentialBackedSync = true;
+opsgenieAdapter.list = async account => (await opsgenieWorkSignalClient.fetchDelta(account, null)).records;
+opsgenieAdapter.fetchDelta = (account, cursor) => opsgenieWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('opsgenie', opsgenieAdapter);
 
 const statuspageAdapter = buildAdapter('statuspage', 'Atlassian Statuspage component and incident metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'incident'), title: item.sourceType === 'component' ? titleFromText(item.name, 'Statuspage component') : titleFromText(item.name, 'Statuspage incident'), description: '', status: item.status || 'unknown', priority: item.impact === 'critical' ? 'critical' : item.impact === 'major' ? 'high' : item.impact === 'minor' ? 'normal' : 'unknown', owners: [], labels: compact(['statuspage', item.sourceType, item.impact, item.status, ...(item.componentIds || []).slice(0, 100).map(componentId => `component:${componentId}`)]), dueAt: undefined, providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.resolvedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'Statuspage incident metadata'), raw: { id: item.id, sourceType: item.sourceType, componentId: item.componentId, incidentId: item.incidentId, componentIds: item.componentIds, status: item.status, impact: item.impact, createdAt: item.createdAt, updatedAt: item.updatedAt, resolvedAt: item.resolvedAt } }));
 statuspageAdapter.capabilities.credentialBackedSync = true;

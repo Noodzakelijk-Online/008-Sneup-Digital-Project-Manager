@@ -279,6 +279,8 @@ Sentry uses an auth token scoped to `org:read` and `event:read` plus one explici
 
 PagerDuty uses a read-only REST API token. It reads bounded active incident and service metadata with GET only, validates native offset pagination, excludes responders, escalation policies, schedules, notes, integrations, and provider writes, and fails visibly at configured collection caps.
 
+Opsgenie uses a read-only API key and an explicit `us` or `eu` region. It first verifies the bounded current open-alert count, then reads one matching metadata collection with GET only. Sneup excludes alert descriptions, aliases, responders, owners, teams, schedules, escalation policies, incidents, integrations, URLs, and provider writes, and refuses incomplete collections or configured cap overruns.
+
 Atlassian Statuspage uses a page-scoped API key and explicit page ID. It reads bounded component and incident metadata with GET only, validates fixed-page pagination, excludes subscribers, incident update bodies, postmortems, component descriptions, and provider writes, and fails visibly at configured collection caps.
 
 Generic REST API connects one configured public HTTPS JSON collection with a bearer token. It resolves the configured host before each sync, rejects private-network targets and redirects, pins the request to vetted public addresses, enforces response and record caps, stores only normalized ID/title/status/priority/timestamp metadata, and never makes provider writes or guesses pagination.
