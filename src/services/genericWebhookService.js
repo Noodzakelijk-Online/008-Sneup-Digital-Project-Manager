@@ -73,6 +73,14 @@ class GenericWebhookService {
     }
   }
 
+  parsePayload(rawBody) {
+    try {
+      return JSON.parse(rawBody.toString('utf8'));
+    } catch (error) {
+      throw webhookError('Webhook payload must be valid JSON', 400, 'invalid_payload');
+    }
+  }
+
   normalizeEvent(payload = {}) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       throw webhookError('Webhook payload must be an object', 400, 'invalid_payload');
@@ -116,7 +124,7 @@ class GenericWebhookService {
 
     const credentials = this.accountConnectorService.getAccountCredentials(account);
     this.verifySignature(rawBody, signature, credentials.signingSecret);
-    const event = this.normalizeEvent(body);
+    const event = this.normalizeEvent(Buffer.isBuffer(body) ? this.parsePayload(rawBody) : body);
     const signal = await this.workSignalService.upsertProviderRecord(account._id, event, {
       workspaceId: account.workspaceId,
       actorId: 'generic-webhook'

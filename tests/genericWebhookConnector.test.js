@@ -72,6 +72,22 @@ describe('Generic Webhook connector', () => {
     expect(workSignalService.upsertProviderRecord).not.toHaveBeenCalled();
   });
 
+  test('verifies the raw HMAC before decoding a raw JSON request body', async () => {
+    const rawBody = Buffer.from('{"id":"task:1","title":"Verified raw payload"}');
+
+    await service.ingest({ accountId: ACCOUNT_ID, rawBody, body: rawBody, signature: sign(rawBody, secret) });
+    expect(workSignalService.upsertProviderRecord).toHaveBeenCalledWith(ACCOUNT_ID, expect.objectContaining({
+      id: 'task:1',
+      title: 'Verified raw payload'
+    }), expect.any(Object));
+
+    const malformed = Buffer.from('{"id":');
+    await expect(service.ingest({ accountId: ACCOUNT_ID, rawBody: malformed, body: malformed, signature: sign(malformed, secret) })).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'invalid_payload'
+    });
+  });
+
   test('rejects invalid account ids, oversized bodies, and invalid payload identifiers', async () => {
     await expect(service.ingest({ accountId: 'invalid', rawBody: Buffer.from('{}'), body: {}, signature: 'sha256=bad' })).rejects.toMatchObject({ statusCode: 404 });
     const tooLarge = Buffer.alloc(getMaxBodyBytes() + 1, 'a');

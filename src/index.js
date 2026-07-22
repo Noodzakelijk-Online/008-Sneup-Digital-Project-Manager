@@ -70,6 +70,15 @@ app.use(helmet({
 }));
 app.use(cors(corsOptions));
 app.use(compression());
+// Generic inbound webhooks are bounded before the application-wide JSON parser
+// can allocate its larger body limit. Their JSON is decoded only after HMAC verification.
+app.use('/api/webhooks/generic', express.raw({
+  type: 'application/json',
+  limit: getMaxBodyBytes(),
+  verify: (req, res, buffer) => {
+    req.rawBody = buffer;
+  }
+}));
 app.use(express.json({
   limit: process.env.SNEUP_JSON_LIMIT || '1mb',
   verify: (req, res, buffer) => {
@@ -163,6 +172,13 @@ app.get('/', (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   logger.error('Unhandled error:', err);
+  if (isGenericWebhookPath(req.originalUrl || req.url)) {
+    const statusCode = err.statusCode || err.status || 400;
+    return res.status(statusCode).json({
+      success: false,
+      error: statusCode === 413 ? 'Webhook payload is too large' : 'Webhook payload is invalid'
+    });
+  }
   res.status(err.statusCode || err.status || 500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
