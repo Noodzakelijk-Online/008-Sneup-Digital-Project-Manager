@@ -538,6 +538,24 @@ describe('request security boundaries', () => {
     expect(res.statusCode).toBe(200);
   });
 
+  test('permits only the exact Generic Webhook ingress route to reach its HMAC verifier without an API key', async () => {
+    const req = createRequest({
+      path: '/api/webhooks/generic/507f1f77bcf86cd799439011',
+      method: 'POST'
+    });
+    const res = createResponse();
+    const next = jest.fn();
+
+    await requireApiAccess(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.auth).toMatchObject({
+      authMethod: 'signed_webhook',
+      actorType: 'external_system',
+      actorId: 'generic-webhook'
+    });
+  });
+
   test('does not trust request host for OAuth redirect URIs by default', () => {
     delete process.env.SNEUP_PUBLIC_URL;
     delete process.env.APP_BASE_URL;

@@ -1445,6 +1445,64 @@ googleDriveAdapter.list = async account => (await googleDriveWorkSignalClient.fe
 googleDriveAdapter.fetchDelta = (account, cursor) => googleDriveWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('google_drive', googleDriveAdapter);
 
+const genericWebhookAdapter = {
+  connectorId: 'webhook_generic',
+  label: 'Generic HMAC-verified inbound webhook adapter',
+  capabilities: {
+    list: false,
+    fetchDelta: false,
+    normalize: true,
+    applyAction: false,
+    credentialBackedSync: true,
+    inboundWebhook: true
+  },
+  async list() {
+    return [];
+  },
+  async fetchDelta() {
+    const error = new Error('Generic Webhook accepts verified inbound events and cannot be pulled.');
+    error.statusCode = 405;
+    throw error;
+  },
+  normalize(account, event = {}) {
+    const externalId = pick(event.id, event.externalId);
+    return {
+      externalId: String(externalId || ''),
+      sourceType: pick(event.type, event.sourceType, 'task'),
+      title: titleFromText(event.title, 'Untitled webhook event'),
+      description: '',
+      status: pick(event.status, 'open'),
+      priority: pick(event.priority, 'unknown'),
+      url: undefined,
+      owners: [],
+      labels: ['generic_webhook'],
+      dueAt: undefined,
+      providerCreatedAt: event.occurredAt,
+      providerUpdatedAt: pick(event.updatedAt, event.occurredAt),
+      evidenceRefs: [{
+        provider: account.connectorId,
+        externalId: String(externalId || 'unknown'),
+        label: 'Verified generic webhook metadata',
+        type: account.connectorId
+      }],
+      raw: {
+        eventId: externalId,
+        sourceType: event.type,
+        status: event.status,
+        priority: event.priority,
+        occurredAt: event.occurredAt,
+        updatedAt: event.updatedAt
+      }
+    };
+  },
+  async applyAction() {
+    const error = new Error('Work signal adapters are read-only and cannot write to external providers');
+    error.statusCode = 403;
+    throw error;
+  }
+};
+adapters.set('webhook_generic', genericWebhookAdapter);
+
 class WorkSignalAdapterService {
   getFirstWaveConnectorIds() {
     return [...FIRST_WAVE_ADAPTERS];
@@ -1475,7 +1533,7 @@ class WorkSignalAdapterService {
       label: adapter.label,
       capabilities: adapter.capabilities,
       safeWritePolicy: 'Read-only adapter: external provider writes are blocked; actions must go through Sneup approvals.',
-      methods: ['list', 'fetchDelta', 'normalize', 'applyAction']
+      methods: ['list', 'fetchDelta', 'normalize', 'applyAction'].filter(method => adapter.capabilities[method])
     };
   }
 

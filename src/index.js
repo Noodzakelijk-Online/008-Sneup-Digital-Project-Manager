@@ -15,6 +15,7 @@ const {
 const trelloSync = require('./services/trelloSync');
 const analyticsService = require('./services/analyticsService');
 const connectorSyncService = require('./services/connectorSyncService');
+const { getMaxBodyBytes, isGenericWebhookPath } = require('./services/genericWebhookService');
 const workspaceScopeService = require('./services/workspaceScopeService');
 const responseTimingService = require('./services/responseTimingService');
 const { validateRuntimeSecurityConfiguration } = require('./utils/securityConfiguration');
@@ -72,6 +73,11 @@ app.use(compression());
 app.use(express.json({
   limit: process.env.SNEUP_JSON_LIMIT || '1mb',
   verify: (req, res, buffer) => {
+    if (isGenericWebhookPath(req.originalUrl || req.url) && buffer.length > getMaxBodyBytes()) {
+      const error = new Error('Generic webhook payload is too large');
+      error.statusCode = 413;
+      throw error;
+    }
     req.rawBody = buffer;
   }
 }));
@@ -157,7 +163,7 @@ app.get('/', (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   logger.error('Unhandled error:', err);
-  res.status(500).json({
+  res.status(err.statusCode || err.status || 500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });

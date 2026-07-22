@@ -3736,6 +3736,16 @@ function renderConnectors() {
       loadConnectors({ append: true });
     });
   });
+  document.querySelectorAll('[data-copy-webhook-endpoint]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copyWebhookEndpoint);
+        openNotice('Webhook endpoint copied', 'Configure the source to send a signed metadata-only event to this endpoint.');
+      } catch (error) {
+        openNotice('Webhook endpoint', button.dataset.copyWebhookEndpoint);
+      }
+    });
+  });
 }
 
 function renderConnectorSafety() {
@@ -3802,7 +3812,11 @@ function renderConnector(connector, account) {
   const isXero = connector.id === 'xero';
   const selectedMuralWorkspaceId = account?.metadata?.fields?.muralWorkspaceId;
   const isMural = connector.id === 'mural';
-  const canSync = Boolean(account && adapterImplemented && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId) && (!isSharePoint || selectedSharePointSiteId) && (!isXero || selectedXeroTenantId) && (!isMural || selectedMuralWorkspaceId));
+  const isGenericWebhook = connector.id === 'webhook_generic';
+  const genericWebhookEndpoint = isGenericWebhook && account
+    ? `${window.location.origin}/api/webhooks/generic/${account.id}`
+    : '';
+  const canSync = Boolean(account && adapterImplemented && !isGenericWebhook && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId) && (!isSharePoint || selectedSharePointSiteId) && (!isXero || selectedXeroTenantId) && (!isMural || selectedMuralWorkspaceId));
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
@@ -3848,9 +3862,10 @@ function renderConnector(connector, account) {
       </div>
       <p>${escapeHtml(connector.description)}</p>
       <div class="connector-policy ${safety.scopeRisk === 'review' ? 'review' : ''}">${escapeHtml(safety.summary || 'Read-only ingestion only.')}</div>
-      <div class="meta"><span>${escapeHtml(adapterSummary)}</span></div>
+      <div class="meta"><span>${escapeHtml(isGenericWebhook ? 'HMAC-verified inbound event adapter available.' : adapterSummary)}</span></div>
       ${consentSummary}
       ${syncSummary}
+      ${genericWebhookEndpoint ? `<div class="connector-policy"><code>${escapeHtml(genericWebhookEndpoint)}</code><span>Send a compact JSON event and sign its exact request body with <code>x-sneup-signature: sha256=&lt;HMAC-SHA256&gt;</code>.</span></div>` : ''}
       <div class="connector-actions">
         <span class="meta">${connector.sync.slice(0, 3).map(escapeHtml).join('  |  ')}</span>
         ${isJira && account ? `<button class="button" data-jira-site="${escapeHtml(account.id)}" type="button">${selectedJiraCloudId ? 'Jira site selected' : 'Select Jira site'}</button>` : ''}
@@ -3862,6 +3877,7 @@ function renderConnector(connector, account) {
         ${isSharePoint && account ? `<button class="button" data-sharepoint-site="${escapeHtml(account.id)}" type="button">${selectedSharePointSiteId ? 'SharePoint site selected' : 'Select SharePoint site'}</button>` : ''}
         ${isXero && account ? `<button class="button" data-xero-tenant="${escapeHtml(account.id)}" type="button">${selectedXeroTenantId ? 'Xero organisation selected' : 'Select Xero organisation'}</button>` : ''}
         ${isMural && account ? `<button class="button" data-mural-workspace="${escapeHtml(account.id)}" type="button">${selectedMuralWorkspaceId ? 'Mural workspace selected' : 'Select Mural workspace'}</button>` : ''}
+        ${genericWebhookEndpoint ? `<button class="button" data-copy-webhook-endpoint="${escapeHtml(genericWebhookEndpoint)}" type="button">Copy endpoint</button>` : ''}
         ${canSync ? `<button class="button" data-connector-sync="${escapeHtml(account.id)}" type="button">Sync now</button>` : ''}
         ${syncReady ? (connected && connector.auth.type !== 'oauth2'
           ? `<button class="button primary" data-rotate-credential="${escapeHtml(account.id)}" type="button">Rotate credential</button>`

@@ -163,7 +163,8 @@ const isOAuthCallback = (req) =>
   req.method === 'GET' && /^\/api\/connectors\/[^/]+\/callback$/.test(req.path);
 
 const isWebhook = (req) =>
-  req.path === '/api/webhooks/trello' && ['HEAD', 'POST'].includes(req.method);
+  (req.path === '/api/webhooks/trello' && ['HEAD', 'POST'].includes(req.method)) ||
+  (req.method === 'POST' && /^\/api\/webhooks\/generic\/[a-f\d]{24}$/i.test(req.path));
 
 const isPublicInviteAcceptance = (req) =>
   req.method === 'POST' && req.path === '/api/workspaces/invitations/accept';
@@ -271,10 +272,10 @@ const requireApiAccess = async (req, res, next) => {
 
   if (isOAuthCallback(req) || isWebhook(req) || isPublicInviteAcceptance(req)) {
     attachAuthContext(req, buildAuthContext(req, {
-      authMethod: isWebhook(req) ? 'trello_webhook' : isPublicInviteAcceptance(req) ? 'invite_acceptance' : 'oauth_callback',
+      authMethod: isWebhook(req) ? (req.path === '/api/webhooks/trello' ? 'trello_webhook' : 'signed_webhook') : isPublicInviteAcceptance(req) ? 'invite_acceptance' : 'oauth_callback',
       actorType: isPublicInviteAcceptance(req) ? 'invite_recipient' : 'external_system',
-      actorId: isWebhook(req) ? 'trello' : isPublicInviteAcceptance(req) ? 'pending-invite' : 'connector-oauth',
-      displayName: isWebhook(req) ? 'Trello webhook' : isPublicInviteAcceptance(req) ? 'Invitation recipient' : 'Connector OAuth callback',
+      actorId: isWebhook(req) ? (req.path === '/api/webhooks/trello' ? 'trello' : 'generic-webhook') : isPublicInviteAcceptance(req) ? 'pending-invite' : 'connector-oauth',
+      displayName: isWebhook(req) ? (req.path === '/api/webhooks/trello' ? 'Trello webhook' : 'Generic webhook') : isPublicInviteAcceptance(req) ? 'Invitation recipient' : 'Connector OAuth callback',
       roles: isPublicInviteAcceptance(req) ? [] : ['service'],
       permissions: isPublicInviteAcceptance(req) ? [] : ['webhooks:receive', 'connectors:complete-oauth']
     }));
@@ -494,7 +495,7 @@ const corsOptions = {
     return callback(new Error('Origin is not allowed by Sneup CORS policy'));
   },
   methods: ['GET', 'POST', 'DELETE', 'HEAD', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Sneup-Api-Key', 'X-Sneup-Workspace-Id', 'X-Sneup-Workspace-Name', 'X-Trello-Webhook'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Sneup-Api-Key', 'X-Sneup-Workspace-Id', 'X-Sneup-Workspace-Name', 'X-Trello-Webhook', 'X-Sneup-Signature'],
   credentials: false
 };
 

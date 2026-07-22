@@ -329,6 +329,7 @@ Datadog uses an API key plus an application key limited to `monitors_read` and `
 
 - `POST /api/webhooks/trello` - Trello webhook endpoint
 - `HEAD /api/webhooks/trello` - Webhook verification
+- `POST /api/webhooks/generic/:accountId` - Generic inbound work-signal endpoint. Create a Generic Webhook account first, then send a JSON envelope with `id`, `title`, and optional `type`, `status`, `priority`, `occurredAt`, and `updatedAt`. Sign the exact raw JSON body with `x-sneup-signature: sha256=<hex HMAC-SHA256>`, using the account's signing secret. Sneup rejects unsigned, invalid, oversized, or malformed payloads; strips all fields outside this allowlist; stores no description, URL, owner, or arbitrary payload content; and never writes to the source system.
 
 ## Architecture
 
