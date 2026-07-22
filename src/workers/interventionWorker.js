@@ -39,6 +39,14 @@ class InterventionWorker {
       }
     );
 
+    // Recheck completed provider actions without creating a new provider request.
+    this.jobs.processOutcomes = schedule.scheduleJob(
+      process.env.OUTCOME_EVALUATION_CRON || '30 */3 * * *',
+      async () => {
+        await this.runForActiveWorkspaces('interventions.outcomes', workspaceId => this.processOutcomes(workspaceId));
+      }
+    );
+
     logger.info('Intervention worker initialized');
   }
 
@@ -112,6 +120,21 @@ class InterventionWorker {
       };
     } catch (error) {
       logger.error('Failed to process escalations:', error);
+      throw error;
+    }
+  }
+
+  async processOutcomes(workspaceId) {
+    try {
+      logger.info('Refreshing intervention outcomes...');
+      const result = await operationsLedgerService.refreshDueInterventionOutcomes({ workspaceId });
+      return {
+        processedCount: result.evaluatedCount,
+        successCount: result.evaluatedCount,
+        failureCount: result.failureCount
+      };
+    } catch (error) {
+      logger.error('Failed to refresh intervention outcomes:', error);
       throw error;
     }
   }

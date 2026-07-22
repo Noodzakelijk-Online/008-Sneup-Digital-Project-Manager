@@ -25,6 +25,8 @@ const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 const HOURS = 60 * 60 * 1000;
 const DEFAULT_RECONCILIATION_WARNING_HOURS = 4;
 const DEFAULT_RECONCILIATION_CRITICAL_HOURS = 24;
+const DEFAULT_OUTCOME_RECHECK_DELAY_HOURS = 24;
+const DEFAULT_OUTCOME_RECHECK_LIMIT = 100;
 const DEFAULT_APPROVAL_TTL_HOURS = Object.freeze({
   critical: 4,
   high: 24,
@@ -1652,6 +1654,129 @@ class OperationsLedgerService {
       .limit(filters.limit || 100);
   }
 
+  outcomeRecheckDelayHours() {
+    return boundedHours(
+      process.env.SNEUP_OUTCOME_RECHECK_DELAY_HOURS,
+      DEFAULT_OUTCOME_RECHECK_DELAY_HOURS,
+      1,
+      168
+    );
+  }
+
+  async refreshDueInterventionOutcomes(filters = {}) {
+    this.requireDatabase();
+    const OutcomeRecord = getOutcomeRecordModel();
+    const workspaceId = this.resolveWorkspaceId(filters.workspaceId);
+    const now = filters.now ? new Date(filters.now) : new Date();
+    const referenceNow = Number.isNaN(now.getTime()) ? new Date() : now;
+    const recheckDelayHours = this.outcomeRecheckDelayHours();
+    const recheckCutoff = new Date(referenceNow.getTime() - recheckDelayHours * HOURS);
+    const limit = boundedInteger(
+      filters.limit || process.env.SNEUP_OUTCOME_RECHECK_LIMIT,
+      DEFAULT_OUTCOME_RECHECK_LIMIT,
+      1,
+      250
+    );
+    const attempts = await TrelloActionAttempt.find({
+      workspaceId,
+      recommendationId: { $exists: true },
+      status: 'succeeded',
+      finishedAt: { $lte: recheckCutoff }
+    })
+      .sort({ finishedAt: -1, createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const latestAttempts = [];
+    const seenRecommendationIds = new Set();
+    for (const attempt of attempts) {
+      const recommendationId = String(attempt.recommendationId || '');
+      if (!recommendationId || seenRecommendationIds.has(recommendationId)) continue;
+      seenRecommendationIds.add(recommendationId);
+      latestAttempts.push(attempt);
+    }
+
+    if (latestAttempts.length === 0) {
+      return {
+        scannedCount: attempts.length,
+        eligibleCount: 0,
+        evaluatedCount: 0,
+        skippedFreshCount: 0,
+        skippedTerminalCount: 0,
+        skippedNotExecutedCount: 0,
+        failureCount: 0,
+        recheckDelayHours
+      };
+    }
+
+    const [outcomes, executedRecommendations] = await Promise.all([
+      OutcomeRecord.find({
+        workspaceId,
+        actionAttemptId: { $in: latestAttempts.map(attempt => attempt._id) }
+      })
+        .select('actionAttemptId status evaluatedAt')
+        .lean(),
+      Recommendation.find({
+        workspaceId,
+        _id: { $in: latestAttempts.map(attempt => attempt.recommendationId) },
+        status: 'executed'
+      })
+        .select('_id')
+        .lean()
+    ]);
+    const outcomesByAttemptId = new Map(outcomes.map(outcome => [String(outcome.actionAttemptId), outcome]));
+    const executedRecommendationIds = new Set(executedRecommendations.map(recommendation => String(recommendation._id)));
+    const terminalStatuses = new Set(['confirmed_improved']);
+    let evaluatedCount = 0;
+    let skippedFreshCount = 0;
+    let skippedTerminalCount = 0;
+    let skippedNotExecutedCount = 0;
+    let failureCount = 0;
+
+    for (const attempt of latestAttempts) {
+      if (!executedRecommendationIds.has(String(attempt.recommendationId))) {
+        skippedNotExecutedCount += 1;
+        continue;
+      }
+
+      const existingOutcome = outcomesByAttemptId.get(String(attempt._id));
+      if (terminalStatuses.has(existingOutcome?.status)) {
+        skippedTerminalCount += 1;
+        continue;
+      }
+      if (existingOutcome?.evaluatedAt && new Date(existingOutcome.evaluatedAt).getTime() > recheckCutoff.getTime()) {
+        skippedFreshCount += 1;
+        continue;
+      }
+
+      try {
+        await this.evaluateRecommendationOutcome(attempt.recommendationId, {
+          workspaceId,
+          evaluatedBy: filters.evaluatedBy || 'sneup-outcome-worker',
+          recordUnchangedAudit: false
+        });
+        evaluatedCount += 1;
+      } catch (error) {
+        failureCount += 1;
+        logger.warn('Unable to refresh a scheduled intervention outcome.', {
+          message: error.message,
+          workspaceId: String(workspaceId)
+        });
+      }
+    }
+
+    return {
+      scannedCount: attempts.length,
+      eligibleCount: latestAttempts.length,
+      evaluatedCount,
+      skippedFreshCount,
+      skippedTerminalCount,
+      skippedNotExecutedCount,
+      failureCount,
+      recheckDelayHours
+    };
+  }
+
   async evaluateRecommendationOutcome(recommendationId, body = {}) {
     this.requireDatabase();
     const OutcomeRecord = getOutcomeRecordModel();
@@ -1731,6 +1856,9 @@ class OperationsLedgerService {
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
+    const outcomeChanged = !existingOutcome
+      || existingOutcome.status !== evaluation.status
+      || existingOutcome.summary !== evaluation.summary;
 
     if (recommendation.interventionId && ['confirmed_improved', 'not_verified'].includes(evaluation.status)) {
       const intervention = await Intervention.findOne({
@@ -1743,18 +1871,20 @@ class OperationsLedgerService {
       }
     }
 
-    await this.recordAudit({
-      entityType: 'outcome_record',
-      entityId: outcome._id,
-      action: 'intervention_outcome_evaluated',
-      actor: outcome.evaluatedBy,
-      source: 'system',
-      riskLevel: recommendation.riskLevel,
-      recommendationId: recommendation._id,
-      trelloActionAttemptId: attempt._id,
-      beforeState: existingOutcome || null,
-      afterState: outcome.toObject()
-    });
+    if (outcomeChanged || body.recordUnchangedAudit !== false) {
+      await this.recordAudit({
+        entityType: 'outcome_record',
+        entityId: outcome._id,
+        action: 'intervention_outcome_evaluated',
+        actor: outcome.evaluatedBy,
+        source: 'system',
+        riskLevel: recommendation.riskLevel,
+        recommendationId: recommendation._id,
+        trelloActionAttemptId: attempt._id,
+        beforeState: existingOutcome || null,
+        afterState: outcome.toObject()
+      });
+    }
 
     return outcome;
   }
