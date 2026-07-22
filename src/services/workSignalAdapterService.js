@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -113,6 +113,7 @@ const muralWorkSignalClient = lazyClient('./muralWorkSignalClient');
 const canvaWorkSignalClient = lazyClient('./canvaWorkSignalClient');
 const quickBooksWorkSignalClient = lazyClient('./quickBooksWorkSignalClient');
 const powerBiWorkSignalClient = lazyClient('./powerBiWorkSignalClient');
+const scoroWorkSignalClient = lazyClient('./scoroWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1177,6 +1178,14 @@ workfrontAdapter.capabilities.credentialBackedSync = true;
 workfrontAdapter.list = async account => (await workfrontWorkSignalClient.fetchDelta(account, null)).records;
 workfrontAdapter.fetchDelta = (account, cursor) => workfrontWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('workfront', workfrontAdapter);
+
+const scoroAdapter = buildAdapter('scoro', 'Scoro project and task metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'Scoro work item'), description: '', status: item.status || 'open', priority: item.priority || 'unknown', url: undefined, owners: [], labels: compact(['scoro', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined]), dueAt: item.dueAt, providerCreatedAt: item.createdAt || item.startAt, providerUpdatedAt: item.updatedAt, evidenceRefs: baseEvidence(account, item, 'Scoro project and task metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, status: item.status, priority: item.priority, startAt: item.startAt, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt, completedAt: item.completedAt }
+}));
+scoroAdapter.capabilities.credentialBackedSync = true;
+scoroAdapter.list = async account => (await scoroWorkSignalClient.fetchDelta(account, null)).records;
+scoroAdapter.fetchDelta = (account, cursor) => scoroWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('scoro', scoroAdapter);
 
 const serviceNowAdapter = buildAdapter('servicenow', 'ServiceNow active incident metadata adapter', (account, item) => ({
   externalId: pick(item.id),

@@ -204,6 +204,7 @@ class ConnectorSyncService {
         sites: delta.metadata?.sites || 0,
         workspaces: delta.metadata?.workspaces || 0,
         projects: delta.metadata?.projects || 0,
+        tasks: delta.metadata?.tasks || 0,
         channels: delta.metadata?.channels || 0,
         issues: delta.metadata?.issues || 0,
         workflows: delta.metadata?.workflows || 0,
