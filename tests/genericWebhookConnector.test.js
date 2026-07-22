@@ -10,6 +10,7 @@ describe('Generic Webhook connector', () => {
   let ConnectorAccount;
   let workSignalService;
   let operationsLedgerService;
+  let WebhookDelivery;
   let service;
 
   beforeEach(() => {
@@ -21,11 +22,17 @@ describe('Generic Webhook connector', () => {
     }) };
     workSignalService = { upsertProviderRecord: jest.fn().mockResolvedValue({ id: 'signal-1' }) };
     operationsLedgerService = { recordAudit: jest.fn().mockResolvedValue({ id: 'audit-1' }) };
+    WebhookDelivery = {
+      findOneAndUpdate: jest.fn(),
+      findOne: jest.fn(),
+      updateOne: jest.fn().mockResolvedValue({ acknowledged: true })
+    };
     service = new GenericWebhookService({
       ConnectorAccount,
       accountConnectorService: { getAccountCredentials: jest.fn(() => ({ signingSecret: secret })) },
       workSignalService,
-      operationsLedgerService
+      operationsLedgerService,
+      WebhookDelivery
     });
   });
 
@@ -95,6 +102,53 @@ describe('Generic Webhook connector', () => {
     const body = { id: '../../bad', title: 'Invalid identifier' };
     const rawBody = Buffer.from(JSON.stringify(body));
     await expect(service.ingest({ accountId: ACCOUNT_ID, rawBody, body, signature: sign(rawBody, secret) })).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  test('deduplicates a retried provider delivery without replaying the signal or audit event', async () => {
+    const body = { id: 'task:1', title: 'Ship safely' };
+    const rawBody = Buffer.from(JSON.stringify(body));
+    WebhookDelivery.findOneAndUpdate
+      .mockResolvedValueOnce({ _id: 'delivery-1', status: 'processing' })
+      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: 11000 }));
+    WebhookDelivery.findOne.mockResolvedValue({ _id: 'delivery-1', status: 'succeeded', signalId: 'signal-1' });
+
+    const first = await service.ingest({
+      accountId: ACCOUNT_ID,
+      rawBody,
+      body,
+      signature: sign(rawBody, secret),
+      deliveryId: 'provider:delivery-1'
+    });
+    const retry = await service.ingest({
+      accountId: ACCOUNT_ID,
+      rawBody,
+      body,
+      signature: sign(rawBody, secret),
+      deliveryId: 'provider:delivery-1'
+    });
+
+    expect(first).toMatchObject({ duplicate: false, signal: { id: 'signal-1' } });
+    expect(retry).toMatchObject({ duplicate: true, processing: false, signal: { id: 'signal-1' } });
+    expect(workSignalService.upsertProviderRecord).toHaveBeenCalledTimes(1);
+    expect(operationsLedgerService.recordAudit).toHaveBeenCalledTimes(1);
+    expect(WebhookDelivery.updateOne).toHaveBeenCalledWith({ _id: 'delivery-1' }, expect.objectContaining({
+      $set: expect.objectContaining({ status: 'succeeded', signalId: 'signal-1' })
+    }));
+  });
+
+  test('rejects invalid delivery identifiers before creating a signal', async () => {
+    const body = { id: 'task:1', title: 'Ship safely' };
+    const rawBody = Buffer.from(JSON.stringify(body));
+
+    await expect(service.ingest({
+      accountId: ACCOUNT_ID,
+      rawBody,
+      body,
+      signature: sign(rawBody, secret),
+      deliveryId: 'not allowed spaces'
+    })).rejects.toMatchObject({ statusCode: 400, code: 'invalid_payload' });
+    expect(workSignalService.upsertProviderRecord).not.toHaveBeenCalled();
+    expect(WebhookDelivery.findOneAndUpdate).not.toHaveBeenCalled();
   });
 
   test('exposes Generic Webhook as an inbound-only read-only adapter path', () => {

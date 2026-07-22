@@ -60,12 +60,15 @@ router.post('/generic/:accountId', async (req, res) => {
       accountId: req.params.accountId,
       rawBody: req.rawBody,
       body: req.body,
-      signature: req.get('x-sneup-signature')
+      signature: req.get('x-sneup-signature'),
+      deliveryId: req.get('x-sneup-delivery-id')
     });
     res.status(202).json({
       success: true,
       eventId: result.event.id,
-      signalId: result.signal.id
+      signalId: result.signal.id,
+      duplicate: Boolean(result.duplicate),
+      processing: Boolean(result.processing)
     });
   } catch (error) {
     logger.warn('Generic webhook rejected', {

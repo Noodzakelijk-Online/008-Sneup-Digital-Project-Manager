@@ -495,7 +495,7 @@ const corsOptions = {
     return callback(new Error('Origin is not allowed by Sneup CORS policy'));
   },
   methods: ['GET', 'POST', 'DELETE', 'HEAD', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Sneup-Api-Key', 'X-Sneup-Workspace-Id', 'X-Sneup-Workspace-Name', 'X-Trello-Webhook', 'X-Sneup-Signature'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Sneup-Api-Key', 'X-Sneup-Workspace-Id', 'X-Sneup-Workspace-Name', 'X-Trello-Webhook', 'X-Sneup-Signature', 'X-Sneup-Delivery-Id'],
   credentials: false
 };
 

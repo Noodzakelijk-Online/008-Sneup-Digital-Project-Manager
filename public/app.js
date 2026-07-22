@@ -3865,7 +3865,7 @@ function renderConnector(connector, account) {
       <div class="meta"><span>${escapeHtml(isGenericWebhook ? 'HMAC-verified inbound event adapter available.' : adapterSummary)}</span></div>
       ${consentSummary}
       ${syncSummary}
-      ${genericWebhookEndpoint ? `<div class="connector-policy"><code>${escapeHtml(genericWebhookEndpoint)}</code><span>Send a compact JSON event and sign its exact request body with <code>x-sneup-signature: sha256=&lt;HMAC-SHA256&gt;</code>.</span></div>` : ''}
+      ${genericWebhookEndpoint ? `<div class="connector-policy"><code>${escapeHtml(genericWebhookEndpoint)}</code><span>Send a compact JSON event, sign its exact request body with <code>x-sneup-signature: sha256=&lt;HMAC-SHA256&gt;</code>, and include a stable <code>x-sneup-delivery-id</code> for retry-safe delivery.</span></div>` : ''}
       <div class="connector-actions">
         <span class="meta">${connector.sync.slice(0, 3).map(escapeHtml).join('  |  ')}</span>
         ${isJira && account ? `<button class="button" data-jira-site="${escapeHtml(account.id)}" type="button">${selectedJiraCloudId ? 'Jira site selected' : 'Select Jira site'}</button>` : ''}
