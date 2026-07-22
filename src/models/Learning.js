@@ -14,7 +14,7 @@ const learningSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['workflow', 'team', 'bottleneck', 'risk', 'assignment'],
+    enum: ['workflow', 'team', 'bottleneck', 'risk', 'assignment', 'recommendation'],
     required: true,
     index: true
   },
@@ -41,6 +41,13 @@ const learningSchema = new mongoose.Schema({
   },
   feedback: {
     recommendationId: mongoose.Schema.Types.ObjectId,
+    decision: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected', 'change_requested', 'executed'],
+      default: 'pending'
+    },
+    actionType: String,
+    riskLevel: String,
     accepted: {
       type: Boolean,
       default: false
@@ -99,6 +106,17 @@ const learningSchema = new mongoose.Schema({
 // Indexes for efficient queries
 learningSchema.index({ workspaceId: 1, type: 1, category: 1 });
 learningSchema.index({ workspaceId: 1, boardId: 1, type: 1 });
+learningSchema.index(
+  { workspaceId: 1, type: 1, category: 1, 'feedback.recommendationId': 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      type: 'feedback',
+      category: 'recommendation',
+      'feedback.recommendationId': { $exists: true }
+    }
+  }
+);
 learningSchema.index({ type: 1, category: 1 });
 learningSchema.index({ boardId: 1, type: 1 });
 learningSchema.index({ 'pattern.confidence': -1 });
@@ -145,21 +163,51 @@ learningSchema.statics.recordPattern = async function(category, boardId, descrip
 };
 
 // Static method to record feedback
-learningSchema.statics.recordFeedback = async function(recommendationId, accepted, executed, outcome, notes) {
-  const feedback = new this({
-    type: 'feedback',
-    category: 'recommendation',
-    feedback: {
-      recommendationId,
-      accepted,
-      executed,
-      outcome,
-      notes,
-      feedbackDate: new Date()
-    }
+learningSchema.statics.recordRecommendationFeedback = function(payload = {}) {
+  if (!payload.workspaceId || !payload.recommendationId) {
+    throw new Error('workspaceId and recommendationId are required for recommendation feedback');
+  }
+
+  const now = new Date();
+  return this.findOneAndUpdate(
+    {
+      workspaceId: payload.workspaceId,
+      type: 'feedback',
+      category: 'recommendation',
+      'feedback.recommendationId': payload.recommendationId
+    },
+    {
+      $set: {
+        workspaceId: payload.workspaceId,
+        boardId: payload.boardId,
+        type: 'feedback',
+        category: 'recommendation',
+        feedback: {
+          recommendationId: payload.recommendationId,
+          decision: payload.decision || 'pending',
+          actionType: payload.actionType,
+          riskLevel: payload.riskLevel,
+          accepted: payload.accepted === true,
+          executed: payload.executed === true,
+          outcome: payload.outcome || 'unknown',
+          feedbackDate: now
+        }
+      }
+    },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
+};
+
+learningSchema.statics.recordFeedback = function(recommendationId, accepted, executed, outcome, notes, options = {}) {
+  return this.recordRecommendationFeedback({
+    workspaceId: options.workspaceId,
+    recommendationId,
+    decision: executed ? 'executed' : accepted ? 'approved' : 'rejected',
+    accepted,
+    executed,
+    outcome,
+    notes
   });
-  await feedback.save();
-  return feedback;
 };
 
 // Static method to get patterns by category

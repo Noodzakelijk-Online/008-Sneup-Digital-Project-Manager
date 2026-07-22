@@ -75,6 +75,7 @@ const normalizeWorkerResponseSource = (value) => WORKER_RESPONSE_SOURCES.has(val
 
 const getOutcomeRecordModel = () => require('../models/OutcomeRecord');
 const getListModel = () => require('../models/List');
+const getLearningModel = () => require('../models/Learning');
 
 class OperationsLedgerService {
   isDatabaseReady() {
@@ -667,6 +668,12 @@ class OperationsLedgerService {
       recommendationId: recommendation._id,
       afterState: approval.toObject()
     });
+    await this.recordRecommendationLearningFeedback(recommendation, {
+      decision: 'approved',
+      accepted: true,
+      executed: false,
+      outcome: 'unknown'
+    });
 
     return { recommendation, approval };
   }
@@ -725,6 +732,12 @@ class OperationsLedgerService {
       recommendationId: recommendation._id,
       afterState: approval.toObject()
     });
+    await this.recordRecommendationLearningFeedback(recommendation, {
+      decision: 'rejected',
+      accepted: false,
+      executed: false,
+      outcome: 'unknown'
+    });
 
     return { recommendation, approval };
   }
@@ -774,6 +787,12 @@ class OperationsLedgerService {
       approvalId: approval._id,
       recommendationId: recommendation._id,
       afterState: approval.toObject()
+    });
+    await this.recordRecommendationLearningFeedback(recommendation, {
+      decision: 'change_requested',
+      accepted: false,
+      executed: false,
+      outcome: 'unknown'
     });
 
     return { recommendation, approval };
@@ -953,6 +972,12 @@ class OperationsLedgerService {
       claimedRecommendation.status = 'executed';
       claimedRecommendation.executedAt = attempt.finishedAt;
       await claimedRecommendation.save();
+      await this.recordRecommendationLearningFeedback(claimedRecommendation, {
+        decision: 'executed',
+        accepted: true,
+        executed: true,
+        outcome: 'unknown'
+      });
 
       if (claimedRecommendation.interventionId) {
         const intervention = await Intervention.findOne({
@@ -1654,6 +1679,72 @@ class OperationsLedgerService {
       .limit(filters.limit || 100);
   }
 
+  async recordRecommendationLearningFeedback(recommendation, feedback = {}) {
+    if (!recommendation?.workspaceId || !recommendation?._id) return null;
+
+    try {
+      const Learning = getLearningModel();
+      return await Learning.recordRecommendationFeedback({
+        workspaceId: recommendation.workspaceId,
+        recommendationId: recommendation._id,
+        boardId: recommendation.boardId,
+        actionType: recommendation.actionType,
+        riskLevel: recommendation.riskLevel,
+        ...feedback
+      });
+    } catch (error) {
+      logger.warn('Unable to record recommendation learning feedback.', {
+        message: error.message,
+        workspaceId: String(recommendation.workspaceId)
+      });
+      return null;
+    }
+  }
+
+  async getRecommendationLearningSummary(filters = {}) {
+    this.requireDatabase();
+    const Learning = getLearningModel();
+    const records = await Learning.find({
+      workspaceId: this.resolveWorkspaceId(filters.workspaceId),
+      type: 'feedback',
+      category: 'recommendation'
+    })
+      .select('boardId feedback.recommendationId feedback.decision feedback.actionType feedback.riskLevel feedback.accepted feedback.executed feedback.outcome feedback.feedbackDate')
+      .sort({ 'feedback.feedbackDate': -1, updatedAt: -1 })
+      .limit(boundedInteger(filters.limit, 100, 1, 250))
+      .lean();
+
+    const decisions = { approved: 0, rejected: 0, change_requested: 0, executed: 0, pending: 0 };
+    const outcomes = { success: 0, failure: 0, partial: 0, unknown: 0 };
+    records.forEach((record) => {
+      const decision = record.feedback?.decision || 'pending';
+      const outcome = record.feedback?.outcome || 'unknown';
+      if (Object.hasOwn(decisions, decision)) decisions[decision] += 1;
+      if (Object.hasOwn(outcomes, outcome)) outcomes[outcome] += 1;
+    });
+    const decidedCount = decisions.approved + decisions.rejected + decisions.change_requested + decisions.executed;
+
+    return {
+      generatedAt: new Date(),
+      feedbackCount: records.length,
+      decidedCount,
+      approvalRate: decidedCount ? Math.round(((decisions.approved + decisions.executed) / decidedCount) * 100) : 0,
+      decisions,
+      outcomes,
+      records: records.map((record) => ({
+        recommendationId: record.feedback?.recommendationId,
+        boardId: record.boardId,
+        decision: record.feedback?.decision || 'pending',
+        actionType: record.feedback?.actionType,
+        riskLevel: record.feedback?.riskLevel,
+        accepted: record.feedback?.accepted === true,
+        executed: record.feedback?.executed === true,
+        outcome: record.feedback?.outcome || 'unknown',
+        feedbackDate: record.feedback?.feedbackDate
+      }))
+    };
+  }
+
   outcomeRecheckDelayHours() {
     return boundedHours(
       process.env.SNEUP_OUTCOME_RECHECK_DELAY_HOURS,
@@ -1885,6 +1976,16 @@ class OperationsLedgerService {
         afterState: outcome.toObject()
       });
     }
+    await this.recordRecommendationLearningFeedback(recommendation, {
+      decision: 'executed',
+      accepted: true,
+      executed: true,
+      outcome: evaluation.status === 'confirmed_improved'
+        ? 'success'
+        : evaluation.status === 'needs_attention'
+          ? 'partial'
+          : 'unknown'
+    });
 
     return outcome;
   }

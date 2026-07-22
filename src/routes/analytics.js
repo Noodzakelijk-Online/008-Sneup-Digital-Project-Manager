@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger');
 const analyticsService = require('../services/analyticsService');
+const operationsLedgerService = require('../services/operationsLedgerService');
 const Analytics = require('../models/Analytics');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const {
@@ -11,6 +12,22 @@ const {
 } = require('../utils/requestSecurity');
 
 router.param('boardId', validateObjectIdParam('boardId'));
+
+router.get('/recommendation-feedback', requirePermission('audit:read'), async (req, res) => {
+  try {
+    const summary = await operationsLedgerService.getRecommendationLearningSummary({
+      workspaceId: getRequestWorkspaceObjectId(req),
+      limit: clampInteger(req.query.limit, 100, 1, 250)
+    });
+    res.json({ success: true, summary });
+  } catch (error) {
+    logger.error('Failed to get recommendation learning feedback:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : 'Failed to retrieve recommendation learning feedback'
+    });
+  }
+});
 
 // Get latest analytics for a board
 router.get('/board/:boardId/latest', async (req, res) => {
