@@ -2049,6 +2049,15 @@ describe('work signal normalization', () => {
     })).rejects.toThrow('read-only');
   });
 
+  test('defers provider client loading until an adapter performs a live sync', () => {
+    jest.resetModules();
+    jest.doMock('../src/services/githubWorkSignalClient', () => {
+      throw new Error('GitHub client should not load while building the adapter registry');
+    });
+
+    expect(() => require('../src/services/workSignalAdapterService')).not.toThrow();
+  });
+
   test('GitHub adapter delegates live delta reads to its credential-backed client', async () => {
     jest.resetModules();
     const fetchDelta = jest.fn().mockResolvedValue({ records: [{ node_id: 'ISSUE_1' }] });
@@ -4331,7 +4340,7 @@ describe('work signal normalization', () => {
     const requested = http.get.mock.calls.map(call => `${call[0]} ${JSON.stringify(call[1]?.params || {})}`).join(' ');
     expect(requested).not.toMatch(/description|comment|checklist|resource|timeblock|custom/i);
     expect(JSON.stringify(result.records)).not.toMatch(/Private project detail|Private task detail|Private comment|Private user|Private field/);
-    expect(result).toMatchObject({ metadata: { source: 'teamgantt_api', companyId: '123', projects: 1, tasks: 1, contentPolicy: 'selected_company_project_and_task_metadata_only_no_descriptions_comments_checklists_resources_time_blocks_custom_fields_or_provider_writes' }, hasMore: false, nextCursor: '2026-07-12T12:00:00.000Z' });
+    expect(result).toMatchObject({ metadata: { source: 'teamgantt_api', companyId: '123', projects: 1, tasks: 1, contentPolicy: 'selected_company_project_and_task_metadata_only_with_redacted_titles_no_descriptions_comments_checklists_resources_time_blocks_custom_fields_urls_or_provider_writes' }, hasMore: false, nextCursor: '2026-07-12T12:00:00.000Z' });
     expect(result.records).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'project:9', name: 'Sneup release', status: 'active' }),
       expect.objectContaining({ id: 'task:18', projectId: '9', name: 'Ship TeamGantt connector', dueAt: '2026-07-15T00:00:00.000Z', percentComplete: 60 })
