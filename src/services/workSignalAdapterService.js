@@ -764,6 +764,13 @@ teamworkAdapter.list = async account => (await teamworkWorkSignalClient.fetchDel
 teamworkAdapter.fetchDelta = (account, cursor) => teamworkWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('teamwork', teamworkAdapter);
 
+const teamGanttEvidence = (account, item) => [{
+  provider: account.connectorId,
+  externalId: String(pick(item.id, item.taskId, item.projectId, 'unknown')),
+  label: 'TeamGantt metadata',
+  type: account.connectorId
+}];
+const teamGanttProject = value => value && value.id && value.name ? { id: String(value.id), name: titleFromText(value.name, 'TeamGantt project') } : undefined;
 const teamGanttAdapter = buildAdapter('teamgantt', 'TeamGantt project and task metadata adapter', (account, item) => ({
   externalId: pick(item.id),
   sourceType: pick(item.sourceType, 'task'),
@@ -776,8 +783,8 @@ const teamGanttAdapter = buildAdapter('teamgantt', 'TeamGantt project and task m
   dueAt: pick(item.dueAt),
   providerCreatedAt: pick(item.createdAt),
   providerUpdatedAt: pick(item.updatedAt, item.createdAt),
-  evidenceRefs: baseEvidence(account, item, 'TeamGantt metadata'),
-  raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, parentGroupId: item.parentGroupId, project: item.project, status: item.status, priority: item.priority, percentComplete: item.percentComplete, startAt: item.startAt, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+  evidenceRefs: teamGanttEvidence(account, item),
+  raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, parentGroupId: item.parentGroupId, project: teamGanttProject(item.project), status: item.status, priority: item.priority, percentComplete: item.percentComplete, startAt: item.startAt, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
 }));
 teamGanttAdapter.capabilities.credentialBackedSync = true;
 teamGanttAdapter.list = async account => (await teamGanttWorkSignalClient.fetchDelta(account, null)).records;

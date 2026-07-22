@@ -14,7 +14,11 @@ const parseDate = value => {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 };
 const boundedText = value => {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const text = String(value || '')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted email]')
+    .replace(/\bhttps?:\/\/\S+/gi, '[redacted url]')
+    .replace(/\s+/g, ' ')
+    .trim();
   return text ? text.slice(0, 240) : undefined;
 };
 const collection = response => Array.isArray(response?.data?.data) ? response.data.data : Array.isArray(response?.data) ? response.data : null;
@@ -77,6 +81,7 @@ class TeamGanttWorkSignalClient {
     return {
       companyId,
       timeout: clamp(process.env.SNEUP_TEAMGANTT_TIMEOUT_MS, 15000, 1000, 60000),
+      maxResponseBytes: clamp(process.env.SNEUP_TEAMGANTT_MAX_RESPONSE_BYTES, 2000000, 1024, 10000000),
       maxProjects: clamp(process.env.SNEUP_TEAMGANTT_MAX_PROJECTS, 100, 1, 500),
       maxTasks: clamp(process.env.SNEUP_TEAMGANTT_MAX_TASKS, 2500, 1, 10000),
       pageSize: clamp(process.env.SNEUP_TEAMGANTT_PAGE_SIZE, 100, 1, 100),
@@ -97,6 +102,8 @@ class TeamGanttWorkSignalClient {
       params,
       headers: { Accept: 'application/json', Authorization: `Bearer ${token}`, 'User-Agent': 'Sneup Digital Project Manager' },
       timeout: config.timeout,
+      maxContentLength: config.maxResponseBytes,
+      maxBodyLength: config.maxResponseBytes,
       maxRedirects: 0,
       proxy: false
     });
@@ -171,7 +178,7 @@ class TeamGanttWorkSignalClient {
         companyId: config.companyId,
         projects: projects.length,
         tasks: tasks.length,
-        contentPolicy: 'selected_company_project_and_task_metadata_only_no_descriptions_comments_checklists_resources_time_blocks_custom_fields_or_provider_writes'
+        contentPolicy: 'selected_company_project_and_task_metadata_only_with_redacted_titles_no_descriptions_comments_checklists_resources_time_blocks_custom_fields_urls_or_provider_writes'
       }
     };
   }
