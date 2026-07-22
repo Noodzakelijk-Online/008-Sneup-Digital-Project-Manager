@@ -50,6 +50,13 @@ const approvalSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
     index: true
+  },
+  expiresAt: {
+    type: Date,
+    required: function requireExpiryForApprovedDecision() {
+      return this.decision === 'approved';
+    },
+    index: true
   }
 }, {
   timestamps: true
@@ -57,5 +64,6 @@ const approvalSchema = new mongoose.Schema({
 
 approvalSchema.index({ recommendationId: 1, decidedAt: -1 });
 approvalSchema.index({ workspaceId: 1, recommendationId: 1, decidedAt: -1 });
+approvalSchema.index({ workspaceId: 1, recommendationId: 1, decision: 1, expiresAt: 1 });
 
 module.exports = mongoose.model('Approval', approvalSchema);

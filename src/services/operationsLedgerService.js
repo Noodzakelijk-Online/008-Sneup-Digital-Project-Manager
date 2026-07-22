@@ -25,6 +25,12 @@ const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 const HOURS = 60 * 60 * 1000;
 const DEFAULT_RECONCILIATION_WARNING_HOURS = 4;
 const DEFAULT_RECONCILIATION_CRITICAL_HOURS = 24;
+const DEFAULT_APPROVAL_TTL_HOURS = Object.freeze({
+  critical: 4,
+  high: 24,
+  medium: 72,
+  low: 168
+});
 const CHAT_RESPONSE_TYPES = new Set(['acknowledged', 'completed', 'blocked', 'needs_help']);
 const WORKER_RESPONSE_SOURCES = new Set(['trello_comment', 'slack', 'email', 'web_chat', 'api', 'manual', 'system']);
 
@@ -615,6 +621,7 @@ class OperationsLedgerService {
       throw error;
     }
 
+    const expiresAt = this.approvalExpiresAt(recommendation.riskLevel);
     const approval = await Approval.create({
       workspaceId: recommendation.workspaceId,
       recommendationId: recommendation._id,
@@ -625,11 +632,15 @@ class OperationsLedgerService {
       decision: 'approved',
       decidedBy: body.decidedBy || 'robert',
       decisionReason: body.decisionReason || '',
-      approvedPayloadSnapshot: recommendation.actionPayload
+      approvedPayloadSnapshot: recommendation.actionPayload,
+      expiresAt
     });
 
     recommendation.status = 'approved';
     recommendation.approvedAt = approval.decidedAt;
+    recommendation.approvalExpiresAt = approval.expiresAt;
+    recommendation.approvalExpiredAt = undefined;
+    recommendation.approvalExpiryReason = undefined;
     recommendation.actionPayload = approval.approvedPayloadSnapshot;
     await recommendation.save();
 
@@ -794,6 +805,10 @@ class OperationsLedgerService {
     await this.validateEditablePayloadTarget(recommendation, recommendation.actionPayload);
     recommendation.status = 'pending';
     recommendation.failureReason = undefined;
+    recommendation.approvedAt = undefined;
+    recommendation.approvalExpiresAt = undefined;
+    recommendation.approvalExpiredAt = undefined;
+    recommendation.approvalExpiryReason = undefined;
     await recommendation.save();
 
     await this.recordAudit({
@@ -890,6 +905,13 @@ class OperationsLedgerService {
 
     if (actionPolicy.requiresApproval && !isDeepStrictEqual(approval.approvedPayloadSnapshot || {}, recommendation.actionPayload || {})) {
       const error = new Error('The action payload changed after approval. Review and approve the current payload before execution.');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (actionPolicy.requiresApproval && !this.isApprovalCurrent(approval, recommendation)) {
+      await this.expireRecommendationApproval(recommendation, approval, options);
+      const error = new Error('Approval expired before execution. Review the current payload and approve again.');
       error.statusCode = 409;
       throw error;
     }
@@ -1008,11 +1030,15 @@ class OperationsLedgerService {
   }
 
   async claimApprovedRecommendationExecution(recommendation, options = {}) {
+    const query = {
+      _id: recommendation._id,
+      status: 'approved'
+    };
+    if (recommendation.approvalExpiresAt) {
+      query.approvalExpiresAt = { $gt: new Date() };
+    }
     const claimed = await Recommendation.findOneAndUpdate(
-      this.workspaceQuery(options, {
-        _id: recommendation._id,
-        status: 'approved'
-      }),
+      this.workspaceQuery(options, query),
       {
         $set: {
           status: 'executing'
@@ -1035,6 +1061,86 @@ class OperationsLedgerService {
     );
     error.statusCode = 409;
     throw error;
+  }
+
+  approvalTtlHours(riskLevel) {
+    const normalizedRisk = Object.hasOwn(DEFAULT_APPROVAL_TTL_HOURS, riskLevel) ? riskLevel : 'medium';
+    const envKey = `SNEUP_APPROVAL_TTL_${normalizedRisk.toUpperCase()}_HOURS`;
+    return boundedHours(process.env[envKey], DEFAULT_APPROVAL_TTL_HOURS[normalizedRisk], 1, 168);
+  }
+
+  approvalExpiresAt(riskLevel, now = new Date()) {
+    return new Date(now.getTime() + this.approvalTtlHours(riskLevel) * HOURS);
+  }
+
+  isApprovalCurrent(approval, recommendation, now = new Date()) {
+    if (!approval?.expiresAt || !recommendation?.approvalExpiresAt) return false;
+    const approvalExpiry = new Date(approval.expiresAt);
+    const recommendationExpiry = new Date(recommendation.approvalExpiresAt);
+    return !Number.isNaN(approvalExpiry.getTime())
+      && !Number.isNaN(recommendationExpiry.getTime())
+      && approvalExpiry.getTime() === recommendationExpiry.getTime()
+      && approvalExpiry.getTime() > now.getTime();
+  }
+
+  async expireRecommendationApproval(recommendation, approval, options = {}) {
+    const now = new Date();
+    const expiryReason = 'Approval expired before execution; reapproval is required.';
+    const expiredRecommendation = await Recommendation.findOneAndUpdate(
+      this.workspaceQuery(options, {
+        _id: recommendation._id,
+        status: 'approved',
+        approvalExpiresAt: recommendation.approvalExpiresAt
+      }),
+      {
+        $set: {
+          status: 'pending',
+          approvalExpiredAt: now,
+          approvalExpiryReason: expiryReason
+        },
+        $unset: {
+          approvedAt: 1,
+          approvalExpiresAt: 1
+        }
+      },
+      { new: true }
+    );
+
+    if (!expiredRecommendation) return null;
+
+    await DecisionQueueItem.create({
+      workspaceId: expiredRecommendation.workspaceId,
+      recommendationId: expiredRecommendation._id,
+      ownerType: expiredRecommendation.ownerType || 'robert',
+      boardId: expiredRecommendation.boardId,
+      cardId: expiredRecommendation.cardId,
+      title: expiredRecommendation.title,
+      question: this.buildDecisionQuestion(expiredRecommendation),
+      recommendedAnswer: 'review',
+      options: ['approve', 'reject', 'change'],
+      riskLevel: expiredRecommendation.riskLevel,
+      reason: expiryReason,
+      sourceEvidence: expiredRecommendation.sourceEvidence || [],
+      dueAt: this.defaultDecisionDueAt(expiredRecommendation.riskLevel)
+    });
+
+    await this.recordAudit({
+      entityType: 'recommendation',
+      entityId: expiredRecommendation._id,
+      action: 'recommendation_approval_expired',
+      actor: options.actor || 'sneup',
+      source: 'approval',
+      riskLevel: expiredRecommendation.riskLevel,
+      approvalId: approval?._id,
+      recommendationId: expiredRecommendation._id,
+      beforeState: {
+        status: recommendation.status,
+        approvalExpiresAt: recommendation.approvalExpiresAt
+      },
+      afterState: expiredRecommendation.toObject ? expiredRecommendation.toObject() : expiredRecommendation
+    });
+
+    return expiredRecommendation;
   }
 
   async performTrelloAction(recommendation) {

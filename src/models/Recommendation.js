@@ -94,6 +94,12 @@ const recommendationSchema = new mongoose.Schema({
     index: true
   },
   approvedAt: Date,
+  approvalExpiresAt: {
+    type: Date,
+    index: true
+  },
+  approvalExpiredAt: Date,
+  approvalExpiryReason: String,
   rejectedAt: Date,
   executedAt: Date,
   failureReason: String
@@ -106,5 +112,6 @@ recommendationSchema.index({ boardId: 1, status: 1, createdAt: -1 });
 recommendationSchema.index({ cardId: 1, createdAt: -1 });
 recommendationSchema.index({ workspaceId: 1, status: 1, riskLevel: -1, createdAt: -1 });
 recommendationSchema.index({ workspaceId: 1, boardId: 1, status: 1, createdAt: -1 });
+recommendationSchema.index({ workspaceId: 1, status: 1, approvalExpiresAt: 1 });
 
 module.exports = mongoose.model('Recommendation', recommendationSchema);
