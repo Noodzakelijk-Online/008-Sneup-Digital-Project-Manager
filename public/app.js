@@ -1079,7 +1079,7 @@ function renderJobDashboard() {
     )
   ).slice(0, 2);
   const problemJobs = health
-    .filter(job => job.status !== 'healthy')
+    .filter(job => ['failed', 'stale', 'paused'].includes(job.status))
     .slice(0, observabilityEvidenceJobs.length > 0 ? 8 - observabilityEvidenceJobs.length : 8);
   const displayJobs = problemJobs.length > 0
     ? [...problemJobs, ...observabilityEvidenceJobs]
@@ -1097,6 +1097,7 @@ function renderJobDashboard() {
         <span>${summary.pausedJobs || 0} paused</span>
         <span>${summary.runningJobs || 0} running</span>
         <span>${summary.failedRuns || 0} failed runs</span>
+        ${summary.unobservedJobs ? `<span>${summary.unobservedJobs} awaiting first run</span>` : ''}
       </div>
     </div>
     ${renderResponseTiming()}
@@ -1286,6 +1287,8 @@ function renderJobHealthItem(job) {
       ? 'high'
       : job.status === 'paused'
         ? 'review'
+        : job.status === 'unobserved'
+          ? 'review'
         : 'healthy';
   const jobName = escapeHtml(job.jobName);
   const controlsDisabled = state.jobDashboard?.mode !== 'live';
@@ -1324,15 +1327,19 @@ function renderJobHealthItem(job) {
       : 'new failures').join(', ');
     return `${provider.provider}: ${labels}`;
   });
+  const unobservedDetail = state.jobDashboard?.mode === 'demo'
+    ? 'No demo run is retained for this job. Sneup will start monitoring it after the live workspace records its first run.'
+    : 'No run has been recorded for this workspace yet. Sneup will start monitoring freshness after the first scheduled or manual run.';
+  const statusLabel = job.unobserved ? 'awaiting first run' : job.status;
   return `
     <div class="item">
       <div class="item-title">
         <strong>${escapeHtml(job.label || job.jobName)}</strong>
-        <span class="pill ${statusClass}">${escapeHtml(job.status)}</span>
+        <span class="pill ${statusClass}">${escapeHtml(statusLabel)}</span>
       </div>
       <div class="meta">
         <span>${escapeHtml(job.jobType || 'job')}</span>
-        <span>Last run: ${formatDate(job.lastRunAt)}</span>
+        <span>Last run: ${job.unobserved ? 'Awaiting first run' : formatDate(job.lastRunAt)}</span>
         <span>${Math.round((job.lastDurationMs || 0) / 1000)}s</span>
         <span>${job.processedCount || 0} processed</span>
       </div>
@@ -1343,6 +1350,7 @@ function renderJobHealthItem(job) {
       ${signalWriteBatchCount ? `<div class="meta"><span>${signalWriteBatchCount} signal write ${signalWriteBatchCount === 1 ? 'batch' : 'batches'}</span><span>up to ${signalWriteBatchSize || 1} signals each</span></div>` : ''}
       ${freshnessProviders || staleDependencies || freshnessFailures ? `<div class="meta"><span>Graph freshness: ${freshnessProviders} providers checked</span><span>${staleDependencies} stale edges marked</span>${freshnessHorizon ? `<span>${freshnessHorizon}</span>` : ''}${freshnessFailures ? `<span>${freshnessFailures} freshness checks failed</span>` : ''}</div>` : ''}
       ${syncRegressionSignals ? `<div class="meta"><span>Sync regression watch: ${syncRegressionSignals} ${syncRegressionSignals === 1 ? 'signal' : 'signals'} across ${syncRegressionProviders.length} ${syncRegressionProviders.length === 1 ? 'provider' : 'providers'}</span><span>${escapeHtml(syncRegressionDetails.join(' | '))}</span></div>` : ''}
+      ${job.unobserved ? `<div class="meta">${unobservedDetail}</div>` : ''}
       ${job.pausedReason ? `<div class="meta">${escapeHtml(job.pausedReason)}</div>` : ''}
       ${job.lastError ? `<div class="meta">${escapeHtml(job.lastError)}</div>` : ''}
       <div class="item-actions">

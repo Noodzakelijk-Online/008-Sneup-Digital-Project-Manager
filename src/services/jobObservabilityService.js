@@ -248,10 +248,13 @@ class JobObservabilityService {
       limit: filters.limit || 250
     });
     const controls = await this.listControls({ workspaceId: filters.workspaceId });
-    return this.buildDashboard(runs, new Date(), controls);
+    return this.buildDashboard(runs, new Date(), controls, {
+      mode: this.isDatabaseReady() ? 'live' : 'demo'
+    });
   }
 
-  buildDashboard(runs = [], now = new Date(), controls = []) {
+  buildDashboard(runs = [], now = new Date(), controls = [], options = {}) {
+    const mode = options.mode || 'live';
     const latestByJob = new Map();
     for (const run of runs) {
       if (!latestByJob.has(run.jobName)) {
@@ -267,15 +270,18 @@ class JobObservabilityService {
       const lastSuccess = runs.find(run => run.jobName === config.jobName && run.status === 'succeeded');
       const control = controlsByJob.get(config.jobName);
       const paused = control?.status === 'paused';
-      const stale = lastSuccess
+      const unobserved = !latest && !lastSuccess;
+      const stale = !unobserved && (lastSuccess
         ? (now - new Date(lastSuccess.finishedAt || lastSuccess.startedAt)) > config.staleAfterMinutes * 60 * 1000
-        : true;
+        : true);
       const status = paused
         ? 'paused'
         : latest?.status === 'failed'
         ? 'failed'
         : stale
           ? 'stale'
+          : unobserved
+            ? 'unobserved'
           : 'healthy';
 
       return {
@@ -284,6 +290,7 @@ class JobObservabilityService {
         label: config.label,
         status,
         paused,
+        unobserved,
         manualTriggerAllowed: Boolean(config.manualTriggerAllowed),
         stale,
         staleAfterMinutes: config.staleAfterMinutes,
@@ -311,12 +318,13 @@ class JobObservabilityService {
     const staleJobs = health.filter(item => item.stale);
 
     return {
-      mode: this.isDatabaseReady() ? 'live' : 'demo',
+      mode,
       generatedAt: now,
       summary: {
         trackedJobs: trackedJobs.length,
         healthyJobs: health.filter(item => item.status === 'healthy').length,
         staleJobs: staleJobs.length,
+        unobservedJobs: health.filter(item => item.unobserved).length,
         failedJobs: health.filter(item => item.status === 'failed').length,
         pausedJobs: health.filter(item => item.status === 'paused').length,
         runningJobs: runningRuns.length,

@@ -10862,6 +10862,15 @@ describe('job observability', () => {
     });
   });
 
+  test('keeps jobs without recorded evidence out of stale alerts', () => {
+    const jobObservabilityService = require('../src/services/jobObservabilityService');
+    const dashboard = jobObservabilityService.buildDashboard([], new Date('2026-06-29T08:00:00Z'));
+    const fullSync = dashboard.health.find(job => job.jobName === 'trello.full_sync');
+
+    expect(fullSync).toMatchObject({ status: 'unobserved', stale: false, unobserved: true });
+    expect(dashboard.summary).toMatchObject({ staleJobs: 0, unobservedJobs: dashboard.summary.trackedJobs });
+  });
+
   test('marks paused jobs as operator controlled and trigger-aware', () => {
     const jobObservabilityService = require('../src/services/jobObservabilityService');
     const now = new Date('2026-06-29T08:00:00Z');
