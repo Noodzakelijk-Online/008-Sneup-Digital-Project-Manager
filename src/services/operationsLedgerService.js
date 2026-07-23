@@ -616,10 +616,11 @@ class OperationsLedgerService {
     if (filters.cardId) query.cardId = filters.cardId;
     if (filters.ownerType) query.ownerType = filters.ownerType;
 
-    return Recommendation.find(query)
+    const recommendations = Recommendation.find(query)
       .sort({ riskLevel: -1, createdAt: -1 })
       .populate('boardId cardId memberId interventionId')
       .limit(filters.limit || 100);
+    return filters.lean === true ? recommendations.lean() : recommendations;
   }
 
   async getRecommendation(recommendationId, filters = {}) {
@@ -1335,10 +1336,11 @@ class OperationsLedgerService {
     if (filters.boardId) query.boardId = filters.boardId;
     if (filters.cardId) query.cardId = filters.cardId;
 
-    return DecisionQueueItem.find(query)
+    const decisions = DecisionQueueItem.find(query)
       .sort({ riskLevel: -1, dueAt: 1, createdAt: 1 })
       .populate('recommendationId boardId cardId')
       .limit(filters.limit || 100);
+    return filters.lean === true ? decisions.lean() : decisions;
   }
 
   async resolveDecisionQueueItem(itemId, body = {}) {
@@ -1524,10 +1526,11 @@ class OperationsLedgerService {
     if (filters.boardId) query.boardId = filters.boardId;
     if (filters.cardId) query.cardId = filters.cardId;
 
-    return TrelloActionAttempt.find(query)
+    const actions = TrelloActionAttempt.find(query)
       .sort({ createdAt: -1 })
       .populate('recommendationId interventionId approvalId boardId cardId')
       .limit(filters.limit || 100);
+    return filters.lean === true ? actions.lean() : actions;
   }
 
   async listTrelloActionsNeedingReconciliation(filters = {}) {
@@ -1535,10 +1538,11 @@ class OperationsLedgerService {
     const query = this.workspaceQuery(filters, {
       status: { $in: ['in_progress', 'succeeded'] }
     });
-    const actions = await TrelloActionAttempt.find(query)
+    const actionQuery = TrelloActionAttempt.find(query)
       .sort({ startedAt: 1, createdAt: 1 })
       .populate('recommendationId interventionId approvalId boardId cardId')
       .limit(filters.limit || 50);
+    const actions = await (filters.lean === true ? actionQuery.lean() : actionQuery);
 
     return actions.filter((attempt) => {
       const recommendation = attempt.recommendationId;
@@ -1767,10 +1771,11 @@ class OperationsLedgerService {
     if (filters.cardId) query.cardId = filters.cardId;
     if (filters.recommendationId) query.recommendationId = filters.recommendationId;
 
-    return OutcomeRecord.find(query)
+    const outcomes = OutcomeRecord.find(query)
       .sort({ evaluatedAt: -1, createdAt: -1 })
       .populate('recommendationId interventionId actionAttemptId boardId cardId')
       .limit(filters.limit || 100);
+    return filters.lean === true ? outcomes.lean() : outcomes;
   }
 
   async recordRecommendationLearningFeedback(recommendation, feedback = {}) {
@@ -2208,9 +2213,10 @@ class OperationsLedgerService {
     if (filters.boardId) query.boardId = filters.boardId;
     if (filters.cardId) query.cardId = filters.cardId;
 
-    return AuditEvent.find(query)
+    const auditEvents = AuditEvent.find(query)
       .sort({ createdAt: -1 })
       .limit(filters.limit || 100);
+    return filters.lean === true ? auditEvents.lean() : auditEvents;
   }
 
   async getBoardLedger(boardId, filters = {}) {
@@ -2266,7 +2272,7 @@ class OperationsLedgerService {
     const ledgerLimit = boundedInteger(filters.limit, 50, 1, 250);
     const healthLimit = boundedInteger(filters.healthLimit, 20, 1, 100);
     const notificationLimit = boundedInteger(filters.notificationLimit, 100, 1, 250);
-    const queryFilters = { ...filters, workspaceId, limit: ledgerLimit };
+    const queryFilters = { ...filters, workspaceId, limit: ledgerLimit, lean: true };
     const notificationService = require('./notificationService');
 
     // Keep each section isolated: a slow or unavailable collection must not hide the
@@ -2282,14 +2288,16 @@ class OperationsLedgerService {
       findings: () => CardFinding.find(this.workspaceQuery(queryFilters, { status: 'open' }))
         .sort({ severity: -1, signalScore: -1, lastObservedAt: -1 })
         .populate('boardId cardId memberId')
-        .limit(ledgerLimit),
+        .limit(ledgerLimit)
+        .lean(),
       healthSnapshots: () => BoardHealthSnapshot.find(this.workspaceQuery(queryFilters))
         .sort({ generatedAt: -1 })
         .populate('boardId')
-        .limit(healthLimit),
+        .limit(healthLimit)
+        .lean(),
       reconciliationHealth: () => this.getTrelloActionReconciliationHealth({ ...queryFilters, limit: notificationLimit }),
-      notificationPolicies: () => notificationService.listPolicies({ workspaceId, limit: notificationLimit }),
-      notificationDeliveries: () => notificationService.listDeliveries({ workspaceId, limit: notificationLimit })
+      notificationPolicies: () => notificationService.listPolicies({ workspaceId, limit: notificationLimit, lean: true }),
+      notificationDeliveries: () => notificationService.listDeliveries({ workspaceId, limit: notificationLimit, lean: true })
     };
     const results = await Promise.all(Object.entries(sections).map(async ([section, load]) => {
       try {
@@ -2444,10 +2452,11 @@ class OperationsLedgerService {
       query.dueAt = { $lte: new Date() };
     }
 
-    return FollowUpPlan.find(query)
+    const followUps = FollowUpPlan.find(query)
       .sort({ dueAt: 1 })
       .populate('recommendationId interventionId boardId cardId memberId')
       .limit(filters.limit || 100);
+    return filters.lean === true ? followUps.lean() : followUps;
   }
 
   async processDueFollowUps(filters = {}) {

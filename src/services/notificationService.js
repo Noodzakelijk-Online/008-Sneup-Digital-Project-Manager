@@ -219,10 +219,11 @@ class NotificationService {
 
   async listPolicies(options = {}) {
     this.requireDatabase();
-    const policies = await NotificationPolicy.find({ workspaceId: this.resolveWorkspaceId(options.workspaceId) })
+    const policyQuery = NotificationPolicy.find({ workspaceId: this.resolveWorkspaceId(options.workspaceId) })
       .select('+destinationEncrypted')
       .sort({ status: 1, updatedAt: -1 })
       .limit(Math.min(Number(options.limit) || MAX_POLICY_LIMIT, MAX_POLICY_LIMIT));
+    const policies = await (options.lean === true ? policyQuery.lean() : policyQuery);
     return policies.map(policy => this.sanitizePolicy(policy));
   }
 
@@ -231,9 +232,10 @@ class NotificationService {
     const query = { workspaceId: this.resolveWorkspaceId(options.workspaceId) };
     if (options.status) query.status = options.status;
     if (options.policyId) query.policyId = options.policyId;
-    const deliveries = await NotificationDelivery.find(query)
+    const deliveryQuery = NotificationDelivery.find(query)
       .sort({ createdAt: -1 })
       .limit(Math.min(Number(options.limit) || MAX_DELIVERY_LIMIT, MAX_DELIVERY_LIMIT));
+    const deliveries = await (options.lean === true ? deliveryQuery.lean() : deliveryQuery);
     return deliveries.map(delivery => this.sanitizeDelivery(delivery));
   }
 

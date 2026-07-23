@@ -9,11 +9,13 @@ const queryResult = (items) => {
   const query = {
     sort: jest.fn(),
     populate: jest.fn(),
-    limit: jest.fn()
+    limit: jest.fn(),
+    lean: jest.fn()
   };
   query.sort.mockReturnValue(query);
   query.populate.mockReturnValue(query);
-  query.limit.mockResolvedValue(items);
+  query.limit.mockReturnValue(query);
+  query.lean.mockResolvedValue(items);
   return query;
 };
 
@@ -57,9 +59,11 @@ describe('workspace operations ledger', () => {
       notificationDeliveries: [{ id: 'delivery-1' }],
       errors: []
     });
-    expect(operationsLedgerService.listDecisionQueue).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), status: 'open', limit: 40 }));
-    expect(operationsLedgerService.listFollowUps).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), dueOnly: true, limit: 40 }));
-    expect(notificationService.listPolicies).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), limit: 80 }));
+    expect(operationsLedgerService.listDecisionQueue).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), status: 'open', limit: 40, lean: true }));
+    expect(operationsLedgerService.listFollowUps).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), dueOnly: true, limit: 40, lean: true }));
+    expect(notificationService.listPolicies).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), limit: 80, lean: true }));
+    expect(CardFinding.find.mock.results[0].value.lean).toHaveBeenCalledTimes(1);
+    expect(BoardHealthSnapshot.find.mock.results[0].value.lean).toHaveBeenCalledTimes(1);
   });
 
   test('keeps other evidence available when one section cannot be read', async () => {
