@@ -14,6 +14,25 @@ const {
   normalizeWorkspaceObjectId
 } = require('./workspaceScopeService');
 
+const clamp = (value, fallback, minimum, maximum) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+};
+
+const mapWithConcurrency = async (items, concurrency, worker) => {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length || 1);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
+  }));
+  return results;
+};
+
 class ConnectorSyncService {
   constructor() {
     this.job = null;
@@ -95,6 +114,15 @@ class ConnectorSyncService {
       connectorId: { $in: connectorIds }
     }).sort({ updatedAt: 1 });
 
+    const providerQueues = this.groupAccountsByProvider(accounts);
+    const concurrency = this.getAccountSyncConcurrency(options.concurrency);
+    const outcomes = (await mapWithConcurrency(providerQueues, concurrency, async ({ connectorId, accounts: providerAccounts }) => {
+      const results = [];
+      // Keep each provider serial so its pacing state and retry behavior remain valid.
+      for (const account of providerAccounts) results.push(await this.syncConnectedAccount(account, options));
+      return { connectorId, results };
+    })).flatMap(item => item.results);
+
     let successCount = 0;
     let failureCount = 0;
     let signalCount = 0;
@@ -103,23 +131,18 @@ class ConnectorSyncService {
     const providerStats = {};
     const successfulProviders = new Set();
 
-    for (const account of accounts) {
-      try {
-        const result = await this.syncAccount(account, {
-          ...options,
-          deferDependencyFreshness: true
-        });
+    for (const outcome of outcomes) {
+      if (outcome.ok) {
+        const result = outcome.result;
         successCount += 1;
         signalCount += result.signalCount;
         retryCount += result.retryCount || 0;
         rateLimitWaitMs += result.rateLimitWaitMs || 0;
         successfulProviders.add(result.connectorId);
         this.recordProviderStats(providerStats, result.connectorId, result);
-      } catch (error) {
+      } else {
+        const { account, error } = outcome;
         failureCount += 1;
-        account.status = 'failed';
-        account.lastError = this.safeErrorMessage(error);
-        await account.save();
         const policy = error.connectorSyncPolicy || {};
         retryCount += policy.retryCount || 0;
         rateLimitWaitMs += policy.rateLimitWaitMs || 0;
@@ -141,12 +164,47 @@ class ConnectorSyncService {
       metadata: {
         signalCount,
         adapterCount: connectorIds.length,
+        providerQueueCount: providerQueues.length,
+        concurrency,
         retryCount,
         rateLimitWaitMs,
         providerStats,
         dependencyFreshness
       }
     };
+  }
+
+  getAccountSyncConcurrency(value = process.env.SNEUP_CONNECTOR_SYNC_CONCURRENCY) {
+    return clamp(value, 3, 1, 8);
+  }
+
+  groupAccountsByProvider(accounts = []) {
+    const queues = new Map();
+    for (const account of accounts) {
+      const connectorId = String(account?.connectorId || 'unknown');
+      const queue = queues.get(connectorId) || [];
+      queue.push(account);
+      queues.set(connectorId, queue);
+    }
+    return [...queues.entries()].map(([connectorId, providerAccounts]) => ({ connectorId, accounts: providerAccounts }));
+  }
+
+  async syncConnectedAccount(account, options = {}) {
+    try {
+      return {
+        ok: true,
+        result: await this.syncAccount(account, {
+          ...options,
+          deferDependencyFreshness: true
+        })
+      };
+    } catch (error) {
+      account.status = 'failed';
+      account.lastError = this.safeErrorMessage(error);
+      await account.save();
+      logger.error(`Failed to sync connector account ${account._id}: ${this.safeErrorMessage(error)}`);
+      return { ok: false, account, error };
+    }
   }
 
   async syncAccount(accountOrId, options = {}) {
@@ -282,4 +340,6 @@ class ConnectorSyncService {
   }
 }
 
-module.exports = new ConnectorSyncService();
+const connectorSyncService = new ConnectorSyncService();
+module.exports = connectorSyncService;
+module.exports.ConnectorSyncService = ConnectorSyncService;
