@@ -56,6 +56,34 @@ const parseTrelloActivityAt = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const uniqueMemberIds = (values = []) => [...new Set(values
+  .map(value => String(value?._id || value || ''))
+  .filter(Boolean))];
+
+const reconcileCardMemberAssignments = async ({ cardId, workspaceId, previousMemberIds, nextMemberIds }) => {
+  const previous = uniqueMemberIds(previousMemberIds);
+  const next = uniqueMemberIds(nextMemberIds);
+  const previousSet = new Set(previous);
+  const nextSet = new Set(next);
+  const addedMemberIds = next.filter(memberId => !previousSet.has(memberId));
+  const removedMemberIds = previous.filter(memberId => !nextSet.has(memberId));
+
+  if (addedMemberIds.length > 0) {
+    await Member.updateMany(
+      { _id: { $in: addedMemberIds }, workspaceId },
+      { $addToSet: { assignedCards: cardId } }
+    );
+  }
+  if (removedMemberIds.length > 0) {
+    await Member.updateMany(
+      { _id: { $in: removedMemberIds }, workspaceId },
+      { $pull: { assignedCards: cardId } }
+    );
+  }
+
+  return { addedMemberIds, removedMemberIds };
+};
+
 /**
  * Trello Synchronization Service
  * Handles syncing data from Trello to local database
@@ -472,22 +500,23 @@ const syncCards = async (board) => {
         }));
       }
       
-      // Process card members
+      // Reconcile the denormalized workload index with the card's current Trello members.
+      const previousCardMemberIds = card.members || [];
       const cardMemberIds = [];
       if (trelloCard.idMembers && trelloCard.idMembers.length > 0) {
         for (const trelloMemberId of trelloCard.idMembers) {
           const member = membersByTrelloId[trelloMemberId];
           if (member) {
             cardMemberIds.push(member._id);
-            
-            // Atomic membership updates avoid lost assignments when two boards share a worker.
-            await Member.updateOne(
-              { _id: member._id, workspaceId: board.workspaceId },
-              { $addToSet: { assignedCards: card._id } }
-            );
           }
         }
       }
+      await reconcileCardMemberAssignments({
+        cardId: card._id,
+        workspaceId: board.workspaceId,
+        previousMemberIds: previousCardMemberIds,
+        nextMemberIds: cardMemberIds
+      });
       card.members = cardMemberIds;
       
       // Preserve Trello's activity evidence. A sync timestamp is not card activity.
@@ -515,6 +544,13 @@ const syncCards = async (board) => {
     const dbCards = await Card.find({ boardId: board._id, workspaceId: board.workspaceId });
     for (const dbCard of dbCards) {
       if (!processedCardIds.includes(dbCard.trelloId)) {
+        await reconcileCardMemberAssignments({
+          cardId: dbCard._id,
+          workspaceId: board.workspaceId,
+          previousMemberIds: dbCard.members,
+          nextMemberIds: []
+        });
+        dbCard.members = [];
         dbCard.closed = true;
         dbCard.lastSync = new Date();
         await dbCard.save();
@@ -728,5 +764,6 @@ module.exports = {
   getBoardSyncConcurrency,
   mapWithConcurrency,
   runSerialized,
-  parseTrelloActivityAt
+  parseTrelloActivityAt,
+  reconcileCardMemberAssignments
 };

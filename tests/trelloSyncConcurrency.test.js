@@ -3,6 +3,7 @@ const trelloClient = require('../src/services/trelloClient');
 const {
   getBoardSyncConcurrency,
   parseTrelloActivityAt,
+  reconcileCardMemberAssignments,
   runSerialized,
   syncAllBoards,
   syncBoard,
@@ -46,6 +47,29 @@ describe('Trello board sync concurrency', () => {
     expect(parseTrelloActivityAt('2026-07-23T12:34:56.000Z')).toEqual(new Date('2026-07-23T12:34:56.000Z'));
     expect(parseTrelloActivityAt('not-a-date')).toBeNull();
     expect(parseTrelloActivityAt()).toBeNull();
+  });
+
+  test('reconciles each card membership into the denormalized worker workload index', async () => {
+    const updateMany = jest.spyOn(require('../src/models/Member'), 'updateMany').mockResolvedValue({ acknowledged: true });
+
+    await expect(reconcileCardMemberAssignments({
+      cardId: 'card-1',
+      workspaceId,
+      previousMemberIds: ['member-1', 'member-2'],
+      nextMemberIds: ['member-2', 'member-3']
+    })).resolves.toEqual({
+      addedMemberIds: ['member-3'],
+      removedMemberIds: ['member-1']
+    });
+
+    expect(updateMany).toHaveBeenNthCalledWith(1,
+      { _id: { $in: ['member-3'] }, workspaceId },
+      { $addToSet: { assignedCards: 'card-1' } }
+    );
+    expect(updateMany).toHaveBeenNthCalledWith(2,
+      { _id: { $in: ['member-1'] }, workspaceId },
+      { $pull: { assignedCards: 'card-1' } }
+    );
   });
 
   test('serializes writes for the same shared record and releases its queue afterward', async () => {
