@@ -267,6 +267,8 @@ Backlog uses a project-member API key and a public `*.backlog.com` or `*.backlog
 
 Freedcamp uses an account API key in the `X-API-KEY` header and reads bounded project, task, and milestone metadata with `GET`. It validates the provider's pagination signal, excludes descriptions, comments, files, custom fields, and tags, and never makes provider writes.
 
+ProofHub accepts one public HTTPS `*.proofhub.com` tenant plus an API key, uses 500 ms pacing below the documented account limit, and reads bounded public project, task-list, and task metadata with `GET`. It excludes descriptions, comments, files, custom fields, people, provider URLs, discussions, timesheets, approvals, and provider writes.
+
 Zendesk uses an OAuth access token rather than a retiring static API token. It reads the bounded, cursor-based incremental ticket export with `GET`, excludes deleted tickets and all ticket body, comment, requester, assignee, collaborator, tag, custom-field, organization, SLA, and macro content, retains only small ticket metadata plus problem-ticket dependency identifiers, and never makes provider writes.
 
 MeisterTask uses a personal access token with bearer authorization and reads bounded active project and section metadata plus task metadata with `GET`. It pins pagination to ascending IDs, excludes notes, comments, checklists, attachments, labels, tokens, and tracked-time detail, and never makes provider writes.

@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'motion',
   'wrike', 'opsgenie',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
 ];
 // Resolve each provider client only when its adapter performs a sync.
 const lazyClient = (modulePath) => new Proxy(Object.create(null), {
@@ -66,6 +66,7 @@ const youTrackWorkSignalClient = lazyClient('./youTrackWorkSignalClient');
 const taigaWorkSignalClient = lazyClient('./taigaWorkSignalClient');
 const backlogWorkSignalClient = lazyClient('./backlogWorkSignalClient');
 const freedcampWorkSignalClient = lazyClient('./freedcampWorkSignalClient');
+const proofHubWorkSignalClient = lazyClient('./proofHubWorkSignalClient');
 const meisterTaskWorkSignalClient = lazyClient('./meisterTaskWorkSignalClient');
 const ahaWorkSignalClient = lazyClient('./ahaWorkSignalClient');
 const productboardWorkSignalClient = lazyClient('./productboardWorkSignalClient');
@@ -1010,6 +1011,12 @@ freedcampAdapter.capabilities.credentialBackedSync = true;
 freedcampAdapter.list = async account => (await freedcampWorkSignalClient.fetchDelta(account, null)).records;
 freedcampAdapter.fetchDelta = (account, cursor) => freedcampWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('freedcamp', freedcampAdapter);
+
+const proofHubAdapter = buildAdapter('proofhub', 'ProofHub project, task-list, and task metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'ProofHub work item'), description: '', status: statusFromText(item.status), priority: 'unknown', url: undefined, owners: [], labels: compact(['proofhub', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.taskListId ? `task_list:${item.taskListId}` : undefined, item.status]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'ProofHub metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskListId: item.taskListId, taskId: item.taskId, status: item.status, dueAt: item.dueAt, completedAt: item.completedAt, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
+proofHubAdapter.capabilities.credentialBackedSync = true;
+proofHubAdapter.list = async account => (await proofHubWorkSignalClient.fetchDelta(account, null)).records;
+proofHubAdapter.fetchDelta = (account, cursor) => proofHubWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('proofhub', proofHubAdapter);
 
 const meisterTaskAdapter = buildAdapter('meistertask', 'MeisterTask project, section, and task metadata adapter', (account, item) => ({ externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'MeisterTask work item'), description: '', status: statusFromText(item.status), priority: 'unknown', owners: [], labels: compact(['meistertask', item.sourceType, item.project?.name, item.section?.name, item.status]), dueAt: pick(item.dueAt), providerCreatedAt: pick(item.createdAt), providerUpdatedAt: pick(item.updatedAt, item.createdAt), evidenceRefs: baseEvidence(account, item, 'MeisterTask metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, sectionId: item.sectionId, taskId: item.taskId, project: item.project, section: item.section, status: item.status, assigneeId: item.assigneeId, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt } }));
 meisterTaskAdapter.capabilities.credentialBackedSync = true;

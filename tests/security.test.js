@@ -1815,7 +1815,7 @@ describe('connector registry', () => {
     expect(readyOnly.connectors.every(connector => connector.syncReadiness.status === 'ready')).toBe(true);
 
     const catalogOnly = accountConnectorService.getCatalog({ readiness: 'catalog-only' });
-    expect(catalogOnly.connectors.map(connector => connector.id)).toContain('proofhub');
+    expect(catalogOnly.connectors.map(connector => connector.id)).toContain('evernote');
     expect(catalogOnly.connectors.every(connector => connector.syncReadiness.status === 'catalog_only')).toBe(true);
     expect(catalogOnly.total).toBe(result.syncReadiness.catalogOnly);
   });
@@ -1867,11 +1867,11 @@ describe('connector registry', () => {
       readOnly: true
     });
     expect(proofhub.syncReadiness).toEqual({
-      status: 'catalog_only',
-      accountConnectionAvailable: false,
+      status: 'ready',
+      accountConnectionAvailable: true,
       readOnly: true
     });
-    expect(() => accountConnectorService.beginConnection('proofhub')).toThrow(/secure work-signal sync is not available yet/i);
+    expect(accountConnectorService.beginConnection('proofhub')).toMatchObject({ authType: 'api_key' });
   });
 
   test('keeps connector catalog readiness available when scheduled sync loads first', () => {
