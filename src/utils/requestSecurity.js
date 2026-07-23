@@ -87,14 +87,17 @@ const getPermissionsForRoles = (roles = []) => unique(
 
 const hasPermission = (auth, permission) => {
   if (!auth) return false;
-  const permissions = new Set([
-    ...(auth.permissions || []),
-    ...getPermissionsForRoles(auth.roles || [])
-  ]);
+  const permissions = auth.permissionsScoped
+    ? new Set(auth.permissions || [])
+    : new Set([
+      ...(auth.permissions || []),
+      ...getPermissionsForRoles(auth.roles || [])
+    ]);
   return permissions.has(permission);
 };
 
 const canOverrideWorkspace = (req, overrides = {}) => {
+  if (overrides.allowWorkspaceOverride === false) return false;
   const actorType = overrides.actorType || 'service';
   const roles = overrides.roles || ['service'];
   return isLocalRequest(req) || actorType === 'service' || roles.includes('owner');
@@ -119,6 +122,7 @@ const buildAuthContext = (req, overrides = {}) => {
       : overrides.workspaceName || getDefaultWorkspaceName(),
     roles,
     permissions: overrides.permissions || getPermissionsForRoles(roles),
+    permissionsScoped: Boolean(overrides.permissionsScoped),
     tokenId: overrides.tokenId || null,
     userId: overrides.userId || null,
     localRequest: isLocalRequest(req),
@@ -196,6 +200,7 @@ const resolveDatabaseApiToken = async (providedKey, now = new Date()) => {
 
   const workspace = candidate.workspaceId;
   const role = user?.role || candidate.role || 'service';
+  const permissionsScoped = Array.isArray(candidate.scopes) && candidate.scopes.length > 0;
 
   return {
     token: candidate,
@@ -209,7 +214,9 @@ const resolveDatabaseApiToken = async (providedKey, now = new Date()) => {
       workspaceId: asIdString(workspace) || getDefaultWorkspaceId(),
       workspaceName: workspace?.name || getDefaultWorkspaceName(),
       roles: [role],
-      permissions: candidate.scopes?.length ? candidate.scopes : undefined,
+      permissions: permissionsScoped ? candidate.scopes : undefined,
+      permissionsScoped,
+      allowWorkspaceOverride: false,
       tokenId: asIdString(candidate),
       userId: asIdString(user)
     }
@@ -259,6 +266,7 @@ const resolveDatabaseSessionToken = async (providedKey, now = new Date()) => {
       workspaceId: asIdString(workspace),
       workspaceName: workspace.name || getDefaultWorkspaceName(),
       roles: [role],
+      allowWorkspaceOverride: false,
       tokenId: asIdString(candidate),
       userId: asIdString(user)
     }

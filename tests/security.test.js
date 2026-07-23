@@ -357,6 +357,67 @@ describe('request security boundaries', () => {
     expect(candidate.save).toHaveBeenCalledTimes(1);
   });
 
+  test('restricts explicitly scoped database tokens to their declared permissions and workspace', async () => {
+    jest.resetModules();
+
+    const candidate = {
+      _id: 'token-read-only',
+      name: 'Read-only integration',
+      role: 'service',
+      scopes: ['api:read'],
+      workspaceId: { _id: 'workspace-1', name: 'Ops Workspace' },
+      userId: null,
+      isUsable: jest.fn(() => true),
+      matches: jest.fn(() => true),
+      save: jest.fn().mockResolvedValue(null)
+    };
+    const query = {
+      select: jest.fn(() => query),
+      populate: jest.fn()
+    };
+    query.populate.mockReturnValueOnce(query).mockResolvedValueOnce(candidate);
+
+    jest.doMock('../src/utils/database', () => ({ isDatabaseConnected: () => true }));
+    jest.doMock('../src/models/ApiToken', () => ({
+      prefixFor: jest.fn(token => String(token).slice(0, 10)),
+      findOne: jest.fn(() => query)
+    }));
+
+    const requestSecurity = require('../src/utils/requestSecurity');
+    const req = createRequest({
+      get: header => {
+        const normalized = header.toLowerCase();
+        if (normalized === 'x-sneup-api-key') return 'db-read-only-token';
+        if (normalized === 'x-sneup-workspace-id') return 'workspace-2';
+        return undefined;
+      }
+    });
+    const res = createResponse();
+    const next = jest.fn();
+
+    await requestSecurity.requireApiAccess(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(req.auth).toMatchObject({
+      actorType: 'service',
+      roles: ['service'],
+      permissions: ['api:read'],
+      permissionsScoped: true,
+      workspaceId: 'workspace-1',
+      workspaceOverrideAllowed: false
+    });
+    expect(requestSecurity.hasPermission(req.auth, 'api:read')).toBe(true);
+    expect(requestSecurity.hasPermission(req.auth, 'approvals:decide')).toBe(false);
+    expect(requestSecurity.hasPermission(req.auth, 'trello-actions:execute-approved')).toBe(false);
+
+    const protectedRes = createResponse();
+    const protectedNext = jest.fn();
+    requestSecurity.requirePermission('approvals:decide')(req, protectedRes, protectedNext);
+    expect(protectedNext).not.toHaveBeenCalled();
+    expect(protectedRes.statusCode).toBe(403);
+    expect(protectedRes.body.requiredPermission).toBe('approvals:decide');
+  });
+
   test('rejects database API tokens attached to disabled users', async () => {
     jest.resetModules();
 
