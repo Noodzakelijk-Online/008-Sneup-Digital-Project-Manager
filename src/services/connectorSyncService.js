@@ -229,16 +229,12 @@ class ConnectorSyncService {
       options
     );
     const delta = syncResult.result || {};
-    let signalCount = 0;
-
-    for (const record of delta.records || []) {
-      await workSignalService.upsertProviderRecord(account._id, record, {
-        workspaceId: account.workspaceId,
-        actorId: options.actor || 'connector-sync',
-        deferDependencyFreshness: options.deferDependencyFreshness === true
-      });
-      signalCount += 1;
-    }
+    const { count: signalCount } = await workSignalService.upsertProviderRecords(account, delta.records || [], {
+      workspaceId: account.workspaceId,
+      actorId: options.actor || 'connector-sync',
+      deferDependencyFreshness: options.deferDependencyFreshness === true,
+      deferAccountSave: true
+    });
 
     const dependencyFreshness = options.deferDependencyFreshness === true
       ? null

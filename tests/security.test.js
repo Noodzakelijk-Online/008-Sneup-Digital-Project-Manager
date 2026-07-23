@@ -9999,7 +9999,7 @@ describe('job observability', () => {
   test('batches connector dependency freshness per provider instead of per synced record', async () => {
     jest.resetModules();
     const markStaleDependencies = jest.fn().mockResolvedValue({ modifiedCount: 3, staleAfterDays: 21 });
-    const upsertProviderRecord = jest.fn().mockResolvedValue({ id: 'signal-1' });
+    const upsertProviderRecords = jest.fn().mockResolvedValue({ count: 3 });
     const account = {
       _id: 'account-1',
       workspaceId: 'workspace-1',
@@ -10029,7 +10029,7 @@ describe('job observability', () => {
         metadata: { source: 'github_api' }
       })
     }));
-    jest.doMock('../src/services/workSignalService', () => ({ upsertProviderRecord }));
+    jest.doMock('../src/services/workSignalService', () => ({ upsertProviderRecords }));
     jest.doMock('../src/services/workspaceScopeService', () => ({
       getDefaultWorkspaceObjectId: jest.fn(() => 'workspace-1'),
       normalizeWorkspaceObjectId: jest.fn(value => value || 'workspace-1')
@@ -10038,8 +10038,10 @@ describe('job observability', () => {
     try {
       const connectorSyncService = require('../src/services/connectorSyncService');
       const deferred = await connectorSyncService.syncAccount(account, { deferDependencyFreshness: true });
-      expect(upsertProviderRecord).toHaveBeenCalledTimes(3);
-      expect(upsertProviderRecord.mock.calls.every(([, , options]) => options.deferDependencyFreshness === true)).toBe(true);
+      expect(upsertProviderRecords).toHaveBeenCalledTimes(1);
+      expect(upsertProviderRecords).toHaveBeenCalledWith(account, [
+        { id: 'issue-1' }, { id: 'issue-2' }, { id: 'issue-3' }
+      ], expect.objectContaining({ deferDependencyFreshness: true, deferAccountSave: true }));
       expect(markStaleDependencies).not.toHaveBeenCalled();
       expect(deferred.dependencyFreshness).toBeNull();
 

@@ -179,9 +179,17 @@ class WorkSignalService {
     }
 
     const normalized = this.normalizeSignalPayload(account, payload);
+    const signal = await this.upsertNormalizedSignal(account, normalized, { ...options, syncState: payload.syncState });
+    account.lastSyncAt = new Date();
+    account.lastError = undefined;
+    await account.save();
+    return signal;
+  }
+
+  async upsertNormalizedSignal(account, normalized, options = {}) {
     const now = new Date();
     const signal = await WorkSignal.findOneAndUpdate({
-      workspaceId,
+      workspaceId: normalized.workspaceId,
       connectorAccountId: account._id,
       provider: account.connectorId,
       externalId: normalized.externalId
@@ -190,7 +198,7 @@ class WorkSignalService {
         ...normalized,
         lastSeenAt: now,
         syncState: {
-          ...(payload.syncState && typeof payload.syncState === 'object' ? payload.syncState : {}),
+          ...(options.syncState && typeof options.syncState === 'object' ? options.syncState : {}),
           lastUpsertedBy: options.actorId || 'sync-worker'
         }
       },
@@ -203,16 +211,48 @@ class WorkSignalService {
       setDefaultsOnInsert: true
     });
 
-    account.lastSyncAt = now;
-    account.lastError = undefined;
-    await account.save();
-
     await workGraphService.upsertFromSignal(signal, {
       actorId: options.actorId || 'sync-worker',
       deferDependencyFreshness: options.deferDependencyFreshness === true
     });
 
     return this.sanitizeSignal(signal);
+  }
+
+  async upsertProviderRecords(account, records = [], options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    if (!account?._id || String(account.workspaceId) !== String(workspaceId)) {
+      const error = new Error('Connector account not found');
+      error.statusCode = 404;
+      throw error;
+    }
+    if (!Array.isArray(records)) {
+      const error = new Error('Provider sync records must be an array');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    let count = 0;
+    let lastSignal = null;
+    for (const record of records) {
+      const providerPayload = workSignalAdapterService.normalize(account, record);
+      const normalized = this.normalizeSignalPayload(account, providerPayload);
+      lastSignal = await this.upsertNormalizedSignal(account, normalized, {
+        ...options,
+        workspaceId,
+        actorId: options.actorId || 'provider-adapter',
+        syncState: providerPayload.syncState
+      });
+      count += 1;
+    }
+
+    if (options.deferAccountSave !== true) {
+      account.lastSyncAt = new Date();
+      account.lastError = undefined;
+      await account.save();
+    }
+    return { count, lastSignal };
   }
 
   async upsertProviderRecord(accountId, record = {}, options = {}) {
@@ -225,12 +265,12 @@ class WorkSignalService {
       throw error;
     }
 
-    const providerPayload = workSignalAdapterService.normalize(account, record);
-    return this.upsertSignal(account._id, providerPayload, {
+    const result = await this.upsertProviderRecords(account, [record], {
       ...options,
       workspaceId,
       actorId: options.actorId || 'provider-adapter'
     });
+    return result.lastSignal;
   }
 
   async listSignals(options = {}) {
@@ -300,4 +340,6 @@ class WorkSignalService {
   }
 }
 
-module.exports = new WorkSignalService();
+const workSignalService = new WorkSignalService();
+module.exports = workSignalService;
+module.exports.WorkSignalService = WorkSignalService;
