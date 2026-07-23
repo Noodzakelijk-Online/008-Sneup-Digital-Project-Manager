@@ -1197,8 +1197,8 @@ describe('dashboard content security policy', () => {
     const server = fs.readFileSync(path.join(rootDir, 'src', 'index.js'), 'utf8');
     const recommendationRoutes = fs.readFileSync(path.join(rootDir, 'src', 'routes', 'recommendations.js'), 'utf8');
 
-    expect(html).toContain('<link rel="stylesheet" href="/styles.css">');
-    expect(html).toContain('<script src="/app.js" defer></script>');
+    expect(html).toContain('<link rel="stylesheet" href="/styles.css?v=__SNEUP_ASSET_VERSION__">');
+    expect(html).toContain('<script src="/app.js?v=__SNEUP_ASSET_VERSION__" defer></script>');
     expect(html).toContain('id="signalsView"');
     expect(html).toContain('id="workSignalList"');
     expect(html).toContain('id="forecastsView"');
@@ -1245,6 +1245,23 @@ describe('dashboard content security policy', () => {
     expect(styles.length).toBeGreaterThan(1000);
     expect(appJs.length).toBeGreaterThan(1000);
     expect(server).not.toContain("'unsafe-inline'");
+  });
+});
+
+describe('command-center static asset caching', () => {
+  test('fingerprints external assets from content while keeping the HTML revalidatable', () => {
+    const rootDir = path.join(__dirname, '..');
+    const service = require('../src/services/commandCenterAssetService');
+    const assets = service.buildAssets(path.join(rootDir, 'public'));
+
+    expect(assets.version).toMatch(/^[a-f0-9]{16}$/);
+    expect(assets.html).not.toContain(service.ASSET_VERSION_TOKEN);
+    expect(assets.html).toContain(`/app.js?v=${assets.version}`);
+    expect(assets.html).toContain(`/styles.css?v=${assets.version}`);
+    expect(service.cacheControlFor(assets, '/', undefined)).toBe(service.HTML_CACHE_CONTROL);
+    expect(service.cacheControlFor(assets, '/app.js', assets.version)).toBe(service.IMMUTABLE_CACHE_CONTROL);
+    expect(service.cacheControlFor(assets, '/app.js', 'stale-version')).toBeNull();
+    expect(service.cacheControlFor(assets, '/unknown.js', assets.version)).toBeNull();
   });
 });
 

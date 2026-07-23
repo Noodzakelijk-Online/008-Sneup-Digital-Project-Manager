@@ -18,6 +18,7 @@ const connectorSyncService = require('./services/connectorSyncService');
 const { getMaxBodyBytes, isGenericWebhookPath } = require('./services/genericWebhookService');
 const workspaceScopeService = require('./services/workspaceScopeService');
 const responseTimingService = require('./services/responseTimingService');
+const commandCenterAssetService = require('./services/commandCenterAssetService');
 const { validateRuntimeSecurityConfiguration } = require('./utils/securityConfiguration');
 
 // Import routes
@@ -96,8 +97,12 @@ app.use(express.urlencoded({
   limit: process.env.SNEUP_FORM_LIMIT || '256kb'
 }));
 
-// Serve static files
-app.use(express.static(path.join(__dirname, '../public')));
+// The HTML revalidates while content-fingerprinted static assets can be reused.
+const commandCenterAssets = commandCenterAssetService.buildAssets(path.join(__dirname, '../public'));
+app.use(commandCenterAssetService.createMiddleware(commandCenterAssets));
+app.use(express.static(path.join(__dirname, '../public'), {
+  setHeaders: commandCenterAssetService.staticHeaders
+}));
 
 // Request logging
 app.use((req, res, next) => {

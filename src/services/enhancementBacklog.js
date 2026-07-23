@@ -123,11 +123,11 @@ const enhancements = [
     priority: 'P2',
     area: 'dashboard',
     title: 'Move dashboard CSS and JavaScript into external assets',
-    evidence: 'Dashboard CSS and JavaScript now live in external static assets and Helmet no longer allows inline scripts or styles.',
+    evidence: 'Dashboard CSS and JavaScript now live in external static assets and Helmet no longer allows inline scripts or styles. The HTML stays revalidatable while the JavaScript, CSS, and icon URLs are content-fingerprinted at startup and served with immutable one-year caching, so a changed asset gets a fresh URL without asking operators to clear cache.',
     impact: 'Improves browser hardening and makes the UI easier to test and maintain.',
     effort: 'M',
     status: 'done',
-    nextStep: 'Add static asset cache/versioning once the dashboard build pipeline exists.',
+    nextStep: 'Keep cache-header regression coverage whenever dashboard assets or static delivery change.',
     acceptanceCriteria: [
       'CSP no longer needs `unsafe-inline` for scripts.',
       'Dashboard behavior is unchanged in browser smoke tests.',
