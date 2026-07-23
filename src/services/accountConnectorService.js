@@ -349,9 +349,9 @@ class AccountConnectorService {
   }
 
   getCatalog(filters = {}) {
-    const { category, search, limit, offset } = this.normalizeCatalogFilter(filters);
+    const { category, readiness, search, limit, offset } = this.normalizeCatalogFilter(filters);
     const catalogConnectors = getConnectors();
-    const filteredConnectors = this.filterConnectors(category, search, catalogConnectors);
+    const filteredConnectors = this.filterConnectors(category, readiness, search, catalogConnectors);
     const slicedConnectors = typeof limit === 'number' && limit > 0
       ? filteredConnectors.slice(offset || 0, (offset || 0) + limit)
       : filteredConnectors.slice(offset || 0);
@@ -386,11 +386,13 @@ class AccountConnectorService {
 
   normalizeCatalogFilter(filters = {}) {
     const category = this.normalizeCategory(filters.category);
+    const readiness = this.normalizeReadiness(filters.readiness);
     const search = filters.search || filters.query || '';
     const limit = clampPositiveInt(filters.limit, 0, 0, MAX_CATALOG_LIMIT);
     const offset = clampPositiveInt(filters.offset, 0, 0);
     return {
       category,
+      readiness,
       search,
       limit,
       offset
@@ -403,10 +405,21 @@ class AccountConnectorService {
     return candidate ? (CATEGORY_LOOKUP.get(candidate) || undefined) : undefined;
   }
 
-  filterConnectors(category, search, connectors = getConnectors()) {
+  normalizeReadiness(readiness) {
+    const candidate = normalizeText(readiness);
+    if (candidate === 'ready') return 'ready';
+    if (candidate === 'catalogonly' || candidate === 'catalog') return 'catalog_only';
+    return undefined;
+  }
+
+  filterConnectors(category, readiness, search, connectors = getConnectors()) {
 
     if (category) {
       connectors = connectors.filter((connector) => connector.category === category);
+    }
+
+    if (readiness) {
+      connectors = connectors.filter((connector) => this.getSyncReadiness(connector).status === readiness);
     }
 
     if (search) {

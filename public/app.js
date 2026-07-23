@@ -60,6 +60,7 @@ const state = {
     errors: []
   },
   category: 'all',
+  connectorReadiness: 'all',
   search: '',
   queueFilter: 'all',
   signalFilter: 'all',
@@ -185,6 +186,12 @@ els.connectorSearch.addEventListener('input', (event) => {
   state.search = event.target.value.toLowerCase();
   clearTimeout(connectorSearchTimer);
   connectorSearchTimer = setTimeout(() => loadConnectors(), 180);
+});
+document.querySelectorAll('[data-connector-readiness]').forEach((button) => {
+  button.addEventListener('click', () => {
+    state.connectorReadiness = button.dataset.connectorReadiness;
+    loadConnectors();
+  });
 });
 document.querySelectorAll('[data-queue-filter]').forEach((button) => {
   button.addEventListener('click', () => {
@@ -769,6 +776,7 @@ async function loadConnectors({ append = false } = {}) {
       offset: String(offset)
     });
     if (state.category !== 'all') query.set('category', state.category);
+    if (state.connectorReadiness !== 'all') query.set('readiness', state.connectorReadiness);
     if (state.search) query.set('search', state.search);
 
     const data = await fetchApi(`/api/connectors?${query}`, { signal: request.signal });
@@ -3778,7 +3786,17 @@ function renderConnectors() {
   renderCategories();
 
   const selectedCategory = state.categories.find(category => category.id === state.category);
-  els.connectorHeading.textContent = selectedCategory ? selectedCategory.name : 'All connectors';
+  const readinessLabel = state.connectorReadiness === 'ready'
+    ? 'ready to connect'
+    : state.connectorReadiness === 'catalog_only'
+      ? 'catalog only'
+      : '';
+  els.connectorHeading.textContent = [selectedCategory ? selectedCategory.name : 'All connectors', readinessLabel]
+    .filter(Boolean)
+    .join(' - ');
+  document.querySelectorAll('[data-connector-readiness]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.connectorReadiness === state.connectorReadiness);
+  });
   renderConnectorSafety();
 
   const accountsByConnectorId = new Map(state.accounts.map(account => [account.connectorId, account]));

@@ -273,7 +273,14 @@
           <section class="panel">
             <div class="panel-head">
               <h2 id="connectorHeading">Connectors</h2>
-              <span class="pill connected" id="connectedCount">0 connected</span>
+              <div class="item-actions">
+                <div class="segmented" aria-label="Connector readiness filter">
+                  <button class="active" data-connector-readiness="all" type="button">All</button>
+                  <button data-connector-readiness="ready" type="button">Ready</button>
+                  <button data-connector-readiness="catalog_only" type="button">Catalog only</button>
+                </div>
+                <span class="pill connected" id="connectedCount">0 connected</span>
+              </div>
             </div>
             <div class="panel-body">
               <div class="connector-safety" id="connectorSafety" aria-live="polite"></div>

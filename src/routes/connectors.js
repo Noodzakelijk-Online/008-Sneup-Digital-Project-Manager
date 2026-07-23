@@ -28,6 +28,7 @@ router.get('/', async (req, res) => {
   try {
     const catalog = accountConnectorService.getCatalog({
       category: req.query.category,
+      readiness: req.query.readiness,
       search: req.query.search || req.query.q,
       limit: req.query.limit,
       offset: req.query.offset

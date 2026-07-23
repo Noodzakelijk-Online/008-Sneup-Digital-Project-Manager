@@ -1231,6 +1231,9 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain("fetchApi('/api/jobs/health')");
     expect(appJs).toContain('renderNotificationPolicySchedulerHealth(policy)');
     expect(appJs).toContain('Report scheduler');
+    expect(appJs).toContain("query.set('readiness', state.connectorReadiness)");
+    expect(appJs).toContain('data-connector-readiness');
+    expect(html).toContain('Connector readiness filter');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
     expect(server).toContain("app.use('/api/forecasts', forecastRoutes)");
     expect(fs.readFileSync(path.join(rootDir, 'src', 'routes', 'workSignals.js'), 'utf8')).toContain("router.post('/graph/dependencies/:dependencyId/review'");
@@ -1789,6 +1792,15 @@ describe('connector registry', () => {
       total: result.catalogTotal
     });
     expect(result.syncReadiness.ready + result.syncReadiness.catalogOnly).toBe(result.catalogTotal);
+
+    const readyOnly = accountConnectorService.getCatalog({ readiness: 'ready' });
+    expect(readyOnly.connectors).not.toHaveLength(0);
+    expect(readyOnly.connectors.every(connector => connector.syncReadiness.status === 'ready')).toBe(true);
+
+    const catalogOnly = accountConnectorService.getCatalog({ readiness: 'catalog-only' });
+    expect(catalogOnly.connectors.map(connector => connector.id)).toContain('proofhub');
+    expect(catalogOnly.connectors.every(connector => connector.syncReadiness.status === 'catalog_only')).toBe(true);
+    expect(catalogOnly.total).toBe(result.syncReadiness.catalogOnly);
   });
 
   test('exposes sync readiness and keeps catalog-only connector account links blocked', () => {

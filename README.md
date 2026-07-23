@@ -192,7 +192,7 @@ Sneup also retains a workspace-scoped, read-only recommendation-feedback signal 
 
 ### Connectors and Work Signals
 
-- `GET /api/connectors` - List connector catalog entries and linked accounts
+- `GET /api/connectors` - List connector catalog entries and linked accounts; optionally filter by `category`, `search`, or `readiness=ready|catalog_only`
 - `GET /api/connectors/accounts` - List linked connector accounts
 - `POST /api/connectors/:connectorId/connect` - Begin an OAuth connector flow
 - `POST /api/connectors/:connectorId/accounts` - Save an API-key, token, manual, basic, or webhook connector account
