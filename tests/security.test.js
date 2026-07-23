@@ -9670,6 +9670,7 @@ describe('follow-up accountability', () => {
 
     const updateMany = jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 });
     const auditCreate = jest.fn().mockResolvedValue({ _id: new mongoose.Types.ObjectId() });
+    const intervention = { recordResponse: jest.fn().mockResolvedValue({}) };
 
     jest.doMock('mongoose', () => ({
       ...mongoose,
@@ -9682,7 +9683,7 @@ describe('follow-up accountability', () => {
       updateMany
     }));
     jest.doMock('../src/models/Intervention', () => ({
-      findOne: jest.fn().mockResolvedValue(null)
+      findOne: jest.fn().mockResolvedValue(intervention)
     }));
     jest.doMock('../src/models/AuditEvent', () => ({
       create: auditCreate
@@ -9707,7 +9708,7 @@ describe('follow-up accountability', () => {
     jest.dontMock('../src/services/operationsLedgerService');
 
     const operationsLedgerService = require('../src/services/operationsLedgerService');
-    await expect(operationsLedgerService.recordWorkerResponse({
+    const recordedResponse = await operationsLedgerService.recordWorkerResponse({
       workspaceId,
       recommendationId,
       interventionId,
@@ -9716,9 +9717,13 @@ describe('follow-up accountability', () => {
       responseText: response.responseText,
       responseType: response.responseType,
       actor: 'worker-1'
-    })).resolves.toMatchObject({
+    });
+
+    expect(recordedResponse).toMatchObject({
       responseType: 'completed'
     });
+    expect(recordedResponse).not.toHaveProperty('responseText');
+    expect(intervention.recordResponse).toHaveBeenCalledWith(memberId, 'completed');
 
     expect(updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -9742,10 +9747,29 @@ describe('follow-up accountability', () => {
     expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
       action: 'worker_response_recorded'
     }));
+    expect(JSON.stringify(auditCreate.mock.calls)).not.toContain('Done and ready for review.');
     expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({
       action: 'follow_ups_resolved_from_worker_response',
       actor: 'worker-1'
     }));
+  });
+
+  test('redacts legacy worker response text from audit representations', () => {
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const auditEvent = operationsLedgerService.serializeAuditEvent({
+      entityType: 'worker_response',
+      afterState: {
+        responseText: 'Sensitive status detail',
+        response: { responseText: 'Duplicated sensitive detail', responseType: 'completed' },
+        responseType: 'completed'
+      }
+    });
+
+    expect(JSON.stringify(auditEvent)).not.toContain('Sensitive status detail');
+    expect(auditEvent.afterState).toEqual({
+      response: { responseType: 'completed' },
+      responseType: 'completed'
+    });
   });
 
   test('summarizes bounded workspace accountability without response text', async () => {

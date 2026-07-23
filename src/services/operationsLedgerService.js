@@ -716,9 +716,9 @@ class OperationsLedgerService {
       decisions,
       approvals,
       trelloActions,
-      auditEvents,
+      auditEvents: auditEvents.map(event => this.serializeAuditEvent(event)),
       followUps,
-      workerResponses,
+      workerResponses: workerResponses.map(response => this.serializeWorkerResponse(response)),
       relatedFindings
     };
   }
@@ -2365,7 +2365,8 @@ class OperationsLedgerService {
     const auditEvents = AuditEvent.find(query)
       .sort({ createdAt: -1 })
       .limit(filters.limit || 100);
-    return filters.lean === true ? auditEvents.lean() : auditEvents;
+    const records = filters.lean === true ? await auditEvents.lean() : await auditEvents;
+    return records.map(event => this.serializeAuditEvent(event));
   }
 
   async getBoardLedger(boardId, filters = {}) {
@@ -2410,9 +2411,10 @@ class OperationsLedgerService {
       ? await workGraphService.getTrelloCardLedgerContext(card, { workspaceId, limit: 25 })
       : workGraphService.emptyLedgerContext('card');
 
-    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, followUps, workerResponses, outcomes, findings, auditEvents });
+    const safeWorkerResponses = workerResponses.map(response => this.serializeWorkerResponse(response));
+    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, followUps, workerResponses: safeWorkerResponses, outcomes, findings, auditEvents });
 
-    return { recommendations, decisions, actions, followUps, workerResponses, outcomes, findings, auditEvents, timeline, graphContext };
+    return { recommendations, decisions, actions, followUps, workerResponses: safeWorkerResponses, outcomes, findings, auditEvents, timeline, graphContext };
   }
 
   async getWorkspaceLedger(filters = {}) {
@@ -2719,7 +2721,7 @@ class OperationsLedgerService {
     if (body.interventionId) {
       const intervention = await Intervention.findOne({ _id: body.interventionId, workspaceId });
       if (intervention && body.memberId) {
-        await intervention.recordResponse(body.memberId, responseText, body.responseType || 'other');
+        await intervention.recordResponse(body.memberId, body.responseType || 'other');
       }
     }
 
@@ -2733,10 +2735,7 @@ class OperationsLedgerService {
       source: response.source,
       riskLevel: 'low',
       recommendationId: response.recommendationId,
-      afterState: {
-        ...response.toObject(),
-        followUpResolution
-      }
+      afterState: this.workerResponseAuditState(response, followUpResolution)
     });
 
     if (followUpResolution.modifiedCount > 0) {
@@ -2752,7 +2751,7 @@ class OperationsLedgerService {
       });
     }
 
-    return response;
+    return this.serializeWorkerResponse(response);
   }
 
   async recordChatWorkerResponse(body = {}) {
@@ -2901,6 +2900,42 @@ class OperationsLedgerService {
 
     data.workspaceId = this.resolveWorkspaceId(data.workspaceId || data.afterState?.workspaceId || data.beforeState?.workspaceId);
     return AuditEvent.create(data);
+  }
+
+  serializeWorkerResponse(response) {
+    if (!response) return response;
+    const data = typeof response.toObject === 'function' ? response.toObject() : response;
+    const { responseText, ...safeResponse } = data;
+    return safeResponse;
+  }
+
+  workerResponseAuditState(response, followUpResolution) {
+    return {
+      ...this.serializeWorkerResponse(response),
+      followUpResolution
+    };
+  }
+
+  serializeAuditEvent(event) {
+    if (!event || event.entityType !== 'worker_response') return event;
+    const data = typeof event.toObject === 'function' ? event.toObject() : event;
+    return {
+      ...data,
+      beforeState: this.stripWorkerResponseText(data.beforeState),
+      afterState: this.stripWorkerResponseText(data.afterState)
+    };
+  }
+
+  stripWorkerResponseText(state) {
+    if (!state || typeof state !== 'object') return state;
+    const data = typeof state.toObject === 'function' ? state.toObject() : state;
+    const { responseText, response, ...safeState } = data;
+    if (!response || typeof response !== 'object') return safeState;
+    const { responseText: nestedResponseText, ...safeResponse } = response;
+    return {
+      ...safeState,
+      response: safeResponse
+    };
   }
 
   buildActionPayload(intervention, card, member) {

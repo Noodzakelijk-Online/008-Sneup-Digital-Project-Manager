@@ -85,7 +85,10 @@ const interventionSchema = new mongoose.Schema({
       ref: 'Member'
     },
     respondedAt: Date,
-    responseText: String,
+    responseText: {
+      type: String,
+      select: false
+    },
     responseType: {
       type: String,
       enum: ['acknowledged', 'completed', 'blocked', 'needs_help', 'ignored']
@@ -260,11 +263,10 @@ interventionSchema.methods.markExecuted = function(metadata = {}) {
 };
 
 // Record response
-interventionSchema.methods.recordResponse = function(memberId, responseText, responseType) {
+interventionSchema.methods.recordResponse = function(memberId, responseType) {
   this.response = {
     memberId,
     respondedAt: new Date(),
-    responseText,
     responseType
   };
   

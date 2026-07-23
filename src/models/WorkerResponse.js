@@ -31,7 +31,10 @@ const workerResponseSchema = new mongoose.Schema({
     ref: 'Member',
     index: true
   },
-  responseText: String,
+  responseText: {
+    type: String,
+    select: false
+  },
   responseType: {
     type: String,
     enum: ['acknowledged', 'completed', 'blocked', 'needs_help', 'ignored', 'other'],
