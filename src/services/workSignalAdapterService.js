@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'motion',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'motion',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zapier', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -124,6 +124,7 @@ const quickBooksWorkSignalClient = lazyClient('./quickBooksWorkSignalClient');
 const powerBiWorkSignalClient = lazyClient('./powerBiWorkSignalClient');
 const dataStudioWorkSignalClient = lazyClient('./dataStudioWorkSignalClient');
 const zapierWorkSignalClient = lazyClient('./zapierWorkSignalClient');
+const jiraAlignWorkSignalClient = lazyClient('./jiraAlignWorkSignalClient');
 const scoroWorkSignalClient = lazyClient('./scoroWorkSignalClient');
 const planeWorkSignalClient = lazyClient('./planeWorkSignalClient');
 const openProjectWorkSignalClient = lazyClient('./openProjectWorkSignalClient');
@@ -1553,6 +1554,27 @@ zapierAdapter.capabilities.credentialBackedSync = true;
 zapierAdapter.list = async account => (await zapierWorkSignalClient.fetchDelta(account, null)).records;
 zapierAdapter.fetchDelta = (account, cursor) => zapierWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('zapier', zapierAdapter);
+
+const jiraAlignAdapter = buildAdapter('jira_align', 'Jira Align bounded portfolio and program metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'program'),
+  title: titleFromText(item.name, 'Jira Align item'),
+  description: '',
+  status: 'open',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['jira_align', item.sourceType]),
+  dueAt: undefined,
+  providerCreatedAt: undefined,
+  providerUpdatedAt: item.updatedAt,
+  evidenceRefs: [{ provider: account.connectorId, externalId: String(pick(item.id, 'unknown')), label: 'Jira Align portfolio and program metadata', type: account.connectorId }],
+  raw: { id: item.id, jiraAlignId: item.jiraAlignId, sourceType: item.sourceType, updatedAt: item.updatedAt }
+}));
+jiraAlignAdapter.capabilities.credentialBackedSync = true;
+jiraAlignAdapter.list = async account => (await jiraAlignWorkSignalClient.fetchDelta(account, null)).records;
+jiraAlignAdapter.fetchDelta = (account, cursor) => jiraAlignWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('jira_align', jiraAlignAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),

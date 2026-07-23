@@ -253,6 +253,8 @@ Data Studio (formerly Looker Studio) is available for Google Workspace or Cloud 
 
 Zapier is available after Sneup is published as a public Zapier integration and receives an OAuth client ID and secret. It requests `zap:all`, makes one capped GET request for Zap inventory, and retains only opaque IDs, redacted titles, enabled state, and timestamps. Zap steps, inputs, linked app authentications, editor URLs, run payloads, user profiles, webhooks, and provider writes are excluded.
 
+Jira Align is available with a tenant API token created by a user authorized for the selected tenant. Sneup accepts only an HTTPS `*.jiraalign.com` tenant URL, makes two capped GET requests to API v2 for portfolio and program metadata without resource expansion, and retains only opaque IDs, redacted titles, type, and timestamps. Descriptions, people, custom fields, dependencies, work items, planning details, URLs, and provider writes are excluded.
+
 SurveyMonkey is available with a View Surveys access token. Sneup makes one bounded survey-list GET and retains only redacted survey title and ID. It excludes questions, responses, collectors, contacts, links, and provider writes.
 
 Google Drive is available as a separate metadata-only Google OAuth connection. Sneup reads one bounded user-Drive page, rejects incomplete pagination, and retains only redacted file or folder names plus timestamps. It excludes file content, web URLs, permissions, owners, shared drives, and provider writes.
