@@ -1222,6 +1222,11 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('provider retries');
     expect(appJs).toContain('data-connector-sync');
     expect(appJs).toContain('renderGraphLedgerFilters(graphContext)');
+    expect(appJs).toContain('data-notification-policy-edit');
+    expect(appJs).toContain('openNotificationPolicyEditor');
+    expect(appJs).toContain('Encrypted destination retained unless you enter a replacement.');
+    expect(appJs).toContain('Select at least one delivery type');
+    expect(appJs).toContain('Activate delivery policy');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
     expect(server).toContain("app.use('/api/forecasts', forecastRoutes)");
     expect(fs.readFileSync(path.join(rootDir, 'src', 'routes', 'workSignals.js'), 'utf8')).toContain("router.post('/graph/dependencies/:dependencyId/review'");

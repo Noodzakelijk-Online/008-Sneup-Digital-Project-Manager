@@ -1166,6 +1166,9 @@ function renderOperationsLedger() {
   document.querySelectorAll('[data-outcome-evaluate]').forEach((button) => {
     button.addEventListener('click', () => runOutcomeEvaluation(button.dataset.outcomeEvaluate));
   });
+  document.querySelectorAll('[data-notification-policy-edit]').forEach((button) => {
+    button.addEventListener('click', () => openNotificationPolicyEditor(button.dataset.notificationPolicyEdit));
+  });
   document.querySelectorAll('[data-notification-policy-activate]').forEach((button) => {
     button.addEventListener('click', () => openNotificationActivation(button.dataset.notificationPolicyActivate));
   });
@@ -1456,6 +1459,7 @@ function renderNotificationPolicy(policy) {
       <div class="meta"><span>${policy.digest?.enabled ? `Warning digest at ${escapeHtml(policy.digest.hourUtc)}:00 UTC, up to ${escapeHtml(policy.digest.maximumItems)} items` : 'Warning alerts deliver individually'}</span></div>
       <div class="meta"><span>${isWeeklyStatus && reportSchedule.enabled ? `Weekly status every ${escapeHtml(weekDays[reportSchedule.dayOfWeekUtc] || 'Monday')} at ${escapeHtml(reportSchedule.hourUtc)}:00 UTC` : 'No scheduled status report'}</span></div>
       <div class="item-actions">
+        <button class="button" data-notification-policy-edit="${escapeHtml(policyId)}" type="button">Edit</button>
         ${policy.status === 'active'
     ? `<button class="button" data-notification-policy-pause="${escapeHtml(policyId)}" type="button">Pause</button>`
     : `<button class="button primary" data-notification-policy-activate="${escapeHtml(policyId)}" type="button">Activate</button>`}
@@ -4570,59 +4574,74 @@ function openTrelloActionReconciliation(actionId) {
 }
 
 function openNotificationPolicy() {
-  els.modalTitle.textContent = 'Add delivery policy';
+  openNotificationPolicyForm();
+}
+
+function openNotificationPolicyEditor(policyId) {
+  const policy = (state.ledger.notificationPolicies || []).find(item => getId(item.id || item._id) === policyId);
+  if (policy) openNotificationPolicyForm(policy);
+}
+
+function openNotificationPolicyForm(policy = null) {
+  const isEdit = Boolean(policy);
+  const eventTypes = policy?.eventTypes?.length ? policy.eventTypes : ['reconciliation_alert'];
+  const quietHours = policy?.quietHours || { enabled: false, startHourUtc: 18, endHourUtc: 8 };
+  const digest = policy?.digest || { enabled: false, hourUtc: 9, maximumItems: 10 };
+  const reportSchedule = policy?.reportSchedule || { dayOfWeekUtc: 1, hourUtc: 9 };
+  const channel = policy?.channel || 'slack_webhook';
+  els.modalTitle.textContent = isEdit ? 'Edit delivery policy' : 'Add delivery policy';
   els.modalBody.innerHTML = `
     <form id="notificationPolicyForm" class="notice-stack">
-      <label>Name<input name="name" type="text" maxlength="120" required placeholder="Operations alerts"></label>
-      <label>Delivery type
-        <select name="eventType" required>
-          <option value="reconciliation_alert">Reconciliation alerts</option>
-          <option value="weekly_status_report">Weekly status report</option>
-        </select>
-      </label>
+      <label>Name<input name="name" type="text" maxlength="120" required value="${escapeHtml(policy?.name || '')}" placeholder="Operations alerts"></label>
+      <fieldset class="notice-stack">
+        <legend>Deliver</legend>
+        <label><input name="eventTypes" type="checkbox" value="reconciliation_alert" ${eventTypes.includes('reconciliation_alert') ? 'checked' : ''}> Reconciliation alerts</label>
+        <label><input name="eventTypes" type="checkbox" value="weekly_status_report" ${eventTypes.includes('weekly_status_report') ? 'checked' : ''}> Weekly status report</label>
+      </fieldset>
       <label>Channel
         <select name="channel" required>
-          <option value="slack_webhook">Slack webhook</option>
-          <option value="teams_webhook">Teams webhook</option>
-          <option value="generic_webhook">Generic webhook</option>
-          <option value="email">Email (Resend)</option>
+          <option value="slack_webhook" ${channel === 'slack_webhook' ? 'selected' : ''}>Slack webhook</option>
+          <option value="teams_webhook" ${channel === 'teams_webhook' ? 'selected' : ''}>Teams webhook</option>
+          <option value="generic_webhook" ${channel === 'generic_webhook' ? 'selected' : ''}>Generic webhook</option>
+          <option value="email" ${channel === 'email' ? 'selected' : ''}>Email (Resend)</option>
         </select>
       </label>
-      <label>Destination label<input name="destinationLabel" type="text" maxlength="160" required placeholder="Project operations channel"></label>
-      <label id="notificationWebhookDestination">HTTPS webhook URL<input name="destinationUrl" type="url" inputmode="url" autocomplete="off" required placeholder="https://..."></label>
+      <label>Destination label<input name="destinationLabel" type="text" maxlength="160" required value="${escapeHtml(policy?.destinationLabel || '')}" placeholder="Project operations channel"></label>
+      <label id="notificationWebhookDestination">HTTPS webhook URL<input name="destinationUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://..."></label>
       <label id="notificationEmailDestination" hidden>Email recipient<input name="destinationEmail" type="email" inputmode="email" autocomplete="email" placeholder="operations@example.com"></label>
+      ${isEdit && policy.destinationConfigured ? '<div class="notice">Encrypted destination retained unless you enter a replacement.</div>' : ''}
       <div id="notificationAlertSettings">
       <label>Minimum severity
         <select name="minimumSeverity">
-          <option value="warning">Warning and critical</option>
-          <option value="critical">Critical only</option>
+          <option value="warning" ${policy?.minimumSeverity !== 'critical' ? 'selected' : ''}>Warning and critical</option>
+          <option value="critical" ${policy?.minimumSeverity === 'critical' ? 'selected' : ''}>Critical only</option>
         </select>
       </label>
-      <label><input name="quietHoursEnabled" type="checkbox"> Defer warning alerts during quiet hours (critical alerts stay immediate)</label>
+      <label><input name="quietHoursEnabled" type="checkbox" ${quietHours.enabled ? 'checked' : ''}> Defer warning alerts during quiet hours (critical alerts stay immediate)</label>
       <div class="form-grid">
-        <label>Quiet start UTC<input name="quietStartHourUtc" type="number" min="0" max="23" value="18"></label>
-        <label>Quiet end UTC<input name="quietEndHourUtc" type="number" min="0" max="23" value="8"></label>
+        <label>Quiet start UTC<input name="quietStartHourUtc" type="number" min="0" max="23" value="${escapeHtml(quietHours.startHourUtc)}"></label>
+        <label>Quiet end UTC<input name="quietEndHourUtc" type="number" min="0" max="23" value="${escapeHtml(quietHours.endHourUtc)}"></label>
       </div>
-      <label><input name="digestEnabled" type="checkbox"> Send warning evidence as one daily digest (critical alerts stay immediate)</label>
+      <label><input name="digestEnabled" type="checkbox" ${digest.enabled ? 'checked' : ''}> Send warning evidence as one daily digest (critical alerts stay immediate)</label>
       <div class="form-grid">
-        <label>Digest hour UTC<input name="digestHourUtc" type="number" min="0" max="23" value="9"></label>
-        <label>Maximum digest items<input name="digestMaximumItems" type="number" min="1" max="25" value="10"></label>
+        <label>Digest hour UTC<input name="digestHourUtc" type="number" min="0" max="23" value="${escapeHtml(digest.hourUtc)}"></label>
+        <label>Maximum digest items<input name="digestMaximumItems" type="number" min="1" max="25" value="${escapeHtml(digest.maximumItems)}"></label>
       </div>
       </div>
       <div id="notificationReportSettings" hidden>
         <div class="form-grid">
           <label>Weekly day UTC
             <select name="reportDayOfWeekUtc">
-              <option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option>
+              <option value="1" ${Number(reportSchedule.dayOfWeekUtc) === 1 ? 'selected' : ''}>Monday</option><option value="2" ${Number(reportSchedule.dayOfWeekUtc) === 2 ? 'selected' : ''}>Tuesday</option><option value="3" ${Number(reportSchedule.dayOfWeekUtc) === 3 ? 'selected' : ''}>Wednesday</option><option value="4" ${Number(reportSchedule.dayOfWeekUtc) === 4 ? 'selected' : ''}>Thursday</option><option value="5" ${Number(reportSchedule.dayOfWeekUtc) === 5 ? 'selected' : ''}>Friday</option><option value="6" ${Number(reportSchedule.dayOfWeekUtc) === 6 ? 'selected' : ''}>Saturday</option><option value="0" ${Number(reportSchedule.dayOfWeekUtc) === 0 ? 'selected' : ''}>Sunday</option>
             </select>
           </label>
-          <label>Delivery hour UTC<input name="reportHourUtc" type="number" min="0" max="23" value="9"></label>
+          <label>Delivery hour UTC<input name="reportHourUtc" type="number" min="0" max="23" value="${escapeHtml(reportSchedule.hourUtc)}"></label>
         </div>
       </div>
-      <div class="notice">The policy starts paused. Activate it separately when this workspace is ready to deliver its configured alert or weekly status report.</div>
+      <div class="notice">${isEdit ? `Changes keep this policy ${escapeHtml(policy.status)}. Activation remains a separate confirmation.` : 'The policy starts paused. Activate it separately when this workspace is ready to deliver its configured alerts or weekly status report.'}</div>
       <div class="toolbar modal-actions">
         <button class="button" type="button" id="cancelNotificationPolicy">Cancel</button>
-        <button class="button primary" type="submit">Save paused policy</button>
+        <button class="button primary" type="submit">${isEdit ? 'Save changes' : 'Save paused policy'}</button>
       </div>
     </form>
   `;
@@ -4630,25 +4649,27 @@ function openNotificationPolicy() {
   document.getElementById('cancelNotificationPolicy').addEventListener('click', closeModal);
   const policyForm = document.getElementById('notificationPolicyForm');
   const channelInput = policyForm.elements.channel;
-  const eventTypeInput = policyForm.elements.eventType;
+  const eventTypeInputs = [...policyForm.querySelectorAll('input[name="eventTypes"]')];
   const webhookDestination = document.getElementById('notificationWebhookDestination');
   const emailDestination = document.getElementById('notificationEmailDestination');
   const alertSettings = document.getElementById('notificationAlertSettings');
   const reportSettings = document.getElementById('notificationReportSettings');
   const syncDestinationInput = () => {
     const emailSelected = channelInput.value === 'email';
+    const retainsDestination = isEdit && policy.destinationConfigured && channelInput.value === policy.channel;
     webhookDestination.hidden = emailSelected;
     emailDestination.hidden = !emailSelected;
-    policyForm.elements.destinationUrl.required = !emailSelected;
-    policyForm.elements.destinationEmail.required = emailSelected;
+    policyForm.elements.destinationUrl.required = !emailSelected && !retainsDestination;
+    policyForm.elements.destinationEmail.required = emailSelected && !retainsDestination;
   };
   channelInput.addEventListener('change', syncDestinationInput);
   const syncEventSettings = () => {
-    const isWeeklyStatus = eventTypeInput.value === 'weekly_status_report';
-    alertSettings.hidden = isWeeklyStatus;
-    reportSettings.hidden = !isWeeklyStatus;
+    const selectedEventTypes = eventTypeInputs.filter(input => input.checked).map(input => input.value);
+    alertSettings.hidden = !selectedEventTypes.includes('reconciliation_alert');
+    reportSettings.hidden = !selectedEventTypes.includes('weekly_status_report');
+    eventTypeInputs[0].setCustomValidity(selectedEventTypes.length ? '' : 'Select at least one delivery type');
   };
-  eventTypeInput.addEventListener('change', syncEventSettings);
+  eventTypeInputs.forEach(input => input.addEventListener('change', syncEventSettings));
   syncDestinationInput();
   syncEventSettings();
   policyForm.addEventListener('submit', async (event) => {
@@ -4657,35 +4678,46 @@ function openNotificationPolicy() {
     submitButton.disabled = true;
     submitButton.textContent = 'Saving...';
     try {
-      await fetchApi('/api/notifications/policies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...Object.fromEntries(new FormData(event.currentTarget).entries()),
-          quietHours: {
-            enabled: event.currentTarget.elements.quietHoursEnabled.checked,
-            startHourUtc: Number(event.currentTarget.elements.quietStartHourUtc.value),
-            endHourUtc: Number(event.currentTarget.elements.quietEndHourUtc.value)
-          },
-          digest: {
-            enabled: event.currentTarget.elements.digestEnabled.checked,
-            hourUtc: Number(event.currentTarget.elements.digestHourUtc.value),
-            maximumItems: Number(event.currentTarget.elements.digestMaximumItems.value)
-          },
-          eventTypes: [event.currentTarget.elements.eventType.value],
-          reportSchedule: {
-            enabled: event.currentTarget.elements.eventType.value === 'weekly_status_report',
-            reportType: 'weekly_status',
-            dayOfWeekUtc: Number(event.currentTarget.elements.reportDayOfWeekUtc.value),
-            hourUtc: Number(event.currentTarget.elements.reportHourUtc.value)
-          }
-        })
-      });
+      const form = event.currentTarget;
+      const formValues = Object.fromEntries(new FormData(form).entries());
+      const destinationField = channelInput.value === 'email' ? 'destinationEmail' : 'destinationUrl';
+      const payload = {
+        ...formValues,
+        quietHours: {
+          enabled: form.elements.quietHoursEnabled.checked,
+          startHourUtc: Number(form.elements.quietStartHourUtc.value),
+          endHourUtc: Number(form.elements.quietEndHourUtc.value)
+        },
+        digest: {
+          enabled: form.elements.digestEnabled.checked,
+          hourUtc: Number(form.elements.digestHourUtc.value),
+          maximumItems: Number(form.elements.digestMaximumItems.value)
+        },
+        eventTypes: eventTypeInputs.filter(input => input.checked).map(input => input.value),
+        reportSchedule: {
+          enabled: eventTypeInputs.some(input => input.checked && input.value === 'weekly_status_report'),
+          reportType: 'weekly_status',
+          dayOfWeekUtc: Number(form.elements.reportDayOfWeekUtc.value),
+          hourUtc: Number(form.elements.reportHourUtc.value)
+        }
+      };
+      delete payload.destinationUrl;
+      delete payload.destinationEmail;
+      if (form.elements[destinationField].value.trim()) payload[destinationField] = form.elements[destinationField].value.trim();
+      if (isEdit) {
+        if (!await updateNotificationPolicy(getId(policy.id || policy._id), payload)) return;
+      } else {
+        await fetchApi('/api/notifications/policies', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        await loadOperationsLedger();
+      }
       closeModal();
-      await loadOperationsLedger();
     } catch (error) {
       submitButton.disabled = false;
-      submitButton.textContent = 'Save paused policy';
+      submitButton.textContent = isEdit ? 'Save changes' : 'Save paused policy';
       openNotice('Policy not saved', error.message);
     }
   });
@@ -4709,11 +4741,14 @@ async function updateNotificationPolicy(policyId, body) {
 function openNotificationActivation(policyId) {
   const policy = (state.ledger.notificationPolicies || []).find(item => getId(item.id || item._id) === policyId);
   if (!policy) return;
-  els.modalTitle.textContent = 'Activate alert policy';
+  const eventLabels = [];
+  if ((policy.eventTypes || []).includes('reconciliation_alert')) eventLabels.push(`${policy.minimumSeverity} reconciliation evidence alerts`);
+  if ((policy.eventTypes || []).includes('weekly_status_report')) eventLabels.push('weekly status reports');
+  els.modalTitle.textContent = 'Activate delivery policy';
   els.modalBody.innerHTML = `
     <form id="activateNotificationPolicyForm" class="notice-stack">
-      <div class="notice">Activating <strong>${escapeHtml(policy.name)}</strong> sends matching ${escapeHtml(policy.minimumSeverity)} reconciliation evidence alerts to <strong>${escapeHtml(policy.destinationLabel || 'the configured destination')}</strong>.</div>
-      <label><input type="checkbox" name="confirmActivation" required> I confirm this workspace may deliver these alerts.</label>
+      <div class="notice">Activating <strong>${escapeHtml(policy.name)}</strong> permits ${escapeHtml(eventLabels.join(' and ') || 'configured deliveries')} to <strong>${escapeHtml(policy.destinationLabel || 'the configured destination')}</strong>.</div>
+      <label><input type="checkbox" name="confirmActivation" required> I confirm this workspace may deliver these notifications.</label>
       <div class="toolbar modal-actions">
         <button class="button" type="button" id="cancelNotificationActivation">Cancel</button>
         <button class="button primary" type="submit">Activate policy</button>
