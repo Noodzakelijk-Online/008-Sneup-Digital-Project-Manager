@@ -58,7 +58,7 @@ const profileForMember = (member, profilesByMember = new Map()) => {
   const focusHoursPerWeek = clamp(Number(profile.focusHoursPerWeek ?? DEFAULT_FOCUS_HOURS), 0, weeklyHours);
   return {
     profileId: profile._id ? asId(profile) : null,
-    configured: Boolean(profile._id),
+    configured: Boolean(profile._id) || profile.scenarioOverride === true,
     weeklyHours,
     allocationPercent,
     focusHoursPerWeek,
@@ -67,6 +67,34 @@ const profileForMember = (member, profilesByMember = new Map()) => {
     externalIdentities: Array.isArray(profile.externalIdentities) ? profile.externalIdentities : [],
     active: profile.active !== false
   };
+};
+
+// Scenario inputs are kept in the request path only. They never update a CapacityProfile.
+const applyScenarioOverrides = (profiles = [], members = [], overrides = []) => {
+  if (!Array.isArray(overrides) || overrides.length === 0) return profiles;
+  const memberIds = new Set(members.map(asId));
+  const overridesByMember = new Map(overrides
+    .filter((override) => memberIds.has(String(override?.memberId || '')))
+    .map((override) => [String(override.memberId), override]));
+  if (overridesByMember.size === 0) return profiles;
+
+  const profileByMember = new Map(profiles.map((profile) => [asId(profile.memberId), profile]));
+  return members.map((member) => {
+    const memberId = asId(member);
+    const override = overridesByMember.get(memberId);
+    const existing = profileByMember.get(memberId);
+    if (!override) return existing || { memberId };
+    const base = existing?.toObject ? existing.toObject() : (existing || { memberId });
+    return {
+      ...base,
+      memberId,
+      ...(override.weeklyHours === undefined ? {} : { weeklyHours: override.weeklyHours }),
+      ...(override.allocationPercent === undefined ? {} : { allocationPercent: override.allocationPercent }),
+      ...(override.focusHoursPerWeek === undefined ? {} : { focusHoursPerWeek: override.focusHoursPerWeek }),
+      ...(override.timeOff === undefined ? {} : { timeOff: override.timeOff }),
+      scenarioOverride: true
+    };
+  });
 };
 
 const timeOffHoursInWindow = (profile, now, horizonDays = 60) => {
@@ -707,7 +735,7 @@ class ForecastService {
       Board.find({ workspaceId, closed: false }).limit(250),
       Card.find({ workspaceId, closed: false }).limit(MAX_FORECAST_CARDS + 1),
       Member.find({ workspaceId }).limit(500),
-      CapacityProfile.find({ workspaceId, active: true }).limit(500),
+      CapacityProfile.find({ workspaceId }).limit(500),
       Performance.find({ workspaceId, period: 'weekly' }).sort({ startDate: -1 }).limit(500),
       WorkSignal.find({
         workspaceId,
@@ -726,11 +754,12 @@ class ForecastService {
         sourceType: 'event'
       }).select('provider status owners raw lastSeenAt').sort({ lastSeenAt: -1 }).limit(MAX_CALENDAR_SIGNALS + 1)
     ]);
-    return buildForecast({
+    const scenarioOverrides = Array.isArray(options.scenarioOverrides) ? options.scenarioOverrides : [];
+    const forecast = buildForecast({
       boards,
       cards,
       members,
-      profiles,
+      profiles: applyScenarioOverrides(profiles, members, scenarioOverrides),
       performances,
       utilizationSignals: utilizationSignals.slice(0, MAX_UTILIZATION_SIGNALS),
       utilizationTruncated: utilizationSignals.length > MAX_UTILIZATION_SIGNALS,
@@ -740,6 +769,15 @@ class ForecastService {
       calendarTruncated: calendarSignals.length > MAX_CALENDAR_SIGNALS,
       now
     });
+    if (scenarioOverrides.length > 0) {
+      forecast.scenario = {
+        active: true,
+        overrideCount: scenarioOverrides.length,
+        memberIds: scenarioOverrides.map((override) => String(override.memberId)),
+        appliedAt: now
+      };
+    }
+    return forecast;
   }
 
   async getBoardForecast(boardId, options = {}) {
@@ -759,3 +797,4 @@ const forecastService = new ForecastService();
 module.exports = forecastService;
 module.exports.ForecastService = ForecastService;
 module.exports.buildForecast = buildForecast;
+module.exports.applyScenarioOverrides = applyScenarioOverrides;

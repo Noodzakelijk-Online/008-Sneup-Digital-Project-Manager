@@ -477,9 +477,10 @@ function renderForecast(errorMessage = '') {
   const utilization = forecast.dataQuality?.utilization || {};
   const allocations = forecast.dataQuality?.allocations || {};
   const calendar = forecast.dataQuality?.calendar || {};
+  const scenario = forecast.scenario || null;
   els.forecastCount.textContent = String(boards.filter(board => board.health !== 'on_track').length);
-  els.forecastMode.textContent = forecast.mode === 'demo' ? 'demo' : 'analysis only';
-  els.forecastMode.className = `pill ${forecast.mode === 'demo' ? 'review' : 'healthy'}`;
+  els.forecastMode.textContent = forecast.mode === 'demo' ? 'demo' : scenario?.active ? 'scenario' : 'analysis only';
+  els.forecastMode.className = `pill ${forecast.mode === 'demo' || scenario?.active ? 'review' : 'healthy'}`;
   els.forecastCapacityCount.textContent = `${members.length} people`;
   els.forecastBoardCount.textContent = `${boards.length} boards`;
   els.forecastMetrics.innerHTML = [
@@ -489,12 +490,12 @@ function renderForecast(errorMessage = '') {
     ['Open cards', portfolio.openCards || 0],
     ['Weekly capacity', `${portfolio.weeklyAvailableHours || 0}h`],
     ['Estimated work', `${portfolio.workHours || 0}h`],
-    ['Tracked utilization', utilization.entries ? `${utilization.weeklyHours || 0}h/week from ${formatProviderNames(utilization.activeProviders)}` : 'No tracked-time evidence'],
-    ['Mapped allocations', allocations.matchedEntries ? `${allocations.matchedWeeklyHours || 0}h/week` : 'No resourcing evidence'],
-    ['Board-mapped schedule', allocations.mappedProjectEntries ? `${allocations.mappedProjectWeeklyHours || 0}h/week` : 'No project mappings'],
-    ['Mapped calendar', calendar.matchedEntries ? `${calendar.matchedWeeklyHours || 0}h/week` : 'No calendar evidence']
+    ['Tracked utilization', utilization.entries ? `${utilization.weeklyHours || 0}h/week, ${(utilization.activeProviders || []).length} source${(utilization.activeProviders || []).length === 1 ? '' : 's'}` : 'No data'],
+    ['Mapped allocations', allocations.matchedEntries ? `${allocations.matchedWeeklyHours || 0}h/week` : 'No data'],
+    ['Board-mapped schedule', allocations.mappedProjectEntries ? `${allocations.mappedProjectWeeklyHours || 0}h/week` : 'No mapping'],
+    ['Mapped calendar', calendar.matchedEntries ? `${calendar.matchedWeeklyHours || 0}h/week` : 'No data']
   ].map(([label, value]) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
-  els.portfolioForecast.innerHTML = renderForecastSummary(portfolio);
+  els.portfolioForecast.innerHTML = renderForecastSummary(portfolio, scenario);
   els.forecastCapacity.innerHTML = listOrEmpty(members, renderCapacityMember);
   els.forecastBoards.innerHTML = listOrEmpty(boards, renderBoardForecast);
   document.querySelectorAll('[data-capacity-member]').forEach((button) => {
@@ -502,6 +503,15 @@ function renderForecast(errorMessage = '') {
   });
   document.querySelectorAll('[data-board-project-mappings]').forEach((button) => {
     button.addEventListener('click', () => openBoardProjectMappingsEditor(button.dataset.boardProjectMappings));
+  });
+  document.querySelectorAll('[data-forecast-scenario]').forEach((button) => {
+    button.addEventListener('click', openForecastScenario);
+  });
+  document.querySelectorAll('[data-forecast-scenario-reset]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await loadForecast();
+      openNotice('Scenario reset', 'Sneup restored the live analysis without changing any capacity profile.');
+    });
   });
 }
 
@@ -517,7 +527,8 @@ function formatProviderNames(providers = []) {
   return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
 }
 
-function renderForecastSummary(forecast = {}) {
+function renderForecastSummary(forecast = {}, scenario = null) {
+  const canManageCapacity = forecast.mode !== 'demo' && state.securityContext?.permissions?.includes('capacity:manage');
   return `
     <div class="item forecast-summary">
       <div class="item-title">
@@ -528,8 +539,75 @@ function renderForecastSummary(forecast = {}) {
       <div class="meta">${escapeHtml(forecast.confidenceLabel || 'low evidence')} confidence: forecast uses explicit capacity and uncertainty assumptions.</div>
       ${(forecast.risks || []).length ? `<div class="forecast-risks">${forecast.risks.map(risk => `<span class="pill high">${escapeHtml(risk)}</span>`).join('')}</div>` : ''}
       <details class="payload"><summary>Assumptions</summary><div class="forecast-assumptions">${(forecast.assumptions || []).map(item => `<p>${escapeHtml(item)}</p>`).join('')}</div></details>
+      ${scenario?.active ? `<div class="notice">Temporary scenario for ${scenario.overrideCount || 0} contributor${scenario.overrideCount === 1 ? '' : 's'}. It does not change a capacity profile, provider, work item, or decision.</div>` : ''}
+      ${canManageCapacity ? `<div class="item-actions">${scenario?.active ? '<button class="button" data-forecast-scenario-reset type="button">Reset scenario</button>' : ''}<button class="button primary" data-forecast-scenario type="button">Explore capacity scenario</button></div>` : ''}
     </div>
   `;
+}
+
+function openForecastScenario() {
+  const members = (state.forecast?.memberCapacity || []).filter(member => member.memberId);
+  if (!members.length) {
+    openNotice('Capacity scenario unavailable', 'Sneup needs at least one active team member in the live workspace.');
+    return;
+  }
+  const selected = members[0];
+  els.modalTitle.textContent = 'Explore capacity scenario';
+  els.modalBody.innerHTML = `
+    <form id="forecastScenarioForm">
+      <div class="notice">This is a temporary what-if analysis. It does not save a capacity profile, change provider data, update work, or queue a decision.</div>
+      <div class="field"><label for="forecastScenarioMember">Contributor</label><select id="forecastScenarioMember" name="memberId">${members.map(member => `<option value="${escapeHtml(member.memberId)}">${escapeHtml(member.name || 'Team member')}</option>`).join('')}</select></div>
+      <div class="field"><label for="forecastScenarioWeeklyHours">Weekly hours</label><input id="forecastScenarioWeeklyHours" name="weeklyHours" type="number" min="1" max="80" value="${escapeHtml(selected.weeklyHours || 32)}" required></div>
+      <div class="field"><label for="forecastScenarioAllocation">Allocation percentage</label><input id="forecastScenarioAllocation" name="allocationPercent" type="number" min="0" max="100" value="${escapeHtml(selected.allocationPercent ?? 100)}" required></div>
+      <div class="field"><label for="forecastScenarioFocus">Focus hours per week</label><input id="forecastScenarioFocus" name="focusHoursPerWeek" type="number" min="0" max="80" value="${escapeHtml(selected.focusHoursPerWeek || 0)}" required></div>
+      <div class="field"><label for="forecastScenarioTimeOff">Temporary time off (one YYYY-MM-DD to YYYY-MM-DD range per line)</label><textarea id="forecastScenarioTimeOff" name="timeOff">${escapeHtml((selected.timeOff || []).map(item => `${String(item.startDate || '').slice(0, 10)} to ${String(item.endDate || '').slice(0, 10)}${item.label ? ` | ${item.label}` : ''}`).join('\n'))}</textarea></div>
+      <div class="toolbar modal-actions"><button class="button" type="button" id="cancelForecastScenario">Cancel</button><button class="button primary" type="submit">Run scenario</button></div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  const form = document.getElementById('forecastScenarioForm');
+  const syncMemberInputs = () => {
+    const member = members.find(item => String(item.memberId) === String(form.elements.memberId.value));
+    if (!member) return;
+    form.elements.weeklyHours.value = member.weeklyHours || 32;
+    form.elements.allocationPercent.value = member.allocationPercent ?? 100;
+    form.elements.focusHoursPerWeek.value = member.focusHoursPerWeek || 0;
+    form.elements.timeOff.value = (member.timeOff || []).map(item => `${String(item.startDate || '').slice(0, 10)} to ${String(item.endDate || '').slice(0, 10)}${item.label ? ` | ${item.label}` : ''}`).join('\n');
+  };
+  document.getElementById('cancelForecastScenario').addEventListener('click', closeModal);
+  form.elements.memberId.addEventListener('change', syncMemberInputs);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      const timeOff = form.elements.timeOff.value.split('\n').map((line) => {
+        const [range, label] = line.split('|');
+        const [startDate, endDate] = range.split(/\s+to\s+/i).map(value => value.trim());
+        return startDate && endDate ? { startDate, endDate, label: label?.trim() || '' } : null;
+      }).filter(Boolean);
+      const data = await fetchApi('/api/forecasts/scenarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          overrides: [{
+            memberId: form.elements.memberId.value,
+            weeklyHours: form.elements.weeklyHours.value,
+            allocationPercent: form.elements.allocationPercent.value,
+            focusHoursPerWeek: form.elements.focusHoursPerWeek.value,
+            timeOff
+          }]
+        })
+      });
+      state.forecast = data.forecast || null;
+      closeModal();
+      renderForecast();
+      openNotice('Scenario ready', 'Sneup calculated this temporary delivery range without changing live capacity.');
+    } catch (error) {
+      submit.disabled = false;
+      openNotice('Scenario failed', error.message);
+    }
+  });
 }
 
 function renderBoardForecast(forecast = {}) {

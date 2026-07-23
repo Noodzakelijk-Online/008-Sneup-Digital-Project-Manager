@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const Board = require('../models/Board');
 const CapacityProfile = require('../models/CapacityProfile');
 const Member = require('../models/Member');
@@ -33,6 +34,51 @@ const normalizeTimeOff = (items) => {
       throw error;
     }
     return { startDate, endDate, label: String(item.label || '').trim().slice(0, 160) };
+  });
+};
+
+const optionalBoundedNumber = (value, field, minimum, maximum) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < minimum || number > maximum) {
+    const error = new Error(`${field} must be a number from ${minimum} to ${maximum}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return number;
+};
+
+const normalizeScenarioOverrides = (items) => {
+  if (!Array.isArray(items) || items.length === 0 || items.length > 10) {
+    const error = new Error('A capacity scenario needs from 1 to 10 member overrides');
+    error.statusCode = 400;
+    throw error;
+  }
+  const seen = new Set();
+  return items.map((item) => {
+    const memberId = String(item?.memberId || '').trim();
+    if (!mongoose.isValidObjectId(memberId) || seen.has(memberId)) {
+      const error = new Error('Each capacity scenario member must be valid and unique');
+      error.statusCode = 400;
+      throw error;
+    }
+    seen.add(memberId);
+    const weeklyHours = optionalBoundedNumber(item.weeklyHours, 'weeklyHours', 1, 80);
+    const allocationPercent = optionalBoundedNumber(item.allocationPercent, 'allocationPercent', 0, 100);
+    const focusHoursPerWeek = optionalBoundedNumber(item.focusHoursPerWeek, 'focusHoursPerWeek', 0, weeklyHours ?? 80);
+    const hasTimeOff = Object.prototype.hasOwnProperty.call(item, 'timeOff');
+    if (weeklyHours === undefined && allocationPercent === undefined && focusHoursPerWeek === undefined && !hasTimeOff) {
+      const error = new Error('Each capacity scenario member needs at least one temporary capacity change');
+      error.statusCode = 400;
+      throw error;
+    }
+    return {
+      memberId,
+      ...(weeklyHours === undefined ? {} : { weeklyHours }),
+      ...(allocationPercent === undefined ? {} : { allocationPercent }),
+      ...(focusHoursPerWeek === undefined ? {} : { focusHoursPerWeek }),
+      ...(hasTimeOff ? { timeOff: normalizeTimeOff(item.timeOff) } : {})
+    };
   });
 };
 
@@ -108,6 +154,36 @@ router.get('/boards/:boardId', requirePermission('audit:read'), async (req, res)
     res.json({ success: true, forecast });
   } catch (error) {
     sendError(res, error, 'Failed to calculate board forecast');
+  }
+});
+
+router.post('/scenarios', requirePermission('capacity:manage'), async (req, res) => {
+  try {
+    operationsLedgerService.requireDatabase();
+    const workspaceId = getRequestWorkspaceObjectId(req);
+    const scenarioOverrides = normalizeScenarioOverrides(req.body?.overrides);
+    const memberIds = scenarioOverrides.map((override) => override.memberId);
+    const matchedMembers = await Member.find({ workspaceId, _id: { $in: memberIds } }).select('_id').lean();
+    if (matchedMembers.length !== memberIds.length) {
+      const error = new Error('Every capacity scenario member must belong to the current workspace');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const forecast = await forecastService.getForecast({ workspaceId, scenarioOverrides });
+    await operationsLedgerService.recordAudit({
+      workspaceId,
+      entityType: 'forecast_scenario',
+      entityId: null,
+      action: 'forecast_capacity_scenario_explored',
+      actor: req.auth?.actorId || 'sneup',
+      source: 'api',
+      riskLevel: 'low',
+      afterState: { analysisOnly: true, overrideCount: scenarioOverrides.length }
+    });
+    res.json({ success: true, forecast });
+  } catch (error) {
+    sendError(res, error, 'Failed to calculate capacity scenario');
   }
 });
 
@@ -202,3 +278,4 @@ router.post('/boards/:boardId/project-mappings', requirePermission('capacity:man
 });
 
 module.exports = router;
+module.exports.normalizeScenarioOverrides = normalizeScenarioOverrides;
