@@ -19,6 +19,7 @@ const enhancementBacklog = require('../src/services/enhancementBacklog');
 const { getCategories, getConnectors } = require('../src/services/connectorRegistry');
 const { NotificationService } = require('../src/services/notificationService');
 const NotificationPolicy = require('../src/models/NotificationPolicy');
+const NotificationDelivery = require('../src/models/NotificationDelivery');
 const reportingService = require('../src/services/reportingService');
 
 const createResponse = () => ({
@@ -1087,6 +1088,9 @@ describe('notification delivery safety', () => {
 
     expect(notificationService.isReportDue(policy, '2026-07-13T08:59:00.000Z')).toBe(false);
     expect(notificationService.isReportDue(policy, '2026-07-13T09:00:00.000Z')).toBe(true);
+    expect(notificationService.isReportDue(policy, '2026-07-14T08:59:00.000Z')).toBe(true);
+    expect(notificationService.reportOccurrence(policy, '2026-07-14T08:59:00.000Z').toISOString()).toBe('2026-07-13T09:00:00.000Z');
+    expect(notificationService.isReportDue(policy, '2026-07-14T09:01:00.000Z')).toBe(false);
     expect(notificationService.reportDedupeKey('2026-07-13T09:00:00.000Z')).toBe('weekly-status-report:2026-07-13');
     const event = notificationService.buildWeeklyStatusReportEvent(report, '2026-07-13T09:00:00.000Z');
     expect(event).toMatchObject({
@@ -1117,6 +1121,7 @@ describe('notification delivery safety', () => {
     };
     const select = jest.fn().mockResolvedValue([duePolicy, futurePolicy]);
     const find = jest.spyOn(NotificationPolicy, 'find').mockReturnValue({ select });
+    const exists = jest.spyOn(NotificationDelivery, 'exists').mockResolvedValue(null);
     const generateReport = jest.spyOn(reportingService, 'generateReport').mockResolvedValue({
       filename: 'weekly-status-2026-07-13',
       headline: 'Launch update',
@@ -1128,7 +1133,7 @@ describe('notification delivery safety', () => {
     service.createAndDeliver = jest.fn().mockResolvedValue({ status: 'duplicate' });
 
     try {
-      await expect(service.dispatchScheduledReports({ workspaceId: 'workspace-1', now: '2026-07-13T09:00:00.000Z' })).resolves.toMatchObject({
+      await expect(service.dispatchScheduledReports({ workspaceId: 'workspace-1', now: '2026-07-14T08:00:00.000Z' })).resolves.toMatchObject({
         processedCount: 1,
         successCount: 1,
         failureCount: 0,
@@ -1147,6 +1152,37 @@ describe('notification delivery safety', () => {
       }), 'sneup-notification-worker');
     } finally {
       find.mockRestore();
+      exists.mockRestore();
+      generateReport.mockRestore();
+    }
+  });
+
+  test('does not regenerate a weekly status report once its delivery occurrence is recorded', async () => {
+    const service = new NotificationService();
+    const policy = {
+      _id: 'policy-delivered',
+      workspaceId: 'workspace-1',
+      reportSchedule: { enabled: true, reportType: 'weekly_status', dayOfWeekUtc: 1, hourUtc: 9 }
+    };
+    const select = jest.fn().mockResolvedValue([policy]);
+    const find = jest.spyOn(NotificationPolicy, 'find').mockReturnValue({ select });
+    const exists = jest.spyOn(NotificationDelivery, 'exists').mockResolvedValue({ _id: 'delivery-1' });
+    const generateReport = jest.spyOn(reportingService, 'generateReport');
+    service.requireDatabase = jest.fn();
+    service.resolveWorkspaceId = jest.fn(value => value);
+
+    try {
+      await expect(service.dispatchScheduledReports({ workspaceId: 'workspace-1', now: '2026-07-13T09:15:00.000Z' })).resolves.toMatchObject({
+        processedCount: 0,
+        successCount: 0,
+        failureCount: 0,
+        metadata: { activePolicies: 1, duePolicies: 1, pendingPolicies: 0, existingDeliveries: 1 }
+      });
+      expect(exists).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: 'weekly-status-report:2026-07-13' }));
+      expect(generateReport).not.toHaveBeenCalled();
+    } finally {
+      find.mockRestore();
+      exists.mockRestore();
       generateReport.mockRestore();
     }
   });

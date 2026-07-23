@@ -424,20 +424,35 @@ class NotificationService {
     });
   }
 
-  reportDedupeKey(now = new Date()) {
-    return `weekly-status-report:${new Date(now).toISOString().slice(0, 10)}`;
+  reportCatchUpHours() {
+    const configured = Number(process.env.SNEUP_REPORT_CATCH_UP_HOURS || 24);
+    return Number.isInteger(configured) && configured >= 1 && configured <= 168 ? configured : 24;
+  }
+
+  reportOccurrence(policy, now = new Date()) {
+    const schedule = policy.reportSchedule;
+    const date = new Date(now);
+    if (!schedule?.enabled || schedule.reportType !== 'weekly_status' || Number.isNaN(date.getTime())) return null;
+
+    const occurrence = new Date(date);
+    occurrence.setUTCMinutes(0, 0, 0);
+    occurrence.setUTCHours(schedule.hourUtc);
+    occurrence.setUTCDate(occurrence.getUTCDate() - ((date.getUTCDay() - schedule.dayOfWeekUtc + 7) % 7));
+    if (occurrence > date) occurrence.setUTCDate(occurrence.getUTCDate() - 7);
+
+    const ageHours = (date.getTime() - occurrence.getTime()) / (60 * 60 * 1000);
+    return ageHours >= 0 && ageHours <= this.reportCatchUpHours() ? occurrence : null;
+  }
+
+  reportDedupeKey(occurrence = new Date()) {
+    return `weekly-status-report:${new Date(occurrence).toISOString().slice(0, 10)}`;
   }
 
   isReportDue(policy, now = new Date()) {
-    const schedule = policy.reportSchedule;
-    const date = new Date(now);
-    return Boolean(schedule?.enabled)
-      && schedule.reportType === 'weekly_status'
-      && date.getUTCDay() === schedule.dayOfWeekUtc
-      && date.getUTCHours() === schedule.hourUtc;
+    return Boolean(this.reportOccurrence(policy, now));
   }
 
-  buildWeeklyStatusReportEvent(report = {}, now = new Date()) {
+  buildWeeklyStatusReportEvent(report = {}, now = new Date(), occurrence = now) {
     const evidence = [];
     const details = [];
     for (const section of report.sections || []) {
@@ -462,7 +477,7 @@ class NotificationService {
     ].filter(Boolean).join('\n\n'), 4000) || 'No project items need attention this week.';
     return {
       eventType: 'weekly_status_report',
-      dedupeKey: this.reportDedupeKey(now),
+      dedupeKey: this.reportDedupeKey(occurrence),
       severity: 'info',
       title: compact(`Sneup weekly status: ${report.headline || 'Project update'}`, 240),
       message,
@@ -485,22 +500,41 @@ class NotificationService {
       'reportSchedule.enabled': true,
       'reportSchedule.reportType': 'weekly_status'
     }).select('+destinationEncrypted');
-    const duePolicies = policies.filter(policy => this.isReportDue(policy, now));
-    if (duePolicies.length === 0) return { processedCount: 0, successCount: 0, failureCount: 0, metadata: { activePolicies: policies.length, duePolicies: 0 } };
+    const duePolicies = policies.map(policy => ({ policy, occurrence: this.reportOccurrence(policy, now) }))
+      .filter(item => item.occurrence);
+    if (duePolicies.length === 0) return { processedCount: 0, successCount: 0, failureCount: 0, metadata: { activePolicies: policies.length, duePolicies: 0, pendingPolicies: 0, existingDeliveries: 0 } };
+
+    const deliveryChecks = await Promise.all(duePolicies.map(async (item) => ({
+      ...item,
+      existing: await NotificationDelivery.exists({
+        workspaceId,
+        policyId: item.policy._id,
+        dedupeKey: this.reportDedupeKey(item.occurrence)
+      })
+    })));
+    const pendingPolicies = deliveryChecks.filter(item => !item.existing);
+    if (pendingPolicies.length === 0) {
+      return {
+        processedCount: 0,
+        successCount: 0,
+        failureCount: 0,
+        metadata: { activePolicies: policies.length, duePolicies: duePolicies.length, pendingPolicies: 0, existingDeliveries: duePolicies.length }
+      };
+    }
 
     let report;
     try {
       report = await reportingService.generateReport('weekly_status', { workspaceId });
     } catch (error) {
       logger.error('Scheduled weekly status report generation failed:', error);
-      return { processedCount: duePolicies.length, successCount: 0, failureCount: duePolicies.length, metadata: { activePolicies: policies.length, duePolicies: duePolicies.length } };
+      return { processedCount: pendingPolicies.length, successCount: 0, failureCount: pendingPolicies.length, metadata: { activePolicies: policies.length, duePolicies: duePolicies.length, pendingPolicies: pendingPolicies.length, existingDeliveries: duePolicies.length - pendingPolicies.length } };
     }
 
     let successCount = 0;
     let failureCount = 0;
-    for (const policy of duePolicies) {
+    for (const { policy, occurrence } of pendingPolicies) {
       try {
-        const result = await this.createAndDeliver(policy, this.buildWeeklyStatusReportEvent(report, now), 'sneup-notification-worker');
+        const result = await this.createAndDeliver(policy, this.buildWeeklyStatusReportEvent(report, now, occurrence), 'sneup-notification-worker');
         if (['delivered', 'duplicate', 'in_progress'].includes(result.status)) successCount += 1;
         else failureCount += 1;
       } catch (error) {
@@ -509,10 +543,16 @@ class NotificationService {
       }
     }
     return {
-      processedCount: duePolicies.length,
+      processedCount: pendingPolicies.length,
       successCount,
       failureCount,
-      metadata: { activePolicies: policies.length, duePolicies: duePolicies.length, reportFilename: report.filename }
+      metadata: {
+        activePolicies: policies.length,
+        duePolicies: duePolicies.length,
+        pendingPolicies: pendingPolicies.length,
+        existingDeliveries: duePolicies.length - pendingPolicies.length,
+        reportFilename: report.filename
+      }
     };
   }
 
