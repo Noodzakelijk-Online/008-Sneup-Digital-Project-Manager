@@ -25,11 +25,8 @@ Fixed or mitigated:
 
 Remaining hardening:
 
-- Move inline dashboard CSS/JS into external files and remove `unsafe-inline` from CSP.
 - Add a publisher certificate for Windows installer signing.
 - Add per-user/team authorization if Sneup becomes multi-user or internet-facing.
-
-- Harden API rate limiting bucket lifecycle so in-memory state is bounded under high-cardinality request flows.
 
 ## Resource Usage Work
 
@@ -66,8 +63,8 @@ The desktop app starts Sneup on `127.0.0.1` and opens the command center in an a
 
 - Syntax checks passed for changed JavaScript files.
 - `npm run lint` passed with the new Node/ES2022 ESLint config.
-- `npm test -- --runInBand` passed 6 focused security and connector tests.
+- `npm test -- --runInBand` passed 575 tests across 62 suites.
 - `npm audit --omit=dev` reported 0 vulnerabilities.
 - Local HTTP smoke tests passed for health, connector catalog, and mission control.
 - Browser smoke test loaded the dashboard, opened connectors, filtered the connector marketplace, and observed no console errors.
-- The current resource pass passed `npm run lint`, all 523 Jest tests, a production-only `npm audit` with zero findings, and a fresh Windows NSIS build after inspecting its packaged archive.
+- The current resource pass passed `npm run lint`, a production-only `npm audit` with zero findings, and a fresh Windows NSIS build after inspecting its packaged archive.
