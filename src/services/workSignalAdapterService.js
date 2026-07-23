@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject', 'hive',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject', 'hive', 'clarizen',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -50,6 +50,7 @@ const everhourWorkSignalClient = lazyClient('./everhourWorkSignalClient');
 const codaWorkSignalClient = lazyClient('./codaWorkSignalClient');
 const quipWorkSignalClient = lazyClient('./quipWorkSignalClient');
 const hiveWorkSignalClient = lazyClient('./hiveWorkSignalClient');
+const clarizenWorkSignalClient = lazyClient('./clarizenWorkSignalClient');
 const teamworkWorkSignalClient = lazyClient('./teamworkWorkSignalClient');
 const teamGanttWorkSignalClient = lazyClient('./teamganttWorkSignalClient');
 const businessmapWorkSignalClient = lazyClient('./businessmapWorkSignalClient');
@@ -928,6 +929,14 @@ hiveAdapter.capabilities.credentialBackedSync = true;
 hiveAdapter.list = async account => (await hiveWorkSignalClient.fetchDelta(account, null)).records;
 hiveAdapter.fetchDelta = (account, cursor) => hiveWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('hive', hiveAdapter);
+
+const clarizenAdapter = buildAdapter('clarizen', 'Planview AdaptiveWork project metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'project'), title: titleFromText(item.name, 'AdaptiveWork project'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['clarizen', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined]), dueAt: undefined, providerCreatedAt: item.startAt, providerUpdatedAt: item.startAt, evidenceRefs: baseEvidence(account, item, 'Planview AdaptiveWork project metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, status: item.status, startAt: item.startAt }
+}));
+clarizenAdapter.capabilities.credentialBackedSync = true;
+clarizenAdapter.list = async account => (await clarizenWorkSignalClient.fetchDelta(account, null)).records;
+clarizenAdapter.fetchDelta = (account, cursor) => clarizenWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('clarizen', clarizenAdapter);
 
 const youTrackAdapter = buildAdapter('youtrack', 'YouTrack issue metadata adapter', (account, item) => ({
   externalId: pick(item.id), sourceType: 'issue', title: titleFromText(item.name, 'YouTrack issue'), description: '',
