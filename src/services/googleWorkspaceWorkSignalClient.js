@@ -30,19 +30,30 @@ const taskRecord = (item, taskList) => {
   return compact({ id: `google_task:${taskList.taskListId}:${item.id}`, externalId: `google_tasks:${taskList.taskListId}:${item.id}`, googleSource: 'tasks', sourceType: 'task', taskId: item.id, taskListId: taskList.taskListId, taskList: { id: taskList.taskListId, name: taskList.name }, name: boundedText(item.title), status: item.deleted ? 'deleted' : item.status === 'completed' ? 'done' : 'open', dueAt: dueAt?.toISOString(), completedAt: completedAt?.toISOString(), updatedAt: updatedAt?.toISOString() });
 };
 
-const calendarEvent = (event = {}, calendar = {}) => ({
-  id: event.id,
-  summary: event.summary,
-  status: event.status,
-  start: event.start && { dateTime: event.start.dateTime, date: event.start.date, timeZone: event.start.timeZone },
-  end: event.end && { dateTime: event.end.dateTime, date: event.end.date, timeZone: event.end.timeZone },
-  organizer: event.organizer && { email: event.organizer.email, displayName: event.organizer.displayName },
-  creator: event.creator && { email: event.creator.email, displayName: event.creator.displayName },
-  created: event.created,
-  updated: event.updated,
-  htmlLink: event.htmlLink,
-  calendar: { id: calendar.id, name: calendar.summary }
-});
+const calendarRecord = item => item?.id ? { id: String(item.id), name: boundedText(item.summary) || 'Google Calendar' } : null;
+const calendarEvent = (event = {}, calendar = {}) => {
+  const createdAt = parseDate(event.created);
+  const updatedAt = parseDate(event.updated);
+  if (!event.id || !calendar.id || (event.created && !createdAt) || (event.updated && !updatedAt)) return null;
+  return compact({
+    id: event.id,
+    summary: boundedText(event.summary) || 'Google Calendar event',
+    status: boundedText(event.status),
+    start: event.start && { dateTime: event.start.dateTime, date: event.start.date },
+    end: event.end && { dateTime: event.end.dateTime, date: event.end.date },
+    // The opaque organizer identifier is retained only for explicit local capacity mappings.
+    organizer: event.organizer?.email ? { email: event.organizer.email } : undefined,
+    created: createdAt?.toISOString(),
+    updated: updatedAt?.toISOString(),
+    calendar: { id: calendar.id, name: calendar.name }
+  });
+};
+const driveFile = item => {
+  const createdAt = parseDate(item?.createdTime);
+  const updatedAt = parseDate(item?.modifiedTime);
+  if (!item?.id || !boundedText(item.name) || (item.createdTime && !createdAt) || (item.modifiedTime && !updatedAt)) return null;
+  return compact({ id: item.id, name: boundedText(item.name), mimeType: boundedText(item.mimeType), createdTime: createdAt?.toISOString(), modifiedTime: updatedAt?.toISOString(), trashed: item.trashed === true });
+};
 
 class GoogleWorkspaceWorkSignalClient {
   constructor(options = {}) {
@@ -53,8 +64,8 @@ class GoogleWorkspaceWorkSignalClient {
 
   config() {
     return {
-      calendarUrl: String(process.env.SNEUP_GOOGLE_CALENDAR_API_URL || 'https://www.googleapis.com/calendar/v3').replace(/\/$/, ''),
-      driveUrl: String(process.env.SNEUP_GOOGLE_DRIVE_API_URL || 'https://www.googleapis.com/drive/v3').replace(/\/$/, ''),
+      calendarUrl: 'https://www.googleapis.com/calendar/v3',
+      driveUrl: 'https://www.googleapis.com/drive/v3',
       tasksUrl: 'https://tasks.googleapis.com/tasks/v1',
       timeout: clamp(process.env.SNEUP_GOOGLE_TIMEOUT_MS, 15000, 60000),
       maxCalendars: clamp(process.env.SNEUP_GOOGLE_MAX_CALENDARS, 10, 100),
@@ -138,14 +149,17 @@ class GoogleWorkspaceWorkSignalClient {
       this.http.get(`${config.driveUrl}/files`, this.options(token, config, {
         pageSize: config.maxFiles,
         orderBy: 'modifiedTime desc',
-        fields: 'files(id,name,mimeType,modifiedTime,createdTime,webViewLink,owners(displayName,emailAddress),trashed)'
+        fields: 'files(id,name,mimeType,modifiedTime,createdTime,trashed)'
       })),
       this.http.get(`${config.tasksUrl}/users/@me/lists`, this.options(token, config, {
         maxResults: config.maxTaskLists,
         fields: 'items(id,title,updated),nextPageToken'
       }))
     ]);
-    const calendars = Array.isArray(calendarResponse.data?.items) ? calendarResponse.data.items : [];
+    const calendarItems = Array.isArray(calendarResponse.data?.items) ? calendarResponse.data.items : null;
+    if (!calendarItems) throw error('Google Workspace returned an invalid calendar response. Reconnect this account before syncing again.');
+    const calendars = calendarItems.map(calendarRecord);
+    if (calendars.some(item => !item)) throw error('Google Workspace returned invalid calendar metadata. Reconnect this account before syncing again.');
     if (calendars.length >= config.maxCalendars && calendarResponse.data?.nextPageToken) {
       const error = new Error('Google Workspace sync reached its configured calendar limit. Increase SNEUP_GOOGLE_MAX_CALENDARS before continuing.');
       error.statusCode = 413;
@@ -157,7 +171,7 @@ class GoogleWorkspaceWorkSignalClient {
         maxResults: config.maxEventsPerCalendar,
         singleEvents: true,
         orderBy: 'updated',
-        fields: 'items(id,summary,status,start,end,organizer(email,displayName),creator(email,displayName),created,updated,htmlLink),nextPageToken',
+        fields: 'items(id,summary,status,start,end,organizer(email),created,updated),nextPageToken',
         ...(since ? { updatedMin: since.toISOString() } : { timeMin: this.now().toISOString() })
       }));
       const page = Array.isArray(response.data?.items) ? response.data.items : [];
@@ -166,9 +180,14 @@ class GoogleWorkspaceWorkSignalClient {
         error.statusCode = 413;
         throw error;
       }
-      events.push(...page.map(event => calendarEvent(event, calendar)));
+      const normalized = page.map(event => calendarEvent(event, calendar));
+      if (normalized.some(item => !item)) throw error('Google Workspace returned invalid calendar event metadata. Reconnect this account before syncing again.');
+      events.push(...normalized);
     }
-    const files = Array.isArray(driveResponse.data?.files) ? driveResponse.data.files : [];
+    const fileItems = Array.isArray(driveResponse.data?.files) ? driveResponse.data.files : null;
+    if (!fileItems) throw error('Google Workspace returned an invalid Drive response. Reconnect this account before syncing again.');
+    const files = fileItems.map(driveFile);
+    if (files.some(item => !item)) throw error('Google Workspace returned invalid Drive metadata. Reconnect this account before syncing again.');
     if (files.length >= config.maxFiles && driveResponse.data?.nextPageToken) {
       const error = new Error('Google Workspace sync reached its configured Drive metadata limit. Increase SNEUP_GOOGLE_MAX_FILES before continuing.');
       error.statusCode = 413;
@@ -185,7 +204,7 @@ class GoogleWorkspaceWorkSignalClient {
       const date = parseDate(record.updatedAt || record.updated || record.modifiedTime || record.created || record.createdTime);
       return date && (!latest || date > latest) ? date : latest;
     }, cursorDate);
-    return { records, nextCursor: newest ? newest.toISOString() : cursor || null, hasMore: false, metadata: { source: 'google_workspace_api', calendars: calendars.length, files: files.length, taskLists: taskLists.length, tasks: tasks.length, contentPolicy: 'calendar_and_drive_metadata_plus_bounded_google_tasks_metadata_only_no_task_notes_links_assignments_or_provider_writes' } };
+    return { records, nextCursor: newest ? newest.toISOString() : cursor || null, hasMore: false, metadata: { source: 'google_workspace_api', calendars: calendars.length, files: files.length, taskLists: taskLists.length, tasks: tasks.length, contentPolicy: 'bounded_calendar_drive_and_google_tasks_metadata_only_no_event_descriptions_attendees_locations_creator_profiles_drive_owners_provider_urls_task_notes_links_assignments_or_writes' } };
   }
 }
 

@@ -282,7 +282,7 @@ const CONNECTORS = [
     id: 'google_workspace',
     name: 'Google Workspace',
     category: 'calendar_email',
-    description: 'Read-only Calendar, Drive, and bounded Google Tasks metadata through Google APIs. Sneup excludes Gmail, task notes, links, assignments, and provider writes.',
+    description: 'Read-only bounded Calendar, Drive, and Google Tasks metadata through Google APIs. Sneup excludes Gmail, event descriptions and attendees, Drive owners and URLs, task notes and links, and provider writes.',
     auth: oauth2({
       envPrefix: 'GOOGLE',
       authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',

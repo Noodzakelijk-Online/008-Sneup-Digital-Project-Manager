@@ -47,4 +47,20 @@ describe('Google Tasks through Google Workspace', () => {
     expect(adapter.capabilities).toMatchObject({ credentialBackedSync: true, fetchDelta: true, applyAction: false });
     expect(normalized).toMatchObject({ externalId: 'google_tasks:list-1:task-1', sourceType: 'task', description: '', url: undefined, owners: [], labels: expect.arrayContaining(['google_tasks', 'task', 'Personal']) });
   });
+
+  test('pins Google Workspace API hosts instead of honoring arbitrary endpoint overrides', () => {
+    const originalCalendar = process.env.SNEUP_GOOGLE_CALENDAR_API_URL;
+    const originalDrive = process.env.SNEUP_GOOGLE_DRIVE_API_URL;
+    process.env.SNEUP_GOOGLE_CALENDAR_API_URL = 'https://private.example/calendar';
+    process.env.SNEUP_GOOGLE_DRIVE_API_URL = 'https://private.example/drive';
+    try {
+      const config = new GoogleWorkspaceWorkSignalClient({ accountConnectorService }).config();
+      expect(config).toMatchObject({ calendarUrl: 'https://www.googleapis.com/calendar/v3', driveUrl: 'https://www.googleapis.com/drive/v3', tasksUrl: 'https://tasks.googleapis.com/tasks/v1' });
+    } finally {
+      if (originalCalendar === undefined) delete process.env.SNEUP_GOOGLE_CALENDAR_API_URL;
+      else process.env.SNEUP_GOOGLE_CALENDAR_API_URL = originalCalendar;
+      if (originalDrive === undefined) delete process.env.SNEUP_GOOGLE_DRIVE_API_URL;
+      else process.env.SNEUP_GOOGLE_DRIVE_API_URL = originalDrive;
+    }
+  });
 });
