@@ -43,10 +43,11 @@ Reduced avoidable resource use:
 - Duplicate Mongoose index declarations were removed to reduce startup warnings and index churn.
 - The command center loads hidden views on demand and exposes bounded, recent response-time p50/p95 summaries for the known view APIs. The telemetry retains neither request data nor unbounded history.
 - API rate limiting has a hard bounded bucket map, expires stale state first, evicts least-recently-used pressure state only when needed, and exposes aggregate capacity metrics without request identifiers.
+- NLP imports only the tokenization, sentence splitting, TF-IDF, English AFINN sentiment, and Porter stemming modules used by Sneup. The Windows build excludes Natural's unused language packs, classifiers, WordNet, and unused storage-client dependencies while preserving the existing NLP implementations.
 
 Installer footprint:
 
-- The Windows installer is about 115 MB because it bundles Electron and the app runtime.
+- The verified Windows installer is 110.0 MB and its app archive is 65.4 MB. The targeted NLP packaging pass reduced the app archive from 109.6 MB by 40.3% and the installer from 119.2 MB by 7.7%.
 - A smaller future desktop footprint would require a different shell such as Tauri, WebView2-only packaging, or a PWA install path.
 
 ## Windows Installer
@@ -69,3 +70,4 @@ The desktop app starts Sneup on `127.0.0.1` and opens the command center in an a
 - `npm audit --omit=dev` reported 0 vulnerabilities.
 - Local HTTP smoke tests passed for health, connector catalog, and mission control.
 - Browser smoke test loaded the dashboard, opened connectors, filtered the connector marketplace, and observed no console errors.
+- The current resource pass passed `npm run lint`, all 523 Jest tests, a production-only `npm audit` with zero findings, and a fresh Windows NSIS build after inspecting its packaged archive.

@@ -1,4 +1,10 @@
-const natural = require('natural');
+// Import only the NLP primitives Sneup uses. Requiring natural's root module
+// eagerly loads every analyser, classifier, language pack, and WordNet helper.
+const { WordTokenizer } = require('natural/lib/natural/tokenizers/regexp_tokenizer');
+const SentenceTokenizer = require('natural/lib/natural/tokenizers/sentence_tokenizer');
+const TfIdf = require('natural/lib/natural/tfidf/tfidf');
+const SentimentAnalyzer = require('natural/lib/natural/sentiment/SentimentAnalyzer');
+const PorterStemmer = require('natural/lib/natural/stemmers/porter_stemmer');
 const logger = require('../utils/logger');
 const Card = require('../models/Card');
 const Comment = require('../models/Comment');
@@ -6,10 +12,9 @@ const Member = require('../models/Member');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 // Initialize NLP components
-const tokenizer = new natural.WordTokenizer();
-const sentenceTokenizer = new natural.SentenceTokenizer();
-const TfIdf = natural.TfIdf;
-const analyzer = new natural.SentimentAnalyzer('English', natural.PorterStemmer, 'afinn');
+const tokenizer = new WordTokenizer();
+const sentenceTokenizer = new SentenceTokenizer();
+const analyzer = new SentimentAnalyzer('English', PorterStemmer, 'afinn');
 
 /**
  * Natural Language Processing Service

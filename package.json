@@ -64,7 +64,12 @@
       "public/**/*",
       "src/**/*",
       "package.json",
-      ".env.example"
+      ".env.example",
+      "!node_modules/natural/lib/natural/{analyzers,brill_pos_tagger,classifiers,distance,inflectors,ngrams,normalizers,phonetics,spellcheck,transliterators,trie,wordnet}/**/*",
+      "!node_modules/natural/lib/natural/{tokenizers,stemmers}/aggressive_tokenizer_*.js",
+      "!node_modules/{apparatus,memjs,pg,redis,stopwords-iso,sylvester,uuid,wordnet-db}/**/*",
+      "!node_modules/natural/node_modules/{apparatus,memjs,pg,redis,stopwords-iso,sylvester,uuid,wordnet-db}/**/*",
+      "!node_modules/natural/node_modules/{dotenv,mongoose}/**/*"
     ],
     "asar": true,
     "npmRebuild": false,
