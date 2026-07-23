@@ -97,6 +97,12 @@ const timelineEntry = (type, item = {}, options = {}) => {
   };
 };
 
+const outcomeTimelineSeverity = (status) => {
+  if (status === 'confirmed_improved') return 'low';
+  if (status === 'awaiting_evidence') return 'medium';
+  return 'high';
+};
+
 const buildLedgerTimeline = (ledger = {}, limit = MAX_LEDGER_TIMELINE_ENTRIES) => {
   const entries = [
     ...(ledger.findings || []).map((finding) => timelineEntry('finding', finding, {
@@ -138,6 +144,13 @@ const buildLedgerTimeline = (ledger = {}, limit = MAX_LEDGER_TIMELINE_ENTRIES) =
       status: response.responseType || 'recorded',
       dates: [response.receivedAt, response.createdAt],
       meta: [response.source]
+    })),
+    ...(ledger.outcomes || []).map((outcome) => timelineEntry('intervention_outcome', outcome, {
+      title: `Intervention outcome: ${(outcome.status || 'awaiting_evidence').replaceAll('_', ' ')}`,
+      status: outcome.status || 'awaiting_evidence',
+      severity: outcomeTimelineSeverity(outcome.status),
+      dates: [outcome.evaluatedAt, outcome.createdAt],
+      meta: [outcome.actionType]
     })),
     ...(ledger.auditEvents || []).map((event) => timelineEntry('audit_event', event, {
       title: event.action || 'Audit event',
@@ -2204,12 +2217,13 @@ class OperationsLedgerService {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(filters.workspaceId);
     const board = await Board.findOne({ _id: boardId, workspaceId });
-    const [recommendations, decisions, actions, auditEvents, followUps, findings, healthSnapshots, cards] = await Promise.all([
+    const [recommendations, decisions, actions, auditEvents, followUps, outcomes, findings, healthSnapshots, cards] = await Promise.all([
       this.listRecommendations({ ...filters, boardId, limit: 50 }),
       this.listDecisionQueue({ ...filters, boardId, limit: 50 }),
       this.listTrelloActions({ ...filters, boardId, limit: 50 }),
       this.listAuditEvents({ ...filters, boardId, limit: 50 }),
       this.listFollowUps({ ...filters, boardId, limit: 50 }),
+      this.listInterventionOutcomes({ ...filters, boardId, limit: 50 }),
       CardFinding.find(this.workspaceQuery(filters, { boardId, status: 'open' })).sort({ severity: -1, lastObservedAt: -1 }).limit(100),
       BoardHealthSnapshot.find(this.workspaceQuery(filters, { boardId })).sort({ generatedAt: -1 }).limit(10),
       Card.find(this.workspaceQuery(filters, { boardId })).select('trelloId name boardId workspaceId').limit(250)
@@ -2218,21 +2232,22 @@ class OperationsLedgerService {
       ? await workGraphService.getTrelloBoardLedgerContext(board, cards, { workspaceId, limit: 50 })
       : workGraphService.emptyLedgerContext('board');
 
-    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, auditEvents, followUps, findings });
+    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, auditEvents, followUps, outcomes, findings });
 
-    return { recommendations, decisions, actions, auditEvents, followUps, findings, healthSnapshots, timeline, graphContext };
+    return { recommendations, decisions, actions, auditEvents, followUps, outcomes, findings, healthSnapshots, timeline, graphContext };
   }
 
   async getCardLedger(cardId, filters = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(filters.workspaceId);
     const card = await Card.findOne({ _id: cardId, workspaceId }).select('trelloId name boardId workspaceId');
-    const [recommendations, decisions, actions, followUps, workerResponses, findings, auditEvents] = await Promise.all([
+    const [recommendations, decisions, actions, followUps, workerResponses, outcomes, findings, auditEvents] = await Promise.all([
       this.listRecommendations({ ...filters, cardId, limit: 50 }),
       this.listDecisionQueue({ ...filters, cardId, limit: 50 }),
       this.listTrelloActions({ ...filters, cardId, limit: 50 }),
       this.listFollowUps({ ...filters, cardId, limit: 50 }),
       WorkerResponse.find(this.workspaceQuery(filters, { cardId })).sort({ receivedAt: -1 }).limit(50),
+      this.listInterventionOutcomes({ ...filters, cardId, limit: 50 }),
       CardFinding.find(this.workspaceQuery(filters, { cardId, status: 'open' })).sort({ severity: -1, lastObservedAt: -1 }).limit(50),
       this.listAuditEvents({ ...filters, cardId, limit: 50 })
     ]);
@@ -2240,9 +2255,9 @@ class OperationsLedgerService {
       ? await workGraphService.getTrelloCardLedgerContext(card, { workspaceId, limit: 25 })
       : workGraphService.emptyLedgerContext('card');
 
-    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, followUps, workerResponses, findings, auditEvents });
+    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, followUps, workerResponses, outcomes, findings, auditEvents });
 
-    return { recommendations, decisions, actions, followUps, workerResponses, findings, auditEvents, timeline, graphContext };
+    return { recommendations, decisions, actions, followUps, workerResponses, outcomes, findings, auditEvents, timeline, graphContext };
   }
 
   async getWorkerAccountability(filters = {}) {

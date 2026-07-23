@@ -2042,6 +2042,7 @@ function renderOperatingLedgerModal(type, ledger = {}) {
           <span>${(ledger.actions || []).length} Trello attempts</span>
           <span>${(ledger.auditEvents || []).length} audit events</span>
           <span>${(ledger.followUps || []).length} follow-ups</span>
+          <span>${(ledger.outcomes || []).length} outcomes</span>
           <span>${(ledger.timeline || []).length} timeline events</span>
         </div>
       </div>
@@ -2050,6 +2051,7 @@ function renderOperatingLedgerModal(type, ledger = {}) {
       ${renderLedgerSection('Open Findings', ledger.findings || [], renderFinding)}
       ${renderLedgerSection('Recent Recommendations', ledger.recommendations || [], renderRecommendation)}
       ${renderLedgerSection('Trello Action Attempts', ledger.actions || [], renderTrelloAttempt)}
+      ${renderLedgerSection('Intervention Outcomes', ledger.outcomes || [], renderInterventionOutcome)}
       ${renderLedgerSection('Audit Trail', ledger.auditEvents || [], renderAuditEvent)}
       <div class="toolbar modal-actions">
         <button class="button primary" type="button" id="ledgerClose">Done</button>
@@ -2072,6 +2074,9 @@ function renderOperatingLedgerModal(type, ledger = {}) {
   });
   document.querySelectorAll('[data-payload-edit]').forEach((button) => {
     button.addEventListener('click', () => editRecommendationPayload(button.dataset.payloadEdit));
+  });
+  document.querySelectorAll('[data-outcome-evaluate]').forEach((button) => {
+    button.addEventListener('click', () => runOutcomeEvaluation(button.dataset.outcomeEvaluate));
   });
 }
 

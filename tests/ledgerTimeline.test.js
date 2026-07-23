@@ -9,18 +9,24 @@ describe('operating ledger timeline', () => {
       actions: [{ _id: 'action-1', actionType: 'comment', status: 'succeeded', finishedAt: '2026-07-23T10:00:00.000Z' }],
       followUps: [{ _id: 'follow-up-1', reason: 'Confirm response', status: 'resolved', outcome: 'response_received', resolvedAt: '2026-07-24T10:00:00.000Z' }],
       workerResponses: [{ _id: 'response-1', responseType: 'completed', responseText: 'Private worker update', source: 'web_chat', receivedAt: '2026-07-25T10:00:00.000Z' }],
+      outcomes: [{ _id: 'outcome-1', actionType: 'comment', status: 'confirmed_improved', summary: 'Private outcome detail', evaluatedAt: '2026-07-25T12:00:00.000Z' }],
       auditEvents: [{ _id: 'audit-1', action: 'recommendation_approved', source: 'approval', riskLevel: 'medium', actor: 'robert', entityType: 'recommendation', createdAt: '2026-07-26T10:00:00.000Z' }]
     });
 
-    expect(timeline).toHaveLength(7);
+    expect(timeline).toHaveLength(8);
     expect(timeline.map((entry) => entry.type)).toEqual([
-      'audit_event', 'worker_response', 'follow_up', 'trello_action', 'decision', 'recommendation', 'finding'
+      'audit_event', 'intervention_outcome', 'worker_response', 'follow_up', 'trello_action', 'decision', 'recommendation', 'finding'
     ]);
     expect(timeline.find((entry) => entry.type === 'worker_response')).toEqual(expect.objectContaining({
       title: 'Worker response: completed',
       meta: ['web_chat']
     }));
-    expect(JSON.stringify(timeline)).not.toContain('Private worker update');
+    expect(timeline.find((entry) => entry.type === 'intervention_outcome')).toEqual(expect.objectContaining({
+      title: 'Intervention outcome: confirmed improved',
+      severity: 'low',
+      meta: ['comment']
+    }));
+    expect(JSON.stringify(timeline)).not.toMatch(/Private worker update|Private outcome detail/);
   });
 
   test('caps timeline output to the requested safe limit', () => {
