@@ -8141,6 +8141,8 @@ describe('operations ledger intervention policy', () => {
   afterEach(() => {
     jest.dontMock('mongoose');
     jest.dontMock('../src/models/AuditEvent');
+    jest.dontMock('../src/models/DecisionQueueItem');
+    jest.dontMock('../src/models/Recommendation');
     jest.dontMock('../src/models/Intervention');
     jest.dontMock('../src/models/FollowUpPlan');
     jest.dontMock('../src/models/PolicyRule');
@@ -8506,6 +8508,77 @@ describe('operations ledger intervention policy', () => {
     expect(updateRecommendation).toHaveBeenCalledWith({ _id: 'recommendation-1', workspaceId: 'workspace-1' }, { ownerType: 'robert' });
     expect(createAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'decision_queue_item_escalated',
+      actor: 'sneup',
+      source: 'worker'
+    }));
+  });
+
+  test('reopens elapsed snoozes with a fresh internal review window and no provider write', async () => {
+    jest.resetModules();
+    const now = new Date('2026-07-14T12:00:00.000Z');
+    const queuedItem = {
+      _id: 'decision-snoozed-1',
+      workspaceId: 'workspace-1',
+      recommendationId: 'recommendation-1',
+      ownerType: 'team',
+      riskLevel: 'medium',
+      toObject: () => ({ _id: 'decision-snoozed-1', status: 'snoozed', ownerType: 'team' })
+    };
+    const reopenedItem = {
+      ...queuedItem,
+      status: 'open',
+      dueAt: new Date('2026-07-15T12:00:00.000Z'),
+      toObject: () => ({ _id: 'decision-snoozed-1', status: 'open', ownerType: 'team' })
+    };
+    const findChain = {
+      sort: jest.fn(() => findChain),
+      limit: jest.fn().mockResolvedValue([queuedItem])
+    };
+    const findOneAndUpdate = jest.fn().mockResolvedValue(reopenedItem);
+    const updateRecommendation = jest.fn().mockResolvedValue({ _id: 'recommendation-1' });
+    const createAudit = jest.fn().mockResolvedValue({ _id: 'audit-1' });
+
+    jest.doMock('mongoose', () => ({ connection: { readyState: 1 } }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({ normalizeWorkspaceObjectId: jest.fn(value => value) }));
+    jest.doMock('../src/models/DecisionQueueItem', () => ({ find: jest.fn(() => findChain), findOneAndUpdate }));
+    jest.doMock('../src/models/Recommendation', () => ({ findOneAndUpdate: updateRecommendation }));
+    jest.doMock('../src/models/AuditEvent', () => ({ create: createAudit }));
+    jest.doMock('../src/services/policyRuleService', () => ({
+      getDecisionQueueRoutingPolicy: jest.fn().mockResolvedValue({ routingByRisk: { medium: { ownerType: 'team', escalationHours: 24 } } }),
+      resolveDecisionQueueRouting: jest.fn(() => ({ ownerType: 'team', escalationHours: 24 }))
+    }));
+    jest.doMock('../src/models/Approval', () => ({}));
+    jest.doMock('../src/models/TrelloActionAttempt', () => ({}));
+    jest.doMock('../src/models/FollowUpPlan', () => ({}));
+    jest.doMock('../src/models/WorkerResponse', () => ({}));
+    jest.doMock('../src/models/Intervention', () => ({}));
+    jest.doMock('../src/models/CardFinding', () => ({}));
+    jest.doMock('../src/models/BoardHealthSnapshot', () => ({}));
+    jest.doMock('../src/models/Board', () => ({}));
+    jest.doMock('../src/models/Card', () => ({}));
+    jest.doMock('../src/models/Member', () => ({}));
+    jest.doMock('../src/models/WorkItem', () => ({}));
+    jest.doMock('../src/services/trelloClient', () => ({}));
+    jest.doMock('../src/services/workGraphService', () => ({}));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    const reopened = await operationsLedgerService.reopenDueSnoozedDecisionQueueItems({ workspaceId: 'workspace-1', now });
+
+    expect(reopened).toEqual([reopenedItem]);
+    expect(findOneAndUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      _id: 'decision-snoozed-1',
+      status: 'snoozed',
+      snoozedUntil: { $lte: now }
+    }), expect.objectContaining({
+      $set: expect.objectContaining({ status: 'open', dueAt: new Date('2026-07-15T12:00:00.000Z') })
+    }), { new: true });
+    expect(updateRecommendation).toHaveBeenCalledWith({
+      _id: 'recommendation-1',
+      status: 'snoozed',
+      workspaceId: 'workspace-1'
+    }, { status: 'pending' });
+    expect(createAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'decision_queue_item_snooze_elapsed',
       actor: 'sneup',
       source: 'worker'
     }));

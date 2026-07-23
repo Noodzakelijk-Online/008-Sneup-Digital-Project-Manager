@@ -31,6 +31,14 @@ class InterventionWorker {
       }
     );
 
+    // Reopen Snoozed decisions promptly, then give their owner a fresh internal review window.
+    this.jobs.processDecisionQueueSnoozes = schedule.scheduleJob(
+      process.env.DECISION_QUEUE_SNOOZE_CRON || '*/15 * * * *',
+      async () => {
+        await this.runForActiveWorkspaces('interventions.decision_queue_snoozes', workspaceId => this.processDecisionQueueSnoozes(workspaceId));
+      }
+    );
+
     // Process escalations every 2 hours
     this.jobs.processEscalations = schedule.scheduleJob(
       process.env.ESCALATION_CRON || '0 */2 * * *',
@@ -101,6 +109,21 @@ class InterventionWorker {
       };
     } catch (error) {
       logger.error('Failed to process follow-ups:', error);
+      throw error;
+    }
+  }
+
+  async processDecisionQueueSnoozes(workspaceId) {
+    try {
+      logger.info('Reopening elapsed decision queue snoozes...');
+      const reopenedItems = await operationsLedgerService.reopenDueSnoozedDecisionQueueItems({ workspaceId });
+      return {
+        processedCount: reopenedItems.length,
+        successCount: reopenedItems.length,
+        failureCount: 0
+      };
+    } catch (error) {
+      logger.error('Failed to reopen elapsed decision queue snoozes:', error);
       throw error;
     }
   }

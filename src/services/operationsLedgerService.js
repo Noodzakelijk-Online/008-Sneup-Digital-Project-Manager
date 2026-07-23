@@ -1536,6 +1536,77 @@ class OperationsLedgerService {
     return item;
   }
 
+  async reopenDueSnoozedDecisionQueueItems(options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const now = options.now instanceof Date ? options.now : new Date();
+    const limit = boundedInteger(options.limit, 100, 1, 250);
+    const dueItems = await DecisionQueueItem.find({
+      workspaceId,
+      status: 'snoozed',
+      snoozedUntil: { $lte: now }
+    })
+      .sort({ snoozedUntil: 1, createdAt: 1 })
+      .limit(limit);
+    if (dueItems.length === 0) return [];
+
+    const routingPolicy = await policyRuleService.getDecisionQueueRoutingPolicy({ workspaceId });
+    const reopenedItems = [];
+    for (const queuedItem of dueItems) {
+      const beforeState = queuedItem.toObject();
+      const routing = policyRuleService.resolveDecisionQueueRouting({
+        riskLevel: queuedItem.riskLevel,
+        requestedOwner: queuedItem.ownerType,
+        policy: routingPolicy
+      });
+      const dueAt = queuedItem.ownerType === 'robert'
+        ? now
+        : this.defaultDecisionDueAt(queuedItem.riskLevel, routing.escalationHours, now);
+      const item = await DecisionQueueItem.findOneAndUpdate({
+        _id: queuedItem._id,
+        workspaceId,
+        status: 'snoozed',
+        snoozedUntil: { $lte: now }
+      }, {
+        $set: {
+          status: 'open',
+          dueAt,
+          resolutionNote: 'Snooze elapsed; reopened for review'
+        },
+        $unset: {
+          snoozedUntil: 1,
+          resolvedAt: 1,
+          resolvedBy: 1
+        }
+      }, { new: true });
+      if (!item) continue;
+
+      if (item.recommendationId) {
+        await Recommendation.findOneAndUpdate(this.workspaceQuery({ workspaceId }, {
+          _id: item.recommendationId,
+          status: 'snoozed'
+        }), { status: 'pending' });
+      }
+      await this.recordAudit({
+        entityType: 'decision_queue_item',
+        entityId: item._id,
+        action: 'decision_queue_item_snooze_elapsed',
+        actor: options.actor || 'sneup',
+        source: 'worker',
+        riskLevel: item.riskLevel,
+        recommendationId: item.recommendationId,
+        beforeState,
+        afterState: {
+          ...item.toObject(),
+          reopenedDueAt: dueAt
+        }
+      });
+      reopenedItems.push(item);
+    }
+
+    return reopenedItems;
+  }
+
   async processDueDecisionQueueEscalations(options = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
@@ -2889,13 +2960,14 @@ class OperationsLedgerService {
     return `${recommendation.recommendedAction} Approve: Yes/No.`;
   }
 
-  defaultDecisionDueAt(riskLevel, escalationHours) {
+  defaultDecisionDueAt(riskLevel, escalationHours, now = new Date()) {
     const baselineHours = riskLevel === 'critical' ? 2 : riskLevel === 'high' ? 6 : 24;
     const requestedHours = Number(escalationHours);
     const hours = Number.isInteger(requestedHours) && requestedHours >= 1 && requestedHours <= 168
       ? requestedHours
       : baselineHours;
-    return new Date(Date.now() + hours * HOURS);
+    const referenceNow = now instanceof Date ? now : new Date(now);
+    return new Date(referenceNow.getTime() + hours * HOURS);
   }
 
   confidenceForIntervention(intervention) {

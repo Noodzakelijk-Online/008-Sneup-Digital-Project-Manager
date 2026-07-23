@@ -116,6 +116,17 @@ const manualJobHandlers = {
       };
     }
   },
+  'interventions.decision_queue_snoozes': {
+    jobType: 'intervention',
+    run: async ({ workspaceId }) => {
+      const reopenedItems = await operationsLedgerService.reopenDueSnoozedDecisionQueueItems({ workspaceId });
+      return {
+        processedCount: reopenedItems.length,
+        successCount: reopenedItems.length,
+        failureCount: 0
+      };
+    }
+  },
   'interventions.escalations': {
     jobType: 'intervention',
     run: async ({ workspaceId }) => {

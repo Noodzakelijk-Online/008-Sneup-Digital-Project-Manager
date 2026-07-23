@@ -486,6 +486,7 @@ pm2 startup
 | `SNEUP_CONNECTOR_CREDENTIAL_ROTATION_DAYS` | Review interval for secret-based connector credentials; it never rotates a provider credential automatically | `90` |
 | `SNEUP_CONNECTOR_CREDENTIAL_ROTATION_WARNING_DAYS` | Days before the review deadline when Sneup shows a connector rotation warning | `14` |
 | `SNEUP_CONNECTOR_SYNC_FRESHNESS_HOURS` | Hours before a completed read-only connector sync is flagged for operator review; it never triggers a provider call | `24` |
+| `DECISION_QUEUE_SNOOZE_CRON` | Reopens elapsed internal decision-queue snoozes; it never creates a provider write | `*/15 * * * *` |
 | `ANALYTICS_CRON` | Analytics schedule | `0 * * * *` |
 | `LOG_LEVEL` | Logging level | `info` |
 

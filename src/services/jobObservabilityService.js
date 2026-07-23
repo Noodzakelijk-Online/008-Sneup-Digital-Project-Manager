@@ -46,6 +46,13 @@ const trackedJobs = [
     manualTriggerAllowed: true
   },
   {
+    jobName: 'interventions.decision_queue_snoozes',
+    jobType: 'intervention',
+    label: 'Decision queue snooze wake-up',
+    staleAfterMinutes: 45,
+    manualTriggerAllowed: true
+  },
+  {
     jobName: 'interventions.escalations',
     jobType: 'intervention',
     label: 'Escalation processing',
