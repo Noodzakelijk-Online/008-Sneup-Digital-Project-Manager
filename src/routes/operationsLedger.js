@@ -17,6 +17,7 @@ router.get('/', requirePermission('audit:read'), async (req, res) => {
       limit: clampInteger(req.query.limit, 50, 1, 250),
       healthLimit: clampInteger(req.query.healthLimit, 20, 1, 100),
       notificationLimit: clampInteger(req.query.notificationLimit, 100, 1, 250),
+      timelineLimit: clampInteger(req.query.timelineLimit, 25, 1, 100),
       days: clampInteger(req.query.days, 30, 7, 90)
     });
     res.json({ success: true, ledger });

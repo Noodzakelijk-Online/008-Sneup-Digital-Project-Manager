@@ -2,6 +2,7 @@ const operationsLedgerService = require('../src/services/operationsLedgerService
 const notificationService = require('../src/services/notificationService');
 const CardFinding = require('../src/models/CardFinding');
 const BoardHealthSnapshot = require('../src/models/BoardHealthSnapshot');
+const WorkerResponse = require('../src/models/WorkerResponse');
 
 const workspaceId = '507f1f77bcf86cd799439011';
 
@@ -27,6 +28,7 @@ describe('workspace operations ledger', () => {
     jest.spyOn(operationsLedgerService, 'listTrelloActions').mockResolvedValue([{ id: 'action-1' }]);
     jest.spyOn(operationsLedgerService, 'listAuditEvents').mockResolvedValue([{ id: 'audit-1' }]);
     jest.spyOn(operationsLedgerService, 'listFollowUps').mockResolvedValue([{ id: 'follow-up-1' }]);
+    jest.spyOn(operationsLedgerService, 'listWorkerResponses').mockResolvedValue([{ id: 'worker-response-1', responseType: 'acknowledged' }]);
     jest.spyOn(operationsLedgerService, 'getWorkerAccountability').mockResolvedValue({ summary: { members: 1 }, members: [] });
     jest.spyOn(operationsLedgerService, 'listInterventionOutcomes').mockResolvedValue([{ id: 'outcome-1' }]);
     jest.spyOn(operationsLedgerService, 'getTrelloActionReconciliationHealth').mockResolvedValue({ total: 0 });
@@ -57,10 +59,13 @@ describe('workspace operations ledger', () => {
       healthSnapshots: [{ id: 'health-1' }],
       notificationPolicies: [{ id: 'policy-1' }],
       notificationDeliveries: [{ id: 'delivery-1' }],
+      workerResponses: [{ id: 'worker-response-1', responseType: 'acknowledged' }],
+      timeline: [],
       errors: []
     });
     expect(operationsLedgerService.listDecisionQueue).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), status: 'open', limit: 40, lean: true }));
     expect(operationsLedgerService.listFollowUps).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), dueOnly: true, limit: 40, lean: true }));
+    expect(operationsLedgerService.listWorkerResponses).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), limit: 25, lean: true }));
     expect(notificationService.listPolicies).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: expect.anything(), limit: 80, lean: true }));
     expect(CardFinding.find.mock.results[0].value.lean).toHaveBeenCalledTimes(1);
     expect(BoardHealthSnapshot.find.mock.results[0].value.lean).toHaveBeenCalledTimes(1);
@@ -74,5 +79,40 @@ describe('workspace operations ledger', () => {
     expect(ledger.actions).toEqual([]);
     expect(ledger.recommendations).toEqual([{ id: 'recommendation-1' }]);
     expect(ledger.errors).toContainEqual({ section: 'actions', message: 'Action history is unavailable' });
+  });
+
+  test('returns only redacted worker-response evidence and merges it into the workspace timeline', async () => {
+    operationsLedgerService.listWorkerResponses.mockRestore();
+    jest.spyOn(WorkerResponse, 'find').mockReturnValue(queryResult([{
+      id: 'response-safe',
+      boardId: 'board-1',
+      responseType: 'completed',
+      source: 'web_chat',
+      responseText: 'Private status update',
+      receivedAt: new Date('2026-07-23T10:00:00.000Z')
+    }]));
+
+    const safeResponses = await operationsLedgerService.listWorkerResponses({
+      workspaceId,
+      boardId: 'board-1',
+      limit: 25,
+      lean: true
+    });
+    expect(safeResponses).toEqual([expect.objectContaining({
+      id: 'response-safe',
+      responseType: 'completed',
+      source: 'web_chat'
+    })]);
+    expect(JSON.stringify(safeResponses)).not.toContain('Private status update');
+
+    jest.spyOn(operationsLedgerService, 'listWorkerResponses').mockResolvedValue(safeResponses);
+    const ledger = await operationsLedgerService.getWorkspaceLedger({ workspaceId, timelineLimit: 10 });
+
+    expect(ledger.timeline).toEqual([expect.objectContaining({
+      type: 'worker_response',
+      title: 'Worker response: completed',
+      meta: ['web_chat']
+    })]);
+    expect(JSON.stringify(ledger.timeline)).not.toContain('Private status update');
   });
 });

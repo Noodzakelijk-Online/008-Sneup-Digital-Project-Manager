@@ -55,6 +55,7 @@ const state = {
     actions: [],
     auditEvents: [],
     followUps: [],
+    workerResponses: [],
     accountability: null,
     outcomes: [],
     findings: [],
@@ -62,6 +63,7 @@ const state = {
     reconciliationHealth: null,
     notificationPolicies: [],
     notificationDeliveries: [],
+    timeline: [],
     errors: []
   },
   category: 'all',
@@ -107,6 +109,8 @@ const els = {
   notificationDeliveryCount: document.getElementById('notificationDeliveryCount'),
   findingsList: document.getElementById('findingsList'),
   findingsCount: document.getElementById('findingsCount'),
+  operationsTimeline: document.getElementById('operationsTimeline'),
+  timelineCount: document.getElementById('timelineCount'),
   boardHealthList: document.getElementById('boardHealthList'),
   boardHealthCount: document.getElementById('boardHealthCount'),
   followUps: document.getElementById('followUps'),
@@ -1065,6 +1069,7 @@ async function loadOperationsLedger() {
       actions: ledger.actions || [],
       auditEvents: ledger.auditEvents || [],
       followUps: ledger.followUps || [],
+      workerResponses: ledger.workerResponses || [],
       accountability: ledger.accountability || null,
       outcomes: ledger.outcomes || [],
       findings: ledger.findings || [],
@@ -1072,6 +1077,7 @@ async function loadOperationsLedger() {
       reconciliationHealth: ledger.reconciliationHealth || null,
       notificationPolicies: ledger.notificationPolicies || [],
       notificationDeliveries: ledger.notificationDeliveries || [],
+      timeline: ledger.timeline || [],
       demoMode: Boolean(ledger.demoMode),
       errors: (ledger.errors || []).map((error) => error.message || String(error))
     };
@@ -1083,6 +1089,7 @@ async function loadOperationsLedger() {
       actions: [],
       auditEvents: [],
       followUps: [],
+      workerResponses: [],
       accountability: null,
       outcomes: [],
       findings: [],
@@ -1090,6 +1097,7 @@ async function loadOperationsLedger() {
       reconciliationHealth: null,
       notificationPolicies: [],
       notificationDeliveries: [],
+      timeline: [],
       demoMode: false,
       errors: [error.message]
     };
@@ -1297,6 +1305,7 @@ function renderOperationsLedger() {
   const actions = state.ledger.actions || [];
   const auditEvents = state.ledger.auditEvents || [];
   const followUps = state.ledger.followUps || [];
+  const workerResponses = state.ledger.workerResponses || [];
   const accountability = state.ledger.accountability;
   const outcomes = state.ledger.outcomes || [];
   const findings = state.ledger.findings || [];
@@ -1304,6 +1313,7 @@ function renderOperationsLedger() {
   const reconciliationHealth = state.ledger.reconciliationHealth;
   const notificationPolicies = state.ledger.notificationPolicies || [];
   const notificationDeliveries = state.ledger.notificationDeliveries || [];
+  const timeline = state.ledger.timeline || [];
   const reconciliationSummary = reconciliationHealth?.summary || {};
 
   const openRobert = decisions.filter(item => item.ownerType === 'robert').length;
@@ -1326,7 +1336,8 @@ function renderOperationsLedger() {
     ['Overdue follow-ups', accountability?.summary?.overdueFollowUps || 0],
     ['Workers needing attention', accountability?.summary?.membersNeedingAttention || 0],
     ['Outcome reviews', outcomesNeedingAttention],
-    ['Audit events', auditEvents.length]
+    ['Audit events', auditEvents.length],
+    ['Recent responses', workerResponses.length]
   ].map(([label, value]) => `
     <div class="metric">
       <span>${label}</span>
@@ -1354,6 +1365,8 @@ function renderOperationsLedger() {
   els.recommendationList.innerHTML = listOrEmpty(recommendations, renderRecommendation);
   els.findingsCount.textContent = `${findings.length} open`;
   els.findingsList.innerHTML = listOrEmpty(findings, renderFinding);
+  els.timelineCount.textContent = `${timeline.length} recent`;
+  els.operationsTimeline.innerHTML = listOrEmpty(timeline.slice(0, 12), renderLedgerTimelineItem);
   els.boardHealthCount.textContent = `${healthSnapshots.length} snapshots`;
   els.boardHealthList.innerHTML = listOrEmpty(healthSnapshots, renderBoardHealth);
   els.trelloAttemptCount.textContent = reconciliationSummary.requiresOperator

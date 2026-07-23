@@ -332,17 +332,18 @@ Datadog uses an API key plus an application key limited to `monitors_read` and `
 - `GET /api/decision-queue/team` - Team approval queue
 - `GET /api/decision-queue/va` - VA queue scaffold
 - `GET /api/autopilot/operations-brief` - Read-only daily operations brief across decisions, findings, follow-ups, failures, and board health
+- `GET /api/operations-ledger?timelineLimit=25` - Bounded workspace ledger with a redacted cross-record operational timeline; response text is never returned
 - `GET /api/trello-actions` - List Trello write attempts and failures
 - `GET /api/audit` - List audit events
 - `GET /api/follow-ups` - List follow-up plans
 - `GET /api/follow-ups/due` - List due follow-up plans
-- `GET /api/boards/:boardId/operations-ledger` - Board-level recommendation/action/audit ledger with Trello-linked and unresolved cross-provider graph context, source links, dependency freshness, and dependency filters
+- `GET /api/boards/:boardId/operations-ledger` - Board-level recommendation/action/audit ledger with redacted worker-response timeline evidence, Trello-linked and unresolved cross-provider graph context, source links, dependency freshness, and dependency filters
 - `GET /api/boards/:boardId/operating-ledger` - Alias for board-level operating ledger
 - `GET /api/boards/:boardId/decision-queue` - Board-specific decision queue
 - `POST /api/boards/:boardId/analyze` - Safely analyze synced cards and persist findings/health snapshots
 - `GET /api/boards/:boardId/findings` - Board-specific card findings
 - `GET /api/boards/:boardId/health-snapshots` - Board health snapshot history
-- `GET /api/cards/:cardId/operations-ledger` - Card-level recommendation/action/follow-up ledger with Trello-linked and unresolved cross-provider graph context, source links, dependency freshness, and dependency filters
+- `GET /api/cards/:cardId/operations-ledger` - Card-level recommendation/action/follow-up ledger with redacted worker-response evidence, Trello-linked and unresolved cross-provider graph context, source links, dependency freshness, and dependency filters
 - `GET /api/cards/:cardId/operating-ledger` - Alias for card-level operating ledger
 - `GET /api/cards/:cardId/audit` - Card audit events
 - `GET /api/cards/:cardId/findings` - Card findings and missing next-action/stale/blocked signals

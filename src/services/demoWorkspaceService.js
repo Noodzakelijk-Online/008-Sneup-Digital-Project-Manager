@@ -136,6 +136,15 @@ function getDemoOperationsLedger(now = new Date()) {
       dueAt,
       createdAt: observedAt
     }],
+    workerResponses: [{
+      _id: 'demo-response-growth',
+      boardId: { _id: 'demo-board-growth', name: 'Growth Experiments' },
+      cardId: { _id: 'demo-card-growth-recovery', name: 'Approve launch checklist for Sneup onboarding' },
+      memberId: { _id: 'demo-member-sara', fullName: 'Sara Visser' },
+      responseType: 'acknowledged',
+      source: 'web_chat',
+      receivedAt: new Date(generatedAt.getTime() - (75 * 60 * 1000))
+    }],
     accountability: {
       summary: {
         members: 2,
@@ -160,7 +169,7 @@ function getDemoOperationsLedger(now = new Date()) {
         workloadLevel: 'balanced',
         attention: 'clear',
         followUpsCreated: 0,
-        responseCount: 0,
+        responseCount: 1,
         responseCoverage: null,
         overdueFollowUps: 0,
         escalatedFollowUps: 0,
@@ -222,6 +231,39 @@ function getDemoOperationsLedger(now = new Date()) {
     },
     notificationPolicies: [],
     notificationDeliveries: [],
+    timeline: [{
+      id: 'trello_action:demo-action-reassign-partial',
+      type: 'trello_action',
+      title: 'Trello reassign attempt',
+      status: 'failed',
+      severity: 'critical',
+      occurredAt: new Date(generatedAt.getTime() - (44 * 60 * 1000)),
+      meta: ['required']
+    }, {
+      id: 'worker_response:demo-response-growth',
+      type: 'worker_response',
+      title: 'Worker response: acknowledged',
+      status: 'acknowledged',
+      severity: 'low',
+      occurredAt: new Date(generatedAt.getTime() - (75 * 60 * 1000)),
+      meta: ['web_chat']
+    }, {
+      id: 'follow_up:demo-follow-up-launch',
+      type: 'follow_up',
+      title: 'Verify launch checklist response.',
+      status: 'due',
+      severity: 'low',
+      occurredAt: dueAt,
+      meta: []
+    }, {
+      id: 'recommendation:demo-recommendation-recovery',
+      type: 'recommendation',
+      title: 'Approve recovery plan for Growth Experiments',
+      status: 'pending',
+      severity: 'critical',
+      occurredAt: observedAt,
+      meta: ['follow_up', 'robert']
+    }],
     errors: []
   };
 }

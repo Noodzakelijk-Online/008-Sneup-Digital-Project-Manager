@@ -59,5 +59,7 @@ workerResponseSchema.index({ memberId: 1, receivedAt: -1 });
 workerResponseSchema.index({ cardId: 1, receivedAt: -1 });
 workerResponseSchema.index({ workspaceId: 1, memberId: 1, receivedAt: -1 });
 workerResponseSchema.index({ workspaceId: 1, cardId: 1, receivedAt: -1 });
+workerResponseSchema.index({ workspaceId: 1, boardId: 1, receivedAt: -1 });
+workerResponseSchema.index({ workspaceId: 1, recommendationId: 1, receivedAt: -1 });
 
 module.exports = mongoose.model('WorkerResponse', workerResponseSchema);

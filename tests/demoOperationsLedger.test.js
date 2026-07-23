@@ -29,6 +29,14 @@ describe('demo operations ledger', () => {
       })]
     });
     expect(ledger.accountability.summary).toEqual(expect.objectContaining({ overdueFollowUps: 1 }));
+    expect(ledger.workerResponses).toEqual([expect.objectContaining({
+      responseType: 'acknowledged',
+      source: 'web_chat'
+    })]);
+    expect(ledger.timeline).toEqual(expect.arrayContaining([expect.objectContaining({
+      type: 'worker_response',
+      title: 'Worker response: acknowledged'
+    })]));
     expect(ledger.findings).toHaveLength(2);
     expect(ledger.healthSnapshots).toHaveLength(1);
     expect(ledger.reconciliationHealth.summary).toEqual(expect.objectContaining({ requiresOperator: 1, critical: 1 }));

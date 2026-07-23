@@ -2373,12 +2373,13 @@ class OperationsLedgerService {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(filters.workspaceId);
     const board = await Board.findOne({ _id: boardId, workspaceId });
-    const [recommendations, decisions, actions, auditEvents, followUps, outcomes, findings, healthSnapshots, cards] = await Promise.all([
+    const [recommendations, decisions, actions, auditEvents, followUps, workerResponses, outcomes, findings, healthSnapshots, cards] = await Promise.all([
       this.listRecommendations({ ...filters, boardId, limit: 50 }),
       this.listDecisionQueue({ ...filters, boardId, limit: 50 }),
       this.listTrelloActions({ ...filters, boardId, limit: 50 }),
       this.listAuditEvents({ ...filters, boardId, limit: 50 }),
       this.listFollowUps({ ...filters, boardId, limit: 50 }),
+      this.listWorkerResponses({ ...filters, boardId, limit: 50 }),
       this.listInterventionOutcomes({ ...filters, boardId, limit: 50 }),
       CardFinding.find(this.workspaceQuery(filters, { boardId, status: 'open' })).sort({ severity: -1, lastObservedAt: -1 }).limit(100),
       BoardHealthSnapshot.find(this.workspaceQuery(filters, { boardId })).sort({ generatedAt: -1 }).limit(10),
@@ -2388,9 +2389,9 @@ class OperationsLedgerService {
       ? await workGraphService.getTrelloBoardLedgerContext(board, cards, { workspaceId, limit: 50 })
       : workGraphService.emptyLedgerContext('board');
 
-    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, auditEvents, followUps, outcomes, findings });
+    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, auditEvents, followUps, workerResponses, outcomes, findings });
 
-    return { recommendations, decisions, actions, auditEvents, followUps, outcomes, findings, healthSnapshots, timeline, graphContext };
+    return { recommendations, decisions, actions, auditEvents, followUps, workerResponses, outcomes, findings, healthSnapshots, timeline, graphContext };
   }
 
   async getCardLedger(cardId, filters = {}) {
@@ -2402,7 +2403,7 @@ class OperationsLedgerService {
       this.listDecisionQueue({ ...filters, cardId, limit: 50 }),
       this.listTrelloActions({ ...filters, cardId, limit: 50 }),
       this.listFollowUps({ ...filters, cardId, limit: 50 }),
-      WorkerResponse.find(this.workspaceQuery(filters, { cardId })).sort({ receivedAt: -1 }).limit(50),
+      this.listWorkerResponses({ ...filters, cardId, limit: 50 }),
       this.listInterventionOutcomes({ ...filters, cardId, limit: 50 }),
       CardFinding.find(this.workspaceQuery(filters, { cardId, status: 'open' })).sort({ severity: -1, lastObservedAt: -1 }).limit(50),
       this.listAuditEvents({ ...filters, cardId, limit: 50 })
@@ -2411,10 +2412,9 @@ class OperationsLedgerService {
       ? await workGraphService.getTrelloCardLedgerContext(card, { workspaceId, limit: 25 })
       : workGraphService.emptyLedgerContext('card');
 
-    const safeWorkerResponses = workerResponses.map(response => this.serializeWorkerResponse(response));
-    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, followUps, workerResponses: safeWorkerResponses, outcomes, findings, auditEvents });
+    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, followUps, workerResponses, outcomes, findings, auditEvents });
 
-    return { recommendations, decisions, actions, followUps, workerResponses: safeWorkerResponses, outcomes, findings, auditEvents, timeline, graphContext };
+    return { recommendations, decisions, actions, followUps, workerResponses, outcomes, findings, auditEvents, timeline, graphContext };
   }
 
   async getWorkspaceLedger(filters = {}) {
@@ -2423,6 +2423,7 @@ class OperationsLedgerService {
     const ledgerLimit = boundedInteger(filters.limit, 50, 1, 250);
     const healthLimit = boundedInteger(filters.healthLimit, 20, 1, 100);
     const notificationLimit = boundedInteger(filters.notificationLimit, 100, 1, 250);
+    const timelineLimit = boundedInteger(filters.timelineLimit, 25, 1, MAX_LEDGER_TIMELINE_ENTRIES);
     const queryFilters = { ...filters, workspaceId, limit: ledgerLimit, lean: true };
     const notificationService = require('./notificationService');
 
@@ -2434,6 +2435,7 @@ class OperationsLedgerService {
       actions: () => this.listTrelloActions(queryFilters),
       auditEvents: () => this.listAuditEvents(queryFilters),
       followUps: () => this.listFollowUps({ ...queryFilters, dueOnly: true }),
+      workerResponses: () => this.listWorkerResponses({ ...queryFilters, limit: timelineLimit }),
       accountability: () => this.getWorkerAccountability({ ...queryFilters, days: filters.days || 30 }),
       outcomes: () => this.listInterventionOutcomes(queryFilters),
       findings: () => CardFinding.find(this.workspaceQuery(queryFilters, { status: 'open' }))
@@ -2476,6 +2478,8 @@ class OperationsLedgerService {
       }
       ledger[section] = value;
     });
+
+    ledger.timeline = buildLedgerTimeline(ledger, timelineLimit);
 
     return ledger;
   }
@@ -2608,6 +2612,22 @@ class OperationsLedgerService {
       .populate('recommendationId interventionId boardId cardId memberId')
       .limit(filters.limit || 100);
     return filters.lean === true ? followUps.lean() : followUps;
+  }
+
+  async listWorkerResponses(filters = {}) {
+    this.requireDatabase();
+    const query = this.workspaceQuery(filters);
+    if (filters.recommendationId) query.recommendationId = filters.recommendationId;
+    if (filters.interventionId) query.interventionId = filters.interventionId;
+    if (filters.boardId) query.boardId = filters.boardId;
+    if (filters.cardId) query.cardId = filters.cardId;
+    if (filters.memberId) query.memberId = filters.memberId;
+
+    const responses = WorkerResponse.find(query)
+      .sort({ receivedAt: -1, createdAt: -1 })
+      .limit(boundedInteger(filters.limit, 100, 1, 250));
+    const records = filters.lean === true ? await responses.lean() : await responses;
+    return records.map(response => this.serializeWorkerResponse(response));
   }
 
   async processDueFollowUps(filters = {}) {
