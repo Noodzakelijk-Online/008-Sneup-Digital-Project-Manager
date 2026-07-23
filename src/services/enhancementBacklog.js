@@ -382,6 +382,23 @@ const enhancements = [
       'Unmatched or context-free chat does not close a ledger item.',
       'Chat ingestion never sends a provider write.'
     ]
+  },
+  {
+    id: 'ENH-024',
+    priority: 'P1',
+    area: 'resource',
+    title: 'Batch board performance snapshots without increasing worker load',
+    evidence: 'Daily, weekly, and monthly board performance runs now read the board member set once, then create one bounded board-scoped snapshot of assigned-card, intervention, and comment evidence for all members. The tracker reuses that snapshot for every member record, excludes other-board work from the board score, skips data reads for boards without members, and recalculates board ranks once after the snapshot is persisted. Scheduled board processing remains serial, so the read reduction does not increase database concurrency.',
+    impact: 'Reduces repeated database reads and background runtime for multi-member boards while keeping the same performance records, workload metrics, and operator-facing features.',
+    effort: 'S',
+    status: 'done',
+    nextStep: 'Collect Job Health duration and database-read telemetry from representative live boards before changing the scheduled board-processing concurrency.',
+    acceptanceCriteria: [
+      'A board run reads member, card, intervention, and comment evidence once per board rather than once per member.',
+      'Board metrics exclude cards and interventions from another board.',
+      'Boards without members avoid unnecessary collection reads.',
+      'The optimization does not increase scheduled board worker concurrency.'
+    ]
   }
 ];
 
