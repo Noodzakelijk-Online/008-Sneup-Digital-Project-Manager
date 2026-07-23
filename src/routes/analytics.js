@@ -30,7 +30,7 @@ router.get('/recommendation-feedback', requirePermission('audit:read'), async (r
 });
 
 // Get latest analytics for a board
-router.get('/board/:boardId/latest', async (req, res) => {
+router.get('/board/:boardId/latest', requirePermission('audit:read'), async (req, res) => {
   try {
     const analytics = await analyticsService.getLatestAnalytics(req.params.boardId, {
       workspaceId: getRequestWorkspaceObjectId(req)
@@ -57,7 +57,7 @@ router.get('/board/:boardId/latest', async (req, res) => {
 });
 
 // Get analytics history for a board
-router.get('/board/:boardId/history', async (req, res) => {
+router.get('/board/:boardId/history', requirePermission('audit:read'), async (req, res) => {
   try {
     const days = clampInteger(req.query.days, 30, 1, 365);
     const history = await analyticsService.getAnalyticsHistory(req.params.boardId, days, {
@@ -107,7 +107,7 @@ router.post('/board/:boardId/generate', requirePermission('analysis:run'), async
 });
 
 // Get critical boards
-router.get('/critical', async (req, res) => {
+router.get('/critical', requirePermission('audit:read'), async (req, res) => {
   try {
     const criticalBoards = await Analytics.getCriticalBoards(getRequestWorkspaceObjectId(req));
     
@@ -126,7 +126,7 @@ router.get('/critical', async (req, res) => {
 });
 
 // Get bottlenecks for a board
-router.get('/board/:boardId/bottlenecks', async (req, res) => {
+router.get('/board/:boardId/bottlenecks', requirePermission('audit:read'), async (req, res) => {
   try {
     const analytics = await analyticsService.getLatestAnalytics(req.params.boardId, {
       workspaceId: getRequestWorkspaceObjectId(req)
@@ -153,7 +153,7 @@ router.get('/board/:boardId/bottlenecks', async (req, res) => {
 });
 
 // Get project health for a board
-router.get('/board/:boardId/health', async (req, res) => {
+router.get('/board/:boardId/health', requirePermission('audit:read'), async (req, res) => {
   try {
     const analytics = await analyticsService.getLatestAnalytics(req.params.boardId, {
       workspaceId: getRequestWorkspaceObjectId(req)
@@ -180,7 +180,7 @@ router.get('/board/:boardId/health', async (req, res) => {
 });
 
 // Get velocity metrics for a board
-router.get('/board/:boardId/velocity', async (req, res) => {
+router.get('/board/:boardId/velocity', requirePermission('audit:read'), async (req, res) => {
   try {
     const analytics = await analyticsService.getLatestAnalytics(req.params.boardId, {
       workspaceId: getRequestWorkspaceObjectId(req)

@@ -45,7 +45,7 @@ router.get('/:cardId/audit', requirePermission('audit:read'), async (req, res) =
   }
 });
 
-router.get('/:cardId/findings', async (req, res) => {
+router.get('/:cardId/findings', requirePermission('audit:read'), async (req, res) => {
   try {
     operationsLedgerService.requireDatabase();
     const findings = await CardFinding.find(scopeQuery(req, {

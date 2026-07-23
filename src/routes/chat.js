@@ -193,7 +193,7 @@ router.post('/conversation/:conversationId/rate', requirePermission('chat:write'
 });
 
 // Get priorities for a member
-router.get('/priorities/:memberId', async (req, res) => {
+router.get('/priorities/:memberId', requirePermission('chat:write'), async (req, res) => {
   try {
     const priorities = await priorityEngine.getPrioritizedCards(req.params.memberId, {
       workspaceId: getRequestWorkspaceObjectId(req)
@@ -213,7 +213,7 @@ router.get('/priorities/:memberId', async (req, res) => {
 });
 
 // Get immediate priority (what to work on right now)
-router.get('/priorities/:memberId/immediate', async (req, res) => {
+router.get('/priorities/:memberId/immediate', requirePermission('chat:write'), async (req, res) => {
   try {
     const priority = await priorityEngine.getImmediatePriority(req.params.memberId, {
       workspaceId: getRequestWorkspaceObjectId(req)
@@ -233,7 +233,7 @@ router.get('/priorities/:memberId/immediate', async (req, res) => {
 });
 
 // Get daily priorities
-router.get('/priorities/:memberId/daily', async (req, res) => {
+router.get('/priorities/:memberId/daily', requirePermission('chat:write'), async (req, res) => {
   try {
     const dailyPriorities = await priorityEngine.getDailyPriorities(req.params.memberId, {
       workspaceId: getRequestWorkspaceObjectId(req)

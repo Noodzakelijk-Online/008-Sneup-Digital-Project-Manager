@@ -93,7 +93,7 @@ const normalizeProjectMappings = (items) => {
   });
 };
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('audit:read'), async (req, res) => {
   try {
     const forecast = await forecastService.getForecast({ workspaceId: getRequestWorkspaceObjectId(req) });
     res.json({ success: true, forecast });
@@ -102,7 +102,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/boards/:boardId', async (req, res) => {
+router.get('/boards/:boardId', requirePermission('audit:read'), async (req, res) => {
   try {
     const forecast = await forecastService.getBoardForecast(req.params.boardId, { workspaceId: getRequestWorkspaceObjectId(req) });
     res.json({ success: true, forecast });

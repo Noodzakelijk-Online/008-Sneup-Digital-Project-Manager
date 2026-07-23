@@ -110,7 +110,7 @@ const validateEnum = (value, allowed, field, fallback) => {
   return value;
 };
 
-router.get('/current', async (req, res) => {
+router.get('/current', requirePermission('api:read'), async (req, res) => {
   try {
     if (isDemoMode()) {
       return res.json({

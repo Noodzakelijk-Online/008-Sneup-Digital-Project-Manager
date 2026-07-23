@@ -5,14 +5,14 @@ const CardFinding = require('../models/CardFinding');
 const BoardHealthSnapshot = require('../models/BoardHealthSnapshot');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const { scopeQuery } = require('../services/workspaceScopeService');
-const { clampInteger } = require('../utils/requestSecurity');
+const { clampInteger, requirePermission } = require('../utils/requestSecurity');
 
 const sendError = (res, error, fallback) => res.status(error.statusCode || 500).json({
   success: false,
   error: error.statusCode ? error.message : fallback
 });
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('audit:read'), async (req, res) => {
   try {
     operationsLedgerService.requireDatabase();
     const query = scopeQuery(req);
@@ -35,7 +35,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/board-health', async (req, res) => {
+router.get('/board-health', requirePermission('audit:read'), async (req, res) => {
   try {
     operationsLedgerService.requireDatabase();
     const query = scopeQuery(req);

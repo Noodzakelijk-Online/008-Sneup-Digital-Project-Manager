@@ -1565,6 +1565,29 @@ describe('dashboard content security policy', () => {
   });
 });
 
+describe('operational route authorization', () => {
+  test('keeps explicit permission checks on every non-public API route', () => {
+    const routesDirectory = path.join(__dirname, '..', 'src', 'routes');
+    const intentionallyPublic = new Set([
+      "connectors.js:router.get('/:connectorId/callback', async (req, res) => {",
+      "webhooks.js:router.post('/trello', verifyTrelloWebhook, async (req, res) => {",
+      "webhooks.js:router.post('/generic/:accountId', async (req, res) => {",
+      "workspaces.js:router.post('/invitations/accept', async (req, res) => {"
+    ]);
+
+    const unguarded = fs.readdirSync(routesDirectory)
+      .filter(fileName => fileName.endsWith('.js'))
+      .flatMap((fileName) => fs.readFileSync(path.join(routesDirectory, fileName), 'utf8')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(line => /^router\.(get|post|put|patch|delete)\(/.test(line))
+        .filter(line => !line.includes('requirePermission('))
+        .map(line => `${fileName}:${line}`));
+
+    expect(unguarded.sort()).toEqual([...intentionallyPublic].sort());
+  });
+});
+
 describe('command-center static asset caching', () => {
   test('fingerprints external assets from content while keeping the HTML revalidatable', () => {
     const rootDir = path.join(__dirname, '..');

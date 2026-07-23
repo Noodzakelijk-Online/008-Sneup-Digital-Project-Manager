@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const enhancementBacklog = require('../services/enhancementBacklog');
 const recommendationEvaluationService = require('../services/recommendationEvaluationService');
+const { requirePermission } = require('../utils/requestSecurity');
 
-router.get('/evaluations/recommendations', (req, res) => {
+router.get('/evaluations/recommendations', requirePermission('api:read'), (req, res) => {
   const report = recommendationEvaluationService.runSuite();
   res.json({ success: true, report });
 });
 
-router.get('/', (req, res) => {
+router.get('/', requirePermission('api:read'), (req, res) => {
   const filters = {
     priority: req.query.priority,
     area: req.query.area,
@@ -24,7 +25,7 @@ router.get('/', (req, res) => {
   });
 });
 
-router.get('/:enhancementId', (req, res) => {
+router.get('/:enhancementId', requirePermission('api:read'), (req, res) => {
   const enhancement = enhancementBacklog.getEnhancement(req.params.enhancementId);
 
   if (!enhancement) {

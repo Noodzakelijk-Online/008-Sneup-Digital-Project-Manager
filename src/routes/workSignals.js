@@ -26,7 +26,7 @@ const sendError = (res, error) => {
   });
 };
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('audit:read'), async (req, res) => {
   try {
     const result = await workSignalService.listSignals({
       ...requestOptions(req),
@@ -47,7 +47,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/contracts', (req, res) => {
+router.get('/contracts', requirePermission('api:read'), (req, res) => {
   try {
     const contracts = workSignalService.getAdapterContracts();
     res.json({
@@ -61,7 +61,7 @@ router.get('/contracts', (req, res) => {
   }
 });
 
-router.get('/adapters', (req, res) => {
+router.get('/adapters', requirePermission('api:read'), (req, res) => {
   try {
     const adapters = workSignalAdapterService.listAdapters();
     res.json({
@@ -75,7 +75,7 @@ router.get('/adapters', (req, res) => {
   }
 });
 
-router.get('/graph', async (req, res) => {
+router.get('/graph', requirePermission('audit:read'), async (req, res) => {
   try {
     const graph = await workGraphService.getSummary({
       ...requestOptions(req),
@@ -91,7 +91,7 @@ router.get('/graph', async (req, res) => {
   }
 });
 
-router.get('/graph/decisions', async (req, res) => {
+router.get('/graph/decisions', requirePermission('audit:read'), async (req, res) => {
   try {
     const result = await workGraphService.listDecisionCandidates({
       ...requestOptions(req),
@@ -107,7 +107,7 @@ router.get('/graph/decisions', async (req, res) => {
   }
 });
 
-router.get('/graph/items/:itemId', async (req, res) => {
+router.get('/graph/items/:itemId', requirePermission('audit:read'), async (req, res) => {
   try {
     const detail = await workGraphService.getItemDetail(req.params.itemId, requestOptions(req));
     if (!detail) {

@@ -11,7 +11,7 @@ const sendError = (res, error, fallback) => res.status(error.statusCode || 500).
   error: error.statusCode ? error.message : fallback
 });
 
-router.get('/mission-control', async (req, res) => {
+router.get('/mission-control', requirePermission('audit:read'), async (req, res) => {
   try {
     const snapshot = await autopilotService.getMissionControl({
       workspaceId: getRequestWorkspaceObjectId(req)
@@ -29,7 +29,7 @@ router.get('/mission-control', async (req, res) => {
   }
 });
 
-router.get('/operations-brief', async (req, res) => {
+router.get('/operations-brief', requirePermission('audit:read'), async (req, res) => {
   try {
     const brief = await operationsBriefService.getDailyBrief({
       workspaceId: getRequestWorkspaceObjectId(req)

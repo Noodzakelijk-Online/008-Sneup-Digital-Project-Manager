@@ -20,7 +20,7 @@ const publicAuthContext = (auth = {}) => ({
   workspaceOverrideAllowed: Boolean(auth.workspaceOverrideAllowed || auth.localRequest)
 });
 
-router.get('/context', (req, res) => {
+router.get('/context', requirePermission('api:read'), (req, res) => {
   const demoMode = isDemoMode();
   res.json({
     success: true,

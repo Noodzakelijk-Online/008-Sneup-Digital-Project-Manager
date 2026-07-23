@@ -44,7 +44,7 @@ const sendScopedError = (res, error, fallbackMessage) => {
 };
 
 // Get all boards
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('audit:read'), async (req, res) => {
   try {
     const boards = await Board.find(scopeQuery(req, { closed: false }))
       .populate('members')
@@ -65,7 +65,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get a specific board
-router.get('/:boardId', async (req, res) => {
+router.get('/:boardId', requirePermission('audit:read'), async (req, res) => {
   try {
     const board = await Board.findOne(scopedBoardQuery(req, req.params.boardId))
       .populate('members');
@@ -184,7 +184,7 @@ router.post('/:boardId/analyze', requirePermission('analysis:run'), async (req, 
 });
 
 // Get board findings
-router.get('/:boardId/findings', async (req, res) => {
+router.get('/:boardId/findings', requirePermission('audit:read'), async (req, res) => {
   try {
     await requireScopedBoard(req);
     operationsLedgerService.requireDatabase();
@@ -204,7 +204,7 @@ router.get('/:boardId/findings', async (req, res) => {
 });
 
 // Get board health snapshots
-router.get('/:boardId/health-snapshots', async (req, res) => {
+router.get('/:boardId/health-snapshots', requirePermission('audit:read'), async (req, res) => {
   try {
     await requireScopedBoard(req);
     operationsLedgerService.requireDatabase();
@@ -220,7 +220,7 @@ router.get('/:boardId/health-snapshots', async (req, res) => {
 });
 
 // Get board context
-router.get('/:boardId/context', async (req, res) => {
+router.get('/:boardId/context', requirePermission('audit:read'), async (req, res) => {
   try {
     await requireScopedBoard(req);
     const context = await contextAnalyzer.getBoardContext(req.params.boardId, {
@@ -245,7 +245,7 @@ router.get('/:boardId/context', async (req, res) => {
 });
 
 // Get card details
-router.get('/:boardId/cards/:cardId', async (req, res) => {
+router.get('/:boardId/cards/:cardId', requirePermission('audit:read'), async (req, res) => {
   try {
     const board = await requireScopedBoard(req);
     const card = await Card.findOne(scopeQuery(req, { _id: req.params.cardId, boardId: board._id }))
@@ -284,7 +284,7 @@ router.get('/:boardId/cards/:cardId', async (req, res) => {
 });
 
 // Get card relationships
-router.get('/:boardId/relationships', async (req, res) => {
+router.get('/:boardId/relationships', requirePermission('audit:read'), async (req, res) => {
   try {
     await requireScopedBoard(req);
     const boardRelationships = await contextAnalyzer.analyzeCardRelationships({
@@ -304,7 +304,7 @@ router.get('/:boardId/relationships', async (req, res) => {
 });
 
 // Get workflow patterns
-router.get('/:boardId/workflow', async (req, res) => {
+router.get('/:boardId/workflow', requirePermission('audit:read'), async (req, res) => {
   try {
     await requireScopedBoard(req);
     const allPatterns = await contextAnalyzer.analyzeWorkflowPatterns({

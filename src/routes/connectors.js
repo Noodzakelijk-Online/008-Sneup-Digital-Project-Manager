@@ -24,7 +24,7 @@ const sendError = (res, error) => {
   });
 };
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('api:read'), async (req, res) => {
   try {
     const catalog = accountConnectorService.getCatalog({
       category: req.query.category,
@@ -45,7 +45,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/categories', (req, res) => {
+router.get('/categories', requirePermission('api:read'), (req, res) => {
   try {
     res.json({
       success: true,
@@ -57,7 +57,7 @@ router.get('/categories', (req, res) => {
   }
 });
 
-router.get('/safety', (req, res) => {
+router.get('/safety', requirePermission('api:read'), (req, res) => {
   try {
     const catalog = accountConnectorService.getCatalog();
     res.json({
@@ -70,7 +70,7 @@ router.get('/safety', (req, res) => {
   }
 });
 
-router.get('/accounts', async (req, res) => {
+router.get('/accounts', requirePermission('connectors:manage'), async (req, res) => {
   try {
     const accounts = await accountConnectorService.listAccounts(connectorRequestOptions(req));
     res.json({
@@ -322,7 +322,7 @@ router.post('/accounts/:accountId/xero-tenant', requirePermission('connectors:ma
   }
 });
 
-router.get('/:connectorId', (req, res) => {
+router.get('/:connectorId', requirePermission('api:read'), (req, res) => {
   try {
     const connector = accountConnectorService.getConnectorDetails(req.params.connectorId);
     if (!connector) {

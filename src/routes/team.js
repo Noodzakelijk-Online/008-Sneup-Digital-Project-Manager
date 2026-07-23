@@ -179,7 +179,7 @@ router.post('/recommendation/execute', requirePermission('approvals:decide'), as
 });
 
 // Get team patterns
-router.get('/patterns', async (req, res) => {
+router.get('/patterns', requirePermission('audit:read'), async (req, res) => {
   try {
     const patterns = await contextAnalyzer.analyzeTeamPatterns({
       workspaceId: getRequestWorkspaceObjectId(req)

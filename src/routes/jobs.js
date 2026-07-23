@@ -155,7 +155,7 @@ const manualJobHandlers = {
   }
 };
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('audit:read'), async (req, res) => {
   try {
     const dashboard = await jobObservabilityService.getDashboard({
       workspaceId: getRequestWorkspaceObjectId(req),
@@ -177,7 +177,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/health', async (req, res) => {
+router.get('/health', requirePermission('audit:read'), async (req, res) => {
   try {
     const dashboard = await jobObservabilityService.getDashboard({
       workspaceId: getRequestWorkspaceObjectId(req),
@@ -198,7 +198,7 @@ router.get('/health', async (req, res) => {
   }
 });
 
-router.get('/runs', async (req, res) => {
+router.get('/runs', requirePermission('audit:read'), async (req, res) => {
   try {
     const runs = await jobObservabilityService.listRuns({
       workspaceId: getRequestWorkspaceObjectId(req),
