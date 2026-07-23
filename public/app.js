@@ -70,7 +70,8 @@ const state = {
   queueFilter: 'all',
   signalFilter: 'all',
   setupMode: localStorage.getItem(FIRST_RUN_SETUP_KEY) || '',
-  runtimeMode: 'unknown'
+  runtimeMode: 'unknown',
+  modalCleanup: null
 };
 
 const els = {
@@ -4307,6 +4308,8 @@ async function openWorkerResponseBindingsModal(accountId) {
     let cards = [];
     let memberSearchTimer;
     let cardSearchTimer;
+    let memberOptionRequest = null;
+    let cardOptionRequest = null;
     let memberRequestId = 0;
     let cardRequestId = 0;
     const memberNames = new Map(members.map(member => [member.id, member.name]));
@@ -4352,6 +4355,15 @@ async function openWorkerResponseBindingsModal(accountId) {
     const memberSelect = document.getElementById('workerResponseMember');
     const cardSearch = document.getElementById('workerResponseCardSearch');
     const cardSelect = document.getElementById('workerResponseCard');
+    const disposeSearchRequests = () => {
+      clearTimeout(memberSearchTimer);
+      clearTimeout(cardSearchTimer);
+      memberOptionRequest?.abort();
+      cardOptionRequest?.abort();
+      memberOptionRequest = null;
+      cardOptionRequest = null;
+    };
+    state.modalCleanup = disposeSearchRequests;
     const renderBindings = () => {
       list.innerHTML = bindings.length
         ? bindings.map((binding, index) => `
@@ -4384,19 +4396,24 @@ async function openWorkerResponseBindingsModal(accountId) {
     const loadMembers = async () => {
       const query = memberSearch.value.trim();
       const requestId = ++memberRequestId;
+      memberOptionRequest?.abort();
+      const request = new AbortController();
+      memberOptionRequest = request;
       memberSelect.disabled = true;
       memberSelect.innerHTML = '<option value="" selected>Loading members...</option>';
       try {
-        const data = await fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-options?query=${encodeURIComponent(query)}&limit=100`);
-        if (requestId !== memberRequestId) return;
+        const data = await fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-options?query=${encodeURIComponent(query)}&limit=100`, { signal: request.signal });
+        if (requestId !== memberRequestId || memberOptionRequest !== request) return;
         members = data.members || [];
         members.forEach(member => memberNames.set(member.id, member.name));
         renderMembers();
       } catch (error) {
-        if (requestId !== memberRequestId) return;
+        if (error.name === 'AbortError' || requestId !== memberRequestId || memberOptionRequest !== request) return;
         members = [];
         renderMembers();
         openNotice('Response mapping members', error.message);
+      } finally {
+        if (memberOptionRequest === request) memberOptionRequest = null;
       }
     };
     const loadCards = async () => {
@@ -4406,16 +4423,21 @@ async function openWorkerResponseBindingsModal(accountId) {
       cardSearch.disabled = !memberId;
       if (!memberId) return;
       const requestId = ++cardRequestId;
+      cardOptionRequest?.abort();
+      const request = new AbortController();
+      cardOptionRequest = request;
       cardSelect.innerHTML = '<option value="" selected>Loading assigned cards...</option>';
       try {
-        const data = await fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-options?memberId=${encodeURIComponent(memberId)}&query=${encodeURIComponent(cardSearch.value.trim())}&limit=100`);
-        if (requestId !== cardRequestId) return;
+        const data = await fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-options?memberId=${encodeURIComponent(memberId)}&query=${encodeURIComponent(cardSearch.value.trim())}&limit=100`, { signal: request.signal });
+        if (requestId !== cardRequestId || cardOptionRequest !== request) return;
         cards = data.cards || [];
         renderCards();
       } catch (error) {
-        if (requestId !== cardRequestId) return;
+        if (error.name === 'AbortError' || requestId !== cardRequestId || cardOptionRequest !== request) return;
         cardSelect.innerHTML = '<option value="" selected>Assigned cards unavailable</option>';
         openNotice('Response mapping cards', error.message);
+      } finally {
+        if (cardOptionRequest === request) cardOptionRequest = null;
       }
     };
 
@@ -4451,6 +4473,7 @@ async function openWorkerResponseBindingsModal(accountId) {
       memberSelect.value = '';
       cardSearch.value = '';
       cardSearch.disabled = true;
+      cardOptionRequest?.abort();
       cardRequestId += 1;
       cards = [];
       renderCards();
@@ -5370,6 +5393,9 @@ function openNotificationTest(policyId) {
 }
 
 function closeModal() {
+  const cleanup = state.modalCleanup;
+  state.modalCleanup = null;
+  cleanup?.();
   els.modal.classList.remove('open');
 }
 
