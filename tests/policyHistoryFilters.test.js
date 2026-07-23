@@ -81,4 +81,19 @@ describe('policy history filters', () => {
       [{ workspaceId: 1, entityType: 1, action: 1, createdAt: -1 }, expect.any(Object)]
     ]));
   });
+
+  test('accepts scheduled worker sources for auditable retention work', () => {
+    const AuditEvent = require('../src/models/AuditEvent');
+    const event = new AuditEvent({
+      workspaceId: '507f1f77bcf86cd799439011',
+      entityType: 'workspace_invite_retention',
+      entityId: 'workspace-1',
+      action: 'workspace_invites_redacted',
+      actor: 'sneup-invite-retention',
+      source: 'scheduled',
+      riskLevel: 'medium'
+    });
+
+    expect(event.validateSync()).toBeUndefined();
+  });
 });

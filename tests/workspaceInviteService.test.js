@@ -269,6 +269,7 @@ describe('workspace invitation delivery retries', () => {
       .toEqual({ days: 7, batchSize: 250 });
     expect(operationsLedgerService.recordAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: 'workspace_invites_redacted',
+      source: 'scheduled',
       afterState: expect.objectContaining({ redactedCount: 1, retentionDays: 30, byStatus: { accepted: 1 } })
     }));
     expect(JSON.stringify(operationsLedgerService.recordAudit.mock.calls)).not.toMatch(/new\.user@example\.com|tokenHash|displayName/);
