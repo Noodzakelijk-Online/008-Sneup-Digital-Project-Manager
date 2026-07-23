@@ -864,6 +864,70 @@ h1 {
   gap: 12px;
 }
 
+.worker-response-bindings-form {
+  display: grid;
+  gap: 16px;
+}
+
+.worker-response-binding-list {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.worker-response-binding-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.worker-response-binding-row div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.worker-response-binding-row strong,
+.worker-response-binding-row span {
+  overflow-wrap: anywhere;
+}
+
+.worker-response-binding-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.worker-response-binding-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.worker-response-binding-editor legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.worker-response-binding-editor label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.worker-response-binding-editor .button {
+  width: fit-content;
+}
+
 .workflow-routing-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -958,6 +1022,10 @@ h1 {
   }
 
   .workflow-routing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .worker-response-binding-editor {
     grid-template-columns: 1fr;
   }
 

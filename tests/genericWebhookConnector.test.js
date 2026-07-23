@@ -146,6 +146,7 @@ describe('Generic Webhook connector', () => {
   test('accepts an exactly mapped, signed inbound worker response without retaining its text in webhook evidence', async () => {
     const body = {
       id: 'slack:message-1',
+      source: 'slack',
       sourceMemberId: 'U12345',
       sourceCardId: 'thread:67890',
       responseType: 'completed',
@@ -203,6 +204,7 @@ describe('Generic Webhook connector', () => {
   test('rejects an unmapped inbound worker response before it reaches the ledger', async () => {
     const body = {
       id: 'slack:message-unmapped',
+      source: 'slack',
       sourceMemberId: 'U12345',
       sourceCardId: 'thread:67890',
       responseType: 'completed',
@@ -215,6 +217,42 @@ describe('Generic Webhook connector', () => {
       connectorId: 'webhook_generic',
       status: 'connected',
       metadata: { workerResponseBindings: [] }
+    });
+
+    await expect(service.ingestWorkerResponse({
+      accountId: ACCOUNT_ID,
+      rawBody,
+      body,
+      signature: sign(rawBody, secret)
+    })).rejects.toMatchObject({ statusCode: 403, code: 'not_configured' });
+    expect(operationsLedgerService.recordChatWorkerResponse).not.toHaveBeenCalled();
+    expect(WebhookDelivery.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  test('does not resolve a response through a binding from another source', async () => {
+    const body = {
+      id: 'teams:message-unmapped',
+      source: 'teams',
+      sourceMemberId: 'U12345',
+      sourceCardId: 'thread:67890',
+      responseType: 'completed',
+      responseText: 'Done'
+    };
+    const rawBody = Buffer.from(JSON.stringify(body));
+    ConnectorAccount.findOne.mockResolvedValueOnce({
+      _id: ACCOUNT_ID,
+      workspaceId: WORKSPACE_ID,
+      connectorId: 'webhook_generic',
+      status: 'connected',
+      metadata: {
+        workerResponseBindings: [{
+          source: 'slack',
+          sourceMemberId: 'U12345',
+          sourceCardId: 'thread:67890',
+          memberId: '507f1f77bcf86cd799439012',
+          cardId: '507f1f77bcf86cd799439013'
+        }]
+      }
     });
 
     await expect(service.ingestWorkerResponse({
@@ -270,6 +308,40 @@ describe('Generic Webhook connector', () => {
       workspaceId: WORKSPACE_ID,
       bindings: [{ ...bindings[0], cardId: '507f1f77bcf86cd799439014' }]
     })).rejects.toMatchObject({ statusCode: 400, code: 'invalid_payload' });
+  });
+
+  test('lists shallow, bounded mapping options without exposing member emails or card descriptions', async () => {
+    const queryResult = (values) => {
+      const result = {};
+      result.select = jest.fn(() => result);
+      result.sort = jest.fn(() => result);
+      result.limit = jest.fn().mockResolvedValue(values);
+      return result;
+    };
+    const Member = { find: jest.fn(() => queryResult([{ _id: '507f1f77bcf86cd799439012', fullName: 'Alex Operator', username: 'alex', email: 'private@example.test' }])) };
+    const Card = { find: jest.fn(() => queryResult([{ _id: '507f1f77bcf86cd799439013', name: 'Deliver release', closed: false, description: 'Do not return this.' }])) };
+    const optionsService = new GenericWebhookService({
+      ConnectorAccount: { findOne: jest.fn().mockResolvedValue({ _id: ACCOUNT_ID, workspaceId: WORKSPACE_ID, connectorId: 'webhook_generic', status: 'connected' }) },
+      Member,
+      Card,
+      accountConnectorService: { getAccountCredentials: jest.fn() },
+      workSignalService,
+      operationsLedgerService,
+      WebhookDelivery
+    });
+
+    await expect(optionsService.getWorkerResponseBindingOptions({
+      accountId: ACCOUNT_ID,
+      workspaceId: WORKSPACE_ID,
+      memberId: '507f1f77bcf86cd799439012',
+      query: 'Alex',
+      limit: 999
+    })).resolves.toEqual({
+      members: [{ id: '507f1f77bcf86cd799439012', name: 'Alex Operator', username: 'alex' }],
+      cards: [{ id: '507f1f77bcf86cd799439013', name: 'Deliver release', closed: false }]
+    });
+    expect(Member.find).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: WORKSPACE_ID, $or: expect.any(Array) }));
+    expect(Card.find).toHaveBeenCalledWith({ workspaceId: WORKSPACE_ID, members: '507f1f77bcf86cd799439012' });
   });
 
   test('rejects invalid delivery identifiers before creating a signal', async () => {

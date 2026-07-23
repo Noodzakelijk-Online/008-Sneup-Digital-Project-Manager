@@ -16,6 +16,8 @@ const SIGNATURE_PATTERN = /^sha256=([a-f0-9]{64})$/i;
 const DEFAULT_DELIVERY_LEASE_MS = 2 * 60 * 1000;
 const DEFAULT_DELIVERY_RETENTION_DAYS = 14;
 const MAX_WORKER_RESPONSE_BINDINGS = 100;
+const DEFAULT_WORKER_RESPONSE_OPTION_LIMIT = 100;
+const MAX_WORKER_RESPONSE_OPTION_LIMIT = 250;
 const WORKER_RESPONSE_TYPES = new Set(['acknowledged', 'completed', 'blocked', 'needs_help']);
 const WORKER_RESPONSE_SOURCES = new Set(['slack', 'teams', 'google_chat', 'discord', 'mattermost', 'webex', 'email']);
 
@@ -69,6 +71,8 @@ const optionalDate = (value, name) => {
   }
   return date.toISOString();
 };
+
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 class GenericWebhookService {
   constructor(dependencies = {}) {
@@ -244,25 +248,73 @@ class GenericWebhookService {
     return this.normalizeWorkerResponseBindings(account.metadata?.workerResponseBindings || []);
   }
 
+  async getWorkerResponseBindingOptions({ accountId, workspaceId, memberId, query, limit }) {
+    if (!mongoose.isValidObjectId(accountId)) {
+      throw webhookError('Connector account was not found', 404, 'not_configured');
+    }
+    if (memberId && !mongoose.isValidObjectId(memberId)) {
+      throw webhookError('Workspace member was not found', 400, 'invalid_payload');
+    }
+
+    const account = await this.ConnectorAccount.findOne({
+      _id: accountId,
+      workspaceId,
+      connectorId: 'webhook_generic',
+      status: 'connected'
+    });
+    if (!account) throw webhookError('A connected Generic Webhook account is required', 404, 'not_configured');
+
+    const optionLimit = boundedInteger(limit, DEFAULT_WORKER_RESPONSE_OPTION_LIMIT, 1, MAX_WORKER_RESPONSE_OPTION_LIMIT);
+    const search = String(query || '').trim().slice(0, 80);
+    const match = search ? new RegExp(escapeRegExp(search), 'i') : null;
+    const memberFilter = { workspaceId };
+    if (match) memberFilter.$or = [{ fullName: match }, { username: match }];
+
+    const members = await this.Member.find(memberFilter)
+      .select('_id fullName username')
+      .sort({ fullName: 1, username: 1 })
+      .limit(optionLimit);
+    const cards = memberId
+      ? await this.Card.find({ workspaceId, members: memberId })
+        .select('_id name closed lastActivity')
+        .sort({ closed: 1, lastActivity: -1 })
+        .limit(optionLimit)
+      : [];
+
+    return {
+      members: members.map((member) => ({
+        id: String(member._id),
+        name: String(member.fullName || member.username || member._id),
+        username: String(member.username || '')
+      })),
+      cards: cards.map((card) => ({
+        id: String(card._id),
+        name: String(card.name || card._id),
+        closed: Boolean(card.closed)
+      }))
+    };
+  }
+
   normalizeWorkerResponseEvent(payload = {}) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       throw webhookError('Webhook payload must be an object', 400, 'invalid_payload');
     }
     const id = String(payload.id || '').trim();
+    const source = String(payload.source || '').trim();
     const sourceMemberId = String(payload.sourceMemberId || '').trim();
     const sourceCardId = String(payload.sourceCardId || '').trim();
     const responseType = String(payload.responseType || '').trim();
     const responseText = typeof payload.responseText === 'string' ? payload.responseText.trim().slice(0, 2000) : '';
-    if (!ID_PATTERN.test(id) || !ID_PATTERN.test(sourceMemberId) || !ID_PATTERN.test(sourceCardId) || !WORKER_RESPONSE_TYPES.has(responseType) || !responseText) {
+    if (!ID_PATTERN.test(id) || !WORKER_RESPONSE_SOURCES.has(source) || !ID_PATTERN.test(sourceMemberId) || !ID_PATTERN.test(sourceCardId) || !WORKER_RESPONSE_TYPES.has(responseType) || !responseText) {
       throw webhookError('Webhook worker response payload is invalid', 400, 'invalid_payload');
     }
-    return { id, sourceMemberId, sourceCardId, responseType, responseText };
+    return { id, source, sourceMemberId, sourceCardId, responseType, responseText };
   }
 
   findWorkerResponseBinding(account, event) {
     const bindings = this.normalizeWorkerResponseBindings(account.metadata?.workerResponseBindings || []);
     return bindings.find(binding =>
-      binding.sourceMemberId === event.sourceMemberId && binding.sourceCardId === event.sourceCardId
+      binding.source === event.source && binding.sourceMemberId === event.sourceMemberId && binding.sourceCardId === event.sourceCardId
     ) || null;
   }
 

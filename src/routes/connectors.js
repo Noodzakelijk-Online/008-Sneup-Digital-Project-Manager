@@ -142,6 +142,22 @@ router.get('/accounts/:accountId/inbound-worker-response-bindings', requirePermi
   }
 });
 
+router.get('/accounts/:accountId/inbound-worker-response-options', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const options = await genericWebhookService.getWorkerResponseBindingOptions({
+      accountId: req.params.accountId,
+      workspaceId: getRequestWorkspaceObjectId(req),
+      memberId: req.query.memberId,
+      query: req.query.query,
+      limit: req.query.limit
+    });
+    res.json({ success: true, ...options });
+  } catch (error) {
+    logger.error('Failed to list inbound worker response options:', error);
+    sendError(res, error);
+  }
+});
+
 router.post('/accounts/:accountId/inbound-worker-response-bindings', requirePermission('connectors:manage'), async (req, res) => {
   try {
     const bindings = await genericWebhookService.configureWorkerResponseBindings({
