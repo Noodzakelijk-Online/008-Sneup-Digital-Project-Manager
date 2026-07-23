@@ -2030,8 +2030,10 @@ function renderOperatingLedgerModal(type, ledger = {}) {
           <span>${(ledger.actions || []).length} Trello attempts</span>
           <span>${(ledger.auditEvents || []).length} audit events</span>
           <span>${(ledger.followUps || []).length} follow-ups</span>
+          <span>${(ledger.timeline || []).length} timeline events</span>
         </div>
       </div>
+      ${renderLedgerTimeline(ledger.timeline || [])}
       ${renderGraphLedgerContext(graphContext)}
       ${renderLedgerSection('Open Findings', ledger.findings || [], renderFinding)}
       ${renderLedgerSection('Recent Recommendations', ledger.recommendations || [], renderRecommendation)}
@@ -2059,6 +2061,27 @@ function renderOperatingLedgerModal(type, ledger = {}) {
   document.querySelectorAll('[data-payload-edit]').forEach((button) => {
     button.addEventListener('click', () => editRecommendationPayload(button.dataset.payloadEdit));
   });
+}
+
+function renderLedgerTimeline(items = []) {
+  return renderLedgerSection('Operational Timeline', items, renderLedgerTimelineItem);
+}
+
+function renderLedgerTimelineItem(entry = {}) {
+  const meta = (entry.meta || []).filter(Boolean);
+  return `
+    <div class="item">
+      <div class="item-title">
+        <strong>${escapeHtml(entry.title || 'Ledger event')}</strong>
+        <span class="pill ${severityClass(entry.severity)}">${escapeHtml(entry.status || 'recorded')}</span>
+      </div>
+      <div class="meta">
+        <span>${formatDate(entry.occurredAt)}</span>
+        <span>${escapeHtml((entry.type || 'event').replaceAll('_', ' '))}</span>
+        ${meta.map(item => `<span>${escapeHtml(item)}</span>`).join('')}
+      </div>
+    </div>
+  `;
 }
 
 function renderLedgerSection(title, items, renderer) {

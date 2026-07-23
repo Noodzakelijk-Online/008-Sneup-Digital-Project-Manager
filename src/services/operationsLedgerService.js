@@ -35,6 +35,7 @@ const DEFAULT_APPROVAL_TTL_HOURS = Object.freeze({
 });
 const CHAT_RESPONSE_TYPES = new Set(['acknowledged', 'completed', 'blocked', 'needs_help']);
 const WORKER_RESPONSE_SOURCES = new Set(['trello_comment', 'slack', 'email', 'web_chat', 'api', 'manual', 'system']);
+const MAX_LEDGER_TIMELINE_ENTRIES = 100;
 
 const resolveSnoozedUntil = ({ snoozedUntil, defaultSnoozeHours, now = new Date() } = {}) => {
   const currentTime = now instanceof Date ? now : new Date(now);
@@ -72,6 +73,85 @@ const normalizeWorkerResponseText = (value) => {
 };
 
 const normalizeWorkerResponseSource = (value) => WORKER_RESPONSE_SOURCES.has(value) ? value : 'api';
+
+const timelineDate = (...values) => {
+  for (const value of values) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  return null;
+};
+
+const timelineEntry = (type, item = {}, options = {}) => {
+  const occurredAt = timelineDate(...(options.dates || []));
+  if (!occurredAt) return null;
+
+  return {
+    id: `${type}:${String(item._id || item.id || occurredAt.getTime())}`,
+    type,
+    title: options.title || type.replaceAll('_', ' '),
+    status: options.status || item.status || 'recorded',
+    severity: options.severity || item.riskLevel || item.severity || 'low',
+    occurredAt,
+    meta: options.meta || []
+  };
+};
+
+const buildLedgerTimeline = (ledger = {}, limit = MAX_LEDGER_TIMELINE_ENTRIES) => {
+  const entries = [
+    ...(ledger.findings || []).map((finding) => timelineEntry('finding', finding, {
+      title: finding.title || 'Finding observed',
+      status: finding.status || 'open',
+      severity: finding.severity,
+      dates: [finding.lastObservedAt, finding.firstDetectedAt, finding.createdAt],
+      meta: [finding.findingType, finding.waitingOn ? `waiting on ${finding.waitingOn}` : null]
+    })),
+    ...(ledger.recommendations || []).map((recommendation) => timelineEntry('recommendation', recommendation, {
+      title: recommendation.title || recommendation.recommendedAction || 'Recommendation created',
+      status: recommendation.status,
+      severity: recommendation.riskLevel,
+      dates: [recommendation.createdAt],
+      meta: [recommendation.actionType, recommendation.ownerType]
+    })),
+    ...(ledger.decisions || []).map((decision) => timelineEntry('decision', decision, {
+      title: decision.title || 'Decision queued',
+      status: decision.status,
+      severity: decision.riskLevel,
+      dates: [decision.escalatedAt, decision.resolvedAt, decision.delegatedAt, decision.createdAt],
+      meta: [decision.ownerType, decision.recommendedAnswer]
+    })),
+    ...(ledger.actions || []).map((action) => timelineEntry('trello_action', action, {
+      title: `Trello ${action.actionType || 'action'} attempt`,
+      status: action.status,
+      severity: action.recommendationId?.riskLevel,
+      dates: [action.finishedAt, action.startedAt, action.createdAt],
+      meta: [action.reconciliation?.status !== 'not_needed' ? action.reconciliation?.status : null]
+    })),
+    ...(ledger.followUps || []).map((followUp) => timelineEntry('follow_up', followUp, {
+      title: followUp.reason || 'Follow-up planned',
+      status: followUp.status,
+      dates: [followUp.resolvedAt, followUp.dueAt, followUp.createdAt],
+      meta: [followUp.outcome !== 'unknown' ? followUp.outcome : null]
+    })),
+    ...(ledger.workerResponses || []).map((response) => timelineEntry('worker_response', response, {
+      title: `Worker response: ${response.responseType || 'recorded'}`,
+      status: response.responseType || 'recorded',
+      dates: [response.receivedAt, response.createdAt],
+      meta: [response.source]
+    })),
+    ...(ledger.auditEvents || []).map((event) => timelineEntry('audit_event', event, {
+      title: event.action || 'Audit event',
+      status: event.source || 'recorded',
+      severity: event.riskLevel,
+      dates: [event.createdAt],
+      meta: [event.actor, event.entityType]
+    }))
+  ]
+    .filter(Boolean)
+    .sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime());
+
+  return entries.slice(0, boundedInteger(limit, MAX_LEDGER_TIMELINE_ENTRIES, 1, MAX_LEDGER_TIMELINE_ENTRIES));
+};
 
 const getOutcomeRecordModel = () => require('../models/OutcomeRecord');
 const getListModel = () => require('../models/List');
@@ -1240,6 +1320,7 @@ class OperationsLedgerService {
     if (filters.status) query.status = filters.status;
     if (filters.ownerType) query.ownerType = filters.ownerType;
     if (filters.boardId) query.boardId = filters.boardId;
+    if (filters.cardId) query.cardId = filters.cardId;
 
     return DecisionQueueItem.find(query)
       .sort({ riskLevel: -1, dueAt: 1, createdAt: 1 })
@@ -2137,15 +2218,18 @@ class OperationsLedgerService {
       ? await workGraphService.getTrelloBoardLedgerContext(board, cards, { workspaceId, limit: 50 })
       : workGraphService.emptyLedgerContext('board');
 
-    return { recommendations, decisions, actions, auditEvents, followUps, findings, healthSnapshots, graphContext };
+    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, auditEvents, followUps, findings });
+
+    return { recommendations, decisions, actions, auditEvents, followUps, findings, healthSnapshots, timeline, graphContext };
   }
 
   async getCardLedger(cardId, filters = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(filters.workspaceId);
     const card = await Card.findOne({ _id: cardId, workspaceId }).select('trelloId name boardId workspaceId');
-    const [recommendations, actions, followUps, workerResponses, findings, auditEvents] = await Promise.all([
+    const [recommendations, decisions, actions, followUps, workerResponses, findings, auditEvents] = await Promise.all([
       this.listRecommendations({ ...filters, cardId, limit: 50 }),
+      this.listDecisionQueue({ ...filters, cardId, limit: 50 }),
       this.listTrelloActions({ ...filters, cardId, limit: 50 }),
       this.listFollowUps({ ...filters, cardId, limit: 50 }),
       WorkerResponse.find(this.workspaceQuery(filters, { cardId })).sort({ receivedAt: -1 }).limit(50),
@@ -2156,7 +2240,9 @@ class OperationsLedgerService {
       ? await workGraphService.getTrelloCardLedgerContext(card, { workspaceId, limit: 25 })
       : workGraphService.emptyLedgerContext('card');
 
-    return { recommendations, actions, followUps, workerResponses, findings, auditEvents, graphContext };
+    const timeline = buildLedgerTimeline({ recommendations, decisions, actions, followUps, workerResponses, findings, auditEvents });
+
+    return { recommendations, decisions, actions, followUps, workerResponses, findings, auditEvents, timeline, graphContext };
   }
 
   async getWorkerAccountability(filters = {}) {
@@ -2945,3 +3031,4 @@ const operationsLedgerService = new OperationsLedgerService();
 module.exports = operationsLedgerService;
 module.exports.OperationsLedgerService = OperationsLedgerService;
 module.exports.resolveSnoozedUntil = resolveSnoozedUntil;
+module.exports.buildLedgerTimeline = buildLedgerTimeline;
