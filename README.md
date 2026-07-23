@@ -233,6 +233,8 @@ LiquidPlanner New connects with an administrator-created API token and one expli
 
 Productive connects with a personal API token and one explicit numeric organization ID. Sneup uses only the documented, bounded JSON:API project listing, retaining redacted names, opaque IDs, archive state, and timestamps. It excludes tasks, budgets, resource plans, time, people, invoices, files, custom fields, URLs, and provider writes.
 
+Ravetree connects with a user-created API token that has only the documented work-items view permission. Sneup uses Ravetree's fixed Open API host and bounded offset pagination, retaining redacted work-item titles, opaque IDs, completion state, and dates. It excludes details, people, accounts, contacts, teams, dependencies, time, tags, custom fields, URLs, and provider writes.
+
 Todoist uses its fixed HTTPS API host with bounded project and task collections, a 1 MB response ceiling by default, no redirects, and no proxy use. Sneup redacts email addresses and URLs from retained titles and excludes task descriptions, comments, attachments, provider URLs, and provider writes.
 
 Airtable requires an explicit base, table, and allowlisted task fields. Sneup rejects malformed or repeated page cursors, caps each fixed-host response at 1 MB by default, disables redirects and proxy use, redacts emails and URLs from retained field values, and excludes unselected fields, provider URLs, and provider writes.

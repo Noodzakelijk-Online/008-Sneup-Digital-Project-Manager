@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'taskade', 'motion', 'ganttpro', 'paymo', 'kantata', 'liquidplanner', 'productive', 'procore',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'taskade', 'motion', 'ganttpro', 'paymo', 'kantata', 'liquidplanner', 'productive', 'ravetree', 'procore',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zapier', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -42,6 +42,7 @@ const clickUpWorkSignalClient = lazyClient('./clickupWorkSignalClient');
 const procoreWorkSignalClient = lazyClient('./procoreWorkSignalClient');
 const liquidPlannerWorkSignalClient = lazyClient('./liquidPlannerWorkSignalClient');
 const productiveWorkSignalClient = lazyClient('./productiveWorkSignalClient');
+const ravetreeWorkSignalClient = lazyClient('./ravetreeWorkSignalClient');
 const azureDevOpsWorkSignalClient = lazyClient('./azureDevOpsWorkSignalClient');
 const wrikeWorkSignalClient = lazyClient('./wrikeWorkSignalClient');
 const smartsheetWorkSignalClient = lazyClient('./smartsheetWorkSignalClient');
@@ -398,6 +399,16 @@ productiveAdapter.capabilities.credentialBackedSync = true;
 productiveAdapter.list = async account => (await productiveWorkSignalClient.fetchDelta(account, null)).records;
 productiveAdapter.fetchDelta = (account, cursor) => productiveWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('productive', productiveAdapter);
+
+const ravetreeAdapter = buildAdapter('ravetree', 'Ravetree work-item metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: 'work_item', title: titleFromText(item.name, 'Ravetree work item'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['ravetree', 'work_item', item.status]), dueAt: item.dueAt, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt || item.createdAt,
+  evidenceRefs: [{ provider: account.connectorId, externalId: String(pick(item.id, 'unknown')), label: 'Ravetree work-item metadata', type: account.connectorId }],
+  raw: { id: item.id, sourceType: item.sourceType, workItemId: item.workItemId, status: item.status, startAt: item.startAt, dueAt: item.dueAt, completedAt: item.completedAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+ravetreeAdapter.capabilities.credentialBackedSync = true;
+ravetreeAdapter.list = async account => (await ravetreeWorkSignalClient.fetchDelta(account, null)).records;
+ravetreeAdapter.fetchDelta = (account, cursor) => ravetreeWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('ravetree', ravetreeAdapter);
 
 const slackAdapter = buildAdapter('slack', 'Slack message adapter', (account, message) => {
   const text = pick(message.title, message.text, message.message, '');
