@@ -685,7 +685,7 @@ describe('capacity-aware forecasting', () => {
     });
     expect(forecast.dataQuality.utilization).toMatchObject({
       provider: 'multi_provider',
-      providers: ['harvest', 'everhour', 'toggl_track', 'clockify'],
+      providers: ['harvest', 'everhour', 'timeneye', 'toggl_track', 'clockify'],
       activeProviders: ['harvest', 'everhour'],
       providerLabel: 'Harvest and Everhour',
       entries: 3,

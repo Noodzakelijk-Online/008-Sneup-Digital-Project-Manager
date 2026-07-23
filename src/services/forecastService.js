@@ -17,7 +17,7 @@ const MAX_CALENDAR_SIGNALS = 2000;
 const UTILIZATION_WINDOW_DAYS = 28;
 const ALLOCATION_WINDOW_DAYS = 28;
 const CALENDAR_WINDOW_DAYS = 28;
-const TIME_TRACKING_PROVIDERS = ['harvest', 'everhour', 'toggl_track', 'clockify'];
+const TIME_TRACKING_PROVIDERS = ['harvest', 'everhour', 'timeneye', 'toggl_track', 'clockify'];
 const RESOURCING_PROVIDERS = ['float', 'resource_guru'];
 const CALENDAR_PROVIDERS = ['google_workspace', 'microsoft_365'];
 const MAX_CALENDAR_EVENT_HOURS = 12;
@@ -106,7 +106,7 @@ const identityKey = (value) => String(value || '')
 
 const providerNameList = (providers = []) => {
   const names = providers
-    .map((provider) => ({ harvest: 'Harvest', everhour: 'Everhour', toggl_track: 'Toggl Track', clockify: 'Clockify' }[provider] || provider));
+    .map((provider) => ({ harvest: 'Harvest', everhour: 'Everhour', timeneye: 'Lucen Track', toggl_track: 'Toggl Track', clockify: 'Clockify' }[provider] || provider));
   if (names.length <= 1) return names[0] || '';
   if (names.length === 2) return names.join(' and ');
   return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
@@ -657,7 +657,7 @@ const demoForecast = () => ({
       provider: 'multi_provider',
       providers: TIME_TRACKING_PROVIDERS,
       activeProviders: TIME_TRACKING_PROVIDERS,
-      providerLabel: 'Harvest, Everhour, Toggl Track, and Clockify',
+      providerLabel: 'Harvest, Everhour, Lucen Track, Toggl Track, and Clockify',
       entries: 8,
       totalHours: 30,
       weeklyHours: 7.5,

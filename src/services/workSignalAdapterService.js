@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld',
   'wrike', 'opsgenie',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
 ];
 // Resolve each provider client only when its adapter performs a sync.
 const lazyClient = (modulePath) => new Proxy(Object.create(null), {
@@ -47,6 +47,7 @@ const shortcutWorkSignalClient = lazyClient('./shortcutWorkSignalClient');
 const bitbucketWorkSignalClient = lazyClient('./bitbucketWorkSignalClient');
 const harvestWorkSignalClient = lazyClient('./harvestWorkSignalClient');
 const everhourWorkSignalClient = lazyClient('./everhourWorkSignalClient');
+const timeneyeWorkSignalClient = lazyClient('./timeneyeWorkSignalClient');
 const codaWorkSignalClient = lazyClient('./codaWorkSignalClient');
 const quipWorkSignalClient = lazyClient('./quipWorkSignalClient');
 const hiveWorkSignalClient = lazyClient('./hiveWorkSignalClient');
@@ -712,6 +713,12 @@ everhourAdapter.capabilities.credentialBackedSync = true;
 everhourAdapter.list = async account => (await everhourWorkSignalClient.fetchDelta(account, null)).records;
 everhourAdapter.fetchDelta = (account, cursor) => everhourWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('everhour', everhourAdapter);
+
+const timeneyeAdapter = buildAdapter('timeneye', 'Lucen Track personal time-entry utilization adapter', (account, entry) => ({ externalId: pick(entry.id), sourceType: 'time_entry', title: `Lucen Track entry ${entry.timeEntryId || entry.id}`, description: '', status: 'done', priority: 'unknown', owners: [], labels: compact(['timeneye', 'time_entry', entry.projectId ? `project:${entry.projectId}` : undefined, entry.phaseId ? `phase:${entry.phaseId}` : undefined, entry.todoId ? `todo:${entry.todoId}` : undefined]), dueAt: undefined, providerCreatedAt: pick(entry.createdAt, entry.spentDate), providerUpdatedAt: pick(entry.updatedAt, entry.createdAt, entry.spentDate), evidenceRefs: baseEvidence(account, entry, 'Lucen Track utilization metadata'), raw: { id: entry.id, sourceType: 'time_entry', timeEntryId: entry.timeEntryId, userId: entry.userId, projectId: entry.projectId, phaseId: entry.phaseId, todoId: entry.todoId, spentDate: entry.spentDate, hours: entry.hours, createdAt: entry.createdAt, updatedAt: entry.updatedAt } }));
+timeneyeAdapter.capabilities.credentialBackedSync = true;
+timeneyeAdapter.list = async account => (await timeneyeWorkSignalClient.fetchDelta(account, null)).records;
+timeneyeAdapter.fetchDelta = (account, cursor) => timeneyeWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('timeneye', timeneyeAdapter);
 
 const codaAdapter = buildAdapter('coda', 'Coda allowlisted table metadata adapter', (account, table) => ({
   externalId: pick(table.externalId, table.id),
