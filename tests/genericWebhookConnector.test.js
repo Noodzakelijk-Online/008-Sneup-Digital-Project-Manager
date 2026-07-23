@@ -315,7 +315,8 @@ describe('Generic Webhook connector', () => {
       const result = {};
       result.select = jest.fn(() => result);
       result.sort = jest.fn(() => result);
-      result.limit = jest.fn().mockResolvedValue(values);
+      result.limit = jest.fn(() => result);
+      result.lean = jest.fn().mockResolvedValue(values);
       return result;
     };
     const memberQuery = queryResult([{ _id: '507f1f77bcf86cd799439012', fullName: 'Alex Operator', username: 'alex', email: 'private@example.test' }]);
@@ -355,6 +356,8 @@ describe('Generic Webhook connector', () => {
     expect(Card.find).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: WORKSPACE_ID, members: '507f1f77bcf86cd799439012', name: expect.any(RegExp) }));
     expect(memberQuery.limit).toHaveBeenCalledWith(250);
     expect(cardQuery.limit).toHaveBeenCalledWith(250);
+    expect(memberQuery.lean).toHaveBeenCalledTimes(1);
+    expect(cardQuery.lean).toHaveBeenCalledTimes(1);
   });
 
   test('rejects invalid delivery identifiers before creating a signal', async () => {

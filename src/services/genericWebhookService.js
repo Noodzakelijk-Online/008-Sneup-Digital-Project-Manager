@@ -275,7 +275,8 @@ class GenericWebhookService {
       : await this.Member.find(memberFilter)
         .select('_id fullName username')
         .sort({ fullName: 1, username: 1 })
-        .limit(optionLimit);
+        .limit(optionLimit)
+        .lean();
     const cardFilter = { workspaceId, members: memberId };
     if (match) cardFilter.name = match;
     const cards = memberId
@@ -283,6 +284,7 @@ class GenericWebhookService {
         .select('_id name closed lastActivity')
         .sort({ closed: 1, lastActivity: -1 })
         .limit(optionLimit)
+        .lean()
       : [];
 
     return {
