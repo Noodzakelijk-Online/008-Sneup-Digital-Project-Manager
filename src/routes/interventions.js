@@ -7,6 +7,8 @@ const operationsLedgerService = require('../services/operationsLedgerService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
 
+const RESPONSE_ELIGIBLE_TYPES = new Set(['comment', 'follow_up', 'escalate']);
+
 router.param('interventionId', validateObjectIdParam('interventionId'));
 
 const workspaceOptions = (req) => ({
@@ -56,14 +58,32 @@ router.post('/:interventionId/record-response', requirePermission('worker-respon
     if (!intervention) {
       return res.status(404).json({ success: false, error: 'Intervention not found' });
     }
+    if (intervention.status !== 'executed') {
+      return res.status(409).json({ success: false, error: 'A worker response can only be recorded after the intervention is executed' });
+    }
+    if (!RESPONSE_ELIGIBLE_TYPES.has(intervention.type)) {
+      return res.status(400).json({ success: false, error: 'Only communication interventions can receive a worker response' });
+    }
+    if (!intervention.memberId) {
+      return res.status(409).json({ success: false, error: 'The executed intervention has no accountable worker' });
+    }
+    if (intervention.response?.respondedAt) {
+      return res.status(409).json({ success: false, error: 'A worker response is already recorded for this intervention' });
+    }
+
+    const recommendation = await Recommendation.findOne({
+      interventionId: intervention._id,
+      workspaceId: getRequestWorkspaceObjectId(req)
+    }).sort({ createdAt: -1 });
 
     const response = await operationsLedgerService.recordWorkerResponse({
       ...req.body,
       ...workspaceOptions(req),
       interventionId: intervention._id,
-      boardId: req.body.boardId || intervention.boardId,
-      cardId: req.body.cardId || intervention.cardId,
-      memberId: req.body.memberId || intervention.memberId,
+      recommendationId: recommendation?._id,
+      boardId: intervention.boardId,
+      cardId: intervention.cardId,
+      memberId: intervention.memberId,
       actor: req.body.actor || req.auth?.actorId
     });
 

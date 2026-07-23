@@ -1220,6 +1220,9 @@ function renderOperationsLedger() {
   document.querySelectorAll('[data-followup-action]').forEach((button) => {
     button.addEventListener('click', () => runFollowUpAction(button.dataset.followupId, button.dataset.followupAction));
   });
+  document.querySelectorAll('[data-followup-response]').forEach((button) => {
+    button.addEventListener('click', () => openWorkerResponseRecorder(button.dataset.followupResponse));
+  });
   document.querySelectorAll('[data-payload-edit]').forEach((button) => {
     button.addEventListener('click', () => editRecommendationPayload(button.dataset.payloadEdit));
   });
@@ -1631,6 +1634,7 @@ function notificationDeliverySourceEvidence(delivery = {}) {
 
 function renderFollowUp(followUp) {
   const followUpId = getId(followUp._id || followUp.id);
+  const interventionId = getId(followUp.interventionId);
   return `
     <div class="item">
       <div class="item-title">
@@ -1642,6 +1646,7 @@ function renderFollowUp(followUp) {
         <span>${escapeHtml(followUp.nextAction || 'Review worker response')}</span>
       </div>
       ${state.ledger.demoMode ? '' : `<div class="item-actions">
+        ${interventionId ? `<button class="button" data-followup-response="${escapeHtml(interventionId)}" type="button">Record response</button>` : ''}
         <button class="button primary" data-followup-id="${followUpId}" data-followup-action="resolved" type="button">Resolved</button>
         <button class="button" data-followup-id="${followUpId}" data-followup-action="escalated" type="button">Escalate</button>
       </div>`}
@@ -1838,6 +1843,74 @@ async function runFollowUpAction(followUpId, action) {
   } catch (error) {
     openNotice('Follow-up update failed', error.message);
   }
+}
+
+function openWorkerResponseRecorder(interventionId) {
+  if (!interventionId) return;
+
+  els.modalTitle.textContent = 'Record worker response';
+  els.modalBody.innerHTML = `
+    <form id="workerResponseForm" class="notice-stack">
+      <div class="notice">Record an observed response to the executed communication. Sneup will update the matching internal follow-up and accountability ledger, but it will not send a provider message.</div>
+      <label>Response type
+        <select name="responseType" required>
+          <option value="acknowledged">Acknowledged</option>
+          <option value="completed">Completed</option>
+          <option value="blocked">Blocked</option>
+          <option value="needs_help">Needs help</option>
+          <option value="ignored">Ignored</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label>Observed through
+        <select name="source" required>
+          <option value="manual">Manual observation</option>
+          <option value="email">Email</option>
+          <option value="slack">Slack</option>
+          <option value="web_chat">Web chat</option>
+          <option value="trello_comment">Trello comment</option>
+        </select>
+      </label>
+      <label>Response note (optional)
+        <textarea name="responseText" rows="4" maxlength="2000" placeholder="Record only the context needed to explain the response"></textarea>
+      </label>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelWorkerResponse">Cancel</button>
+        <button class="button primary" type="submit">Record response</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelWorkerResponse').addEventListener('click', closeModal);
+  document.getElementById('workerResponseForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = form.querySelector('button[type="submit"]');
+    const values = new FormData(form);
+    submitButton.disabled = true;
+    submitButton.textContent = 'Recording...';
+    try {
+      const data = await fetchApi(`/api/interventions/${encodeURIComponent(interventionId)}/record-response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          responseType: values.get('responseType'),
+          source: values.get('source'),
+          responseText: values.get('responseText'),
+          actor: state.securityContext?.actorId || 'local-user'
+        })
+      });
+      closeModal();
+      await loadOperationsLedger();
+      openNotice('Worker response recorded', data.response?.responseType === 'blocked' || data.response?.responseType === 'needs_help'
+        ? 'The matching follow-up was escalated for review.'
+        : 'The matching follow-up and accountability ledger were updated.');
+    } catch (error) {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Record response';
+      openNotice('Worker response blocked', error.message);
+    }
+  });
 }
 
 async function runOutcomeEvaluation(recommendationId) {

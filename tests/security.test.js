@@ -1196,6 +1196,7 @@ describe('dashboard content security policy', () => {
     const styles = fs.readFileSync(path.join(rootDir, 'public', 'styles.css'), 'utf8');
     const server = fs.readFileSync(path.join(rootDir, 'src', 'index.js'), 'utf8');
     const recommendationRoutes = fs.readFileSync(path.join(rootDir, 'src', 'routes', 'recommendations.js'), 'utf8');
+    const interventionRoutes = fs.readFileSync(path.join(rootDir, 'src', 'routes', 'interventions.js'), 'utf8');
 
     expect(html).toContain('<link rel="stylesheet" href="/styles.css?v=__SNEUP_ASSET_VERSION__">');
     expect(html).toContain('<script src="/app.js?v=__SNEUP_ASSET_VERSION__" defer></script>');
@@ -1219,6 +1220,10 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('data-graph-filter');
     expect(appJs).toContain('data-graph-dependency-review');
     expect(appJs).toContain('renderGraphReviewQuality(graph)');
+    expect(appJs).toContain('data-followup-response');
+    expect(appJs).toContain('openWorkerResponseRecorder');
+    expect(appJs).toContain('/api/interventions/${encodeURIComponent(interventionId)}/record-response');
+    expect(appJs).toContain('it will not send a provider message');
     expect(appJs).toContain('provider retries');
     expect(appJs).toContain('data-connector-sync');
     expect(appJs).toContain('renderGraphLedgerFilters(graphContext)');
@@ -1238,6 +1243,9 @@ describe('dashboard content security policy', () => {
     expect(server).toContain("app.use('/api/forecasts', forecastRoutes)");
     expect(fs.readFileSync(path.join(rootDir, 'src', 'routes', 'workSignals.js'), 'utf8')).toContain("router.post('/graph/dependencies/:dependencyId/review'");
     expect(recommendationRoutes).toContain("router.get('/:recommendationId/evidence'");
+    expect(interventionRoutes).toContain("intervention.status !== 'executed'");
+    expect(interventionRoutes).toContain('RESPONSE_ELIGIBLE_TYPES.has(intervention.type)');
+    expect(interventionRoutes).toContain('memberId: intervention.memberId');
     expect(html).not.toMatch(/<style[\s>]/i);
     expect(html).not.toMatch(/<script>\s*[\s\S]*?<\/script>/i);
     expect(html).not.toMatch(/\sstyle=/i);
