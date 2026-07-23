@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject',
   'wrike', 'opsgenie',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
 ];
 // Resolve each provider client only when its adapter performs a sync.
 const lazyClient = (modulePath) => new Proxy(Object.create(null), {
@@ -48,6 +48,7 @@ const bitbucketWorkSignalClient = lazyClient('./bitbucketWorkSignalClient');
 const harvestWorkSignalClient = lazyClient('./harvestWorkSignalClient');
 const everhourWorkSignalClient = lazyClient('./everhourWorkSignalClient');
 const codaWorkSignalClient = lazyClient('./codaWorkSignalClient');
+const quipWorkSignalClient = lazyClient('./quipWorkSignalClient');
 const teamworkWorkSignalClient = lazyClient('./teamworkWorkSignalClient');
 const teamGanttWorkSignalClient = lazyClient('./teamganttWorkSignalClient');
 const businessmapWorkSignalClient = lazyClient('./businessmapWorkSignalClient');
@@ -910,6 +911,14 @@ microsoftProjectAdapter.capabilities.credentialBackedSync = true;
 microsoftProjectAdapter.list = async account => (await microsoftProjectWorkSignalClient.fetchDelta(account, null)).records;
 microsoftProjectAdapter.fetchDelta = (account, cursor) => microsoftProjectWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('microsoft_project', microsoftProjectAdapter);
+
+const quipAdapter = buildAdapter('quip', 'Quip thread index metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'thread'), title: titleFromText(item.name, 'Quip thread'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['quip', item.sourceType, item.threadType]), dueAt: undefined, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt || item.createdAt, evidenceRefs: baseEvidence(account, item, 'Quip thread index metadata'), raw: { id: item.id, sourceType: item.sourceType, threadId: item.threadId, threadType: item.threadType, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+quipAdapter.capabilities.credentialBackedSync = true;
+quipAdapter.list = async account => (await quipWorkSignalClient.fetchDelta(account, null)).records;
+quipAdapter.fetchDelta = (account, cursor) => quipWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('quip', quipAdapter);
 
 const youTrackAdapter = buildAdapter('youtrack', 'YouTrack issue metadata adapter', (account, item) => ({
   externalId: pick(item.id), sourceType: 'issue', title: titleFromText(item.name, 'YouTrack issue'), description: '',
