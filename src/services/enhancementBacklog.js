@@ -5,6 +5,16 @@ const PRIORITY_ORDER = {
   P3: 3
 };
 
+const connectorCoverageEvidence = () => {
+  const connectorRegistry = require('./connectorRegistry');
+  const workSignalAdapterService = require('./workSignalAdapterService');
+  const catalogCount = connectorRegistry.getConnectors().length;
+  const adapterCount = workSignalAdapterService.listAdapters()
+    .filter(adapter => adapter.capabilities?.credentialBackedSync)
+    .length;
+  return `Sneup currently has ${adapterCount} read-only credential-backed adapters across ${catalogCount} catalog tools in work management, delivery, communication, resourcing, incident response, CRM, and automation.`;
+};
+
 const enhancements = [
   {
     id: 'ENH-001',
@@ -408,8 +418,19 @@ const sortEnhancements = (items) => [...items].sort((left, right) => {
   return left.id.localeCompare(right.id);
 });
 
+const hydrateEnhancement = (item) => {
+  const hydrated = { ...item, acceptanceCriteria: [...item.acceptanceCriteria] };
+  if (item.id === 'ENH-001') {
+    hydrated.evidence = item.evidence.replace(
+      /Sneup currently has \d+ read-only credential-backed adapters across work management, delivery, communication, resourcing, incident response, CRM, and automation\./,
+      connectorCoverageEvidence()
+    );
+  }
+  return hydrated;
+};
+
 const listEnhancements = (filters = {}) => {
-  const filtered = enhancements.filter(item => {
+  const filtered = enhancements.map(hydrateEnhancement).filter(item => {
     if (filters.priority && item.priority !== filters.priority) return false;
     if (filters.area && item.area !== filters.area) return false;
     if (filters.status && item.status !== filters.status) return false;
@@ -419,8 +440,10 @@ const listEnhancements = (filters = {}) => {
   return sortEnhancements(filtered);
 };
 
-const getEnhancement = (id) =>
-  enhancements.find(item => item.id.toLowerCase() === String(id).toLowerCase()) || null;
+const getEnhancement = (id) => {
+  const enhancement = enhancements.find(item => item.id.toLowerCase() === String(id).toLowerCase());
+  return enhancement ? hydrateEnhancement(enhancement) : null;
+};
 
 const getSummary = (items = enhancements) => items.reduce((summary, item) => {
   summary.total += 1;
