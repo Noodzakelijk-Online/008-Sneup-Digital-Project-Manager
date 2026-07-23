@@ -9741,7 +9741,7 @@ describe('job observability', () => {
 
   test('batches connector dependency freshness per provider instead of per synced record', async () => {
     jest.resetModules();
-    const markStaleDependencies = jest.fn().mockResolvedValue({ modifiedCount: 3 });
+    const markStaleDependencies = jest.fn().mockResolvedValue({ modifiedCount: 3, staleAfterDays: 21 });
     const upsertProviderRecord = jest.fn().mockResolvedValue({ id: 'signal-1' });
     const account = {
       _id: 'account-1',
@@ -9793,7 +9793,7 @@ describe('job observability', () => {
         providerCount: 1,
         markedStale: 3,
         failureCount: 0,
-        byProvider: { github: { markedStale: 3 } }
+        byProvider: { github: { markedStale: 3, staleAfterDays: 21 } }
       });
     } finally {
       jest.dontMock('mongoose');

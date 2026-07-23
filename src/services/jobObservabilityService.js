@@ -445,6 +445,31 @@ class JobObservabilityService {
         successCount: 3,
         failureCount: 0,
         metadata: { mode: 'demo' }
+      },
+      {
+        _id: 'demo-job-run-4',
+        jobName: 'connectors.work_signals_sync',
+        jobType: 'sync',
+        triggerType: 'scheduled',
+        status: 'succeeded',
+        startedAt: new Date(now - 38 * 60 * 1000),
+        finishedAt: new Date(now - 37 * 60 * 1000),
+        durationMs: 39000,
+        processedCount: 2,
+        successCount: 2,
+        failureCount: 0,
+        metadata: {
+          mode: 'demo',
+          dependencyFreshness: {
+            providerCount: 2,
+            markedStale: 1,
+            failureCount: 0,
+            byProvider: {
+              github: { markedStale: 1, staleAfterDays: 14 },
+              asana: { markedStale: 0, staleAfterDays: 30 }
+            }
+          }
+        }
       }
     ];
   }

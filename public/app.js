@@ -1020,10 +1020,15 @@ function renderJobDashboard() {
 
   const summary = dashboard.summary || {};
   const health = dashboard.health || [];
+  const freshnessEvidenceJobs = health.filter(job =>
+    job.status === 'healthy' && Number(job.metadata?.dependencyFreshness?.providerCount) > 0
+  ).slice(0, 1);
   const problemJobs = health
     .filter(job => job.status !== 'healthy')
-    .slice(0, 8);
-  const displayJobs = problemJobs.length > 0 ? problemJobs : health.slice(0, 5);
+    .slice(0, freshnessEvidenceJobs.length > 0 ? 7 : 8);
+  const displayJobs = problemJobs.length > 0
+    ? [...problemJobs, ...freshnessEvidenceJobs]
+    : health.slice(0, 5);
 
   els.jobHealthCount.textContent = `${summary.trackedJobs || health.length || 0} tracked`;
   els.jobHealthList.innerHTML = `
@@ -1225,6 +1230,13 @@ function renderJobHealthItem(job) {
   const freshnessProviders = Number(dependencyFreshness?.providerCount) || 0;
   const staleDependencies = Number(dependencyFreshness?.markedStale) || 0;
   const freshnessFailures = Number(dependencyFreshness?.failureCount) || 0;
+  const freshnessHorizons = Object.values(dependencyFreshness?.byProvider || {})
+    .map(provider => Number(provider?.staleAfterDays))
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
+  const freshnessHorizon = freshnessHorizons.length > 0
+    ? `${freshnessHorizons[0]}${freshnessHorizons[0] === freshnessHorizons.at(-1) ? '' : `-${freshnessHorizons.at(-1)}`} day horizon`
+    : '';
   return `
     <div class="item">
       <div class="item-title">
@@ -1238,7 +1250,7 @@ function renderJobHealthItem(job) {
         <span>${job.processedCount || 0} processed</span>
       </div>
       ${connectorRetries || connectorPacingMs ? `<div class="meta"><span>${connectorRetries} provider retries</span><span>${Math.round(connectorPacingMs / 1000)}s provider pacing</span></div>` : ''}
-      ${freshnessProviders || staleDependencies || freshnessFailures ? `<div class="meta"><span>Graph freshness: ${freshnessProviders} providers checked</span><span>${staleDependencies} stale edges marked</span>${freshnessFailures ? `<span>${freshnessFailures} freshness checks failed</span>` : ''}</div>` : ''}
+      ${freshnessProviders || staleDependencies || freshnessFailures ? `<div class="meta"><span>Graph freshness: ${freshnessProviders} providers checked</span><span>${staleDependencies} stale edges marked</span>${freshnessHorizon ? `<span>${freshnessHorizon}</span>` : ''}${freshnessFailures ? `<span>${freshnessFailures} freshness checks failed</span>` : ''}</div>` : ''}
       ${job.pausedReason ? `<div class="meta">${escapeHtml(job.pausedReason)}</div>` : ''}
       ${job.lastError ? `<div class="meta">${escapeHtml(job.lastError)}</div>` : ''}
       <div class="item-actions">

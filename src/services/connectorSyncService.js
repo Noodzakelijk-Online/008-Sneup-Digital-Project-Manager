@@ -242,7 +242,11 @@ class ConnectorSyncService {
       try {
         const result = await workGraphService.markStaleDependencies(workspaceId, { sourceProvider });
         const count = Number(result?.modifiedCount ?? result?.nModified ?? 0);
-        byProvider[sourceProvider] = { markedStale: count };
+        const staleAfterDays = Number(result?.staleAfterDays);
+        byProvider[sourceProvider] = {
+          markedStale: count,
+          ...(Number.isFinite(staleAfterDays) ? { staleAfterDays } : {})
+        };
         markedStale += count;
       } catch (error) {
         failureCount += 1;

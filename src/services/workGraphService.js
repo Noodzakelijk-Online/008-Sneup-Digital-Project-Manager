@@ -30,6 +30,8 @@ const pick = (...values) => values.find(value => value !== undefined && value !=
 const OPEN_STATUSES = new Set(['open', 'in_progress', 'blocked', 'waiting', 'unknown']);
 const ROBERT_SENSITIVE_PATTERN = /\b(robert|client|legal|contract|money|budget|invoice|payment|government|tax|compliance|commitment|approval)\b/i;
 const DEFAULT_DEPENDENCY_STALE_AFTER_DAYS = 30;
+const MIN_DEPENDENCY_STALE_AFTER_DAYS = 1;
+const MAX_DEPENDENCY_STALE_AFTER_DAYS = 365;
 const DEPENDENCY_REVIEW_ACTIONS = new Set(['confirm', 'dismiss', 'refresh']);
 
 class WorkGraphService {
@@ -379,10 +381,14 @@ class WorkGraphService {
 
   async markStaleDependencies(workspaceId, options = {}) {
     const now = options.now || new Date();
-    const cutoff = new Date(now.getTime() - this.dependencyStaleAfterMs(options));
-    const staleReason = 'Provider dependency link has not been observed during recent syncs.';
     const requestedProviders = options.sourceProviders || options.sourceProvider;
     const sourceProviders = [...new Set(asArray(requestedProviders).map(provider => String(provider).trim()).filter(Boolean))];
+    const staleAfterDays = this.dependencyStaleAfterDays({
+      ...options,
+      sourceProvider: sourceProviders.length === 1 ? sourceProviders[0] : undefined
+    });
+    const cutoff = new Date(now.getTime() - staleAfterDays * 24 * 60 * 60 * 1000);
+    const staleReason = 'Provider dependency link has not been observed during its configured recent sync window.';
     const query = {
       workspaceId,
       freshnessStatus: { $ne: 'stale' },
@@ -395,7 +401,7 @@ class WorkGraphService {
     if (sourceProviders.length === 1) query.sourceProvider = sourceProviders[0];
     if (sourceProviders.length > 1) query.sourceProvider = { $in: sourceProviders };
 
-    return WorkDependency.updateMany(query, {
+    const result = await WorkDependency.updateMany(query, {
       $set: {
         freshnessStatus: 'stale',
         reviewStatus: 'unreviewed',
@@ -407,17 +413,27 @@ class WorkGraphService {
         'metadata.staleReason': staleReason
       }
     });
+
+    return {
+      ...result,
+      sourceProviders,
+      staleAfterDays
+    };
+  }
+
+  dependencyStaleAfterDays(options = {}) {
+    const provider = String(options.sourceProvider || '').trim();
+    const providerKey = provider.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    const configuredValue = options.staleAfterDays
+      ?? (providerKey ? process.env[`SNEUP_DEPENDENCY_${providerKey}_STALE_AFTER_DAYS`] : undefined)
+      ?? process.env.SNEUP_DEPENDENCY_STALE_AFTER_DAYS;
+    const configuredDays = Number.parseInt(configuredValue, 10);
+    if (!Number.isFinite(configuredDays)) return DEFAULT_DEPENDENCY_STALE_AFTER_DAYS;
+    return Math.max(MIN_DEPENDENCY_STALE_AFTER_DAYS, Math.min(MAX_DEPENDENCY_STALE_AFTER_DAYS, configuredDays));
   }
 
   dependencyStaleAfterMs(options = {}) {
-    const configuredDays = Number.parseInt(
-      options.staleAfterDays || process.env.SNEUP_DEPENDENCY_STALE_AFTER_DAYS,
-      10
-    );
-    const days = Number.isFinite(configuredDays) && configuredDays > 0
-      ? configuredDays
-      : DEFAULT_DEPENDENCY_STALE_AFTER_DAYS;
-    return days * 24 * 60 * 60 * 1000;
+    return this.dependencyStaleAfterDays(options) * 24 * 60 * 60 * 1000;
   }
 
   async getSummary(options = {}) {
