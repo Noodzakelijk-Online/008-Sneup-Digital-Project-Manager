@@ -78,6 +78,17 @@ const parseDate = (value) => {
   return Number.isNaN(date.getTime()) ? undefined : date;
 };
 
+const clamp = (value, fallback, minimum, maximum) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+};
+
+const chunk = (items, size) => {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+};
+
 const normalizeEnum = (value, aliases, fallback) => {
   const key = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   return aliases[key] || fallback;
@@ -193,19 +204,7 @@ class WorkSignalService {
       connectorAccountId: account._id,
       provider: account.connectorId,
       externalId: normalized.externalId
-    }, {
-      $set: {
-        ...normalized,
-        lastSeenAt: now,
-        syncState: {
-          ...(options.syncState && typeof options.syncState === 'object' ? options.syncState : {}),
-          lastUpsertedBy: options.actorId || 'sync-worker'
-        }
-      },
-      $setOnInsert: {
-        firstSeenAt: now
-      }
-    }, {
+    }, this.buildSignalUpdate(normalized, options, now), {
       new: true,
       upsert: true,
       setDefaultsOnInsert: true
@@ -217,6 +216,74 @@ class WorkSignalService {
     });
 
     return this.sanitizeSignal(signal);
+  }
+
+  buildSignalUpdate(normalized, options, now) {
+    return {
+      $set: {
+        ...normalized,
+        lastSeenAt: now,
+        updatedAt: now,
+        syncState: {
+          ...(options.syncState && typeof options.syncState === 'object' ? options.syncState : {}),
+          lastUpsertedBy: options.actorId || 'sync-worker'
+        }
+      },
+      $setOnInsert: {
+        firstSeenAt: now,
+        createdAt: now
+      }
+    };
+  }
+
+  getProviderBatchSize(value = process.env.SNEUP_WORK_SIGNAL_UPSERT_BATCH_SIZE) {
+    return clamp(value, 100, 10, 500);
+  }
+
+  async upsertNormalizedProviderBatch(account, normalizedRecords, options = {}) {
+    const batchSize = this.getProviderBatchSize(options.batchSize);
+    let lastSignal = null;
+
+    for (const normalizedBatch of chunk(normalizedRecords, batchSize)) {
+      const now = new Date();
+      await WorkSignal.bulkWrite(normalizedBatch.map(({ normalized, syncState }) => ({
+        updateOne: {
+          filter: {
+            workspaceId: normalized.workspaceId,
+            connectorAccountId: account._id,
+            provider: account.connectorId,
+            externalId: normalized.externalId
+          },
+          update: this.buildSignalUpdate(normalized, { ...options, syncState }, now),
+          upsert: true,
+          setDefaultsOnInsert: true
+        }
+      })), { ordered: true });
+
+      const persisted = await WorkSignal.find({
+        workspaceId: normalizedBatch[0].normalized.workspaceId,
+        connectorAccountId: account._id,
+        provider: account.connectorId,
+        externalId: { $in: normalizedBatch.map(({ normalized }) => normalized.externalId) }
+      }).lean();
+      const byExternalId = new Map(persisted.map(signal => [signal.externalId, signal]));
+
+      for (const { normalized } of normalizedBatch) {
+        const signal = byExternalId.get(normalized.externalId);
+        if (!signal) {
+          const error = new Error('Work signal batch persistence did not return the requested record');
+          error.statusCode = 502;
+          throw error;
+        }
+        await workGraphService.upsertFromSignal(signal, {
+          actorId: options.actorId || 'provider-adapter',
+          deferDependencyFreshness: options.deferDependencyFreshness === true
+        });
+        lastSignal = this.sanitizeSignal(signal);
+      }
+    }
+
+    return { count: normalizedRecords.length, lastSignal };
   }
 
   async upsertProviderRecords(account, records = [], options = {}) {
@@ -233,26 +300,29 @@ class WorkSignalService {
       throw error;
     }
 
-    let count = 0;
-    let lastSignal = null;
-    for (const record of records) {
+    const normalizedRecords = records.map((record) => {
       const providerPayload = workSignalAdapterService.normalize(account, record);
       const normalized = this.normalizeSignalPayload(account, providerPayload);
-      lastSignal = await this.upsertNormalizedSignal(account, normalized, {
+      return {
+        normalized,
+        syncState: providerPayload.syncState
+      };
+    });
+
+    const result = normalizedRecords.length > 0
+      ? await this.upsertNormalizedProviderBatch(account, normalizedRecords, {
         ...options,
         workspaceId,
-        actorId: options.actorId || 'provider-adapter',
-        syncState: providerPayload.syncState
-      });
-      count += 1;
-    }
+        actorId: options.actorId || 'provider-adapter'
+      })
+      : { count: 0, lastSignal: null };
 
     if (options.deferAccountSave !== true) {
       account.lastSyncAt = new Date();
       account.lastError = undefined;
       await account.save();
     }
-    return { count, lastSignal };
+    return result;
   }
 
   async upsertProviderRecord(accountId, record = {}, options = {}) {
