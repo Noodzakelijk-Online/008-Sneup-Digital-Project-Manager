@@ -1,6 +1,7 @@
 const http = require('http');
 const path = require('path');
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { acquireSingleInstanceLock } = require('./singleInstance');
 const {
   getDesktopSettingsPath,
   readDesktopSettings,
@@ -115,14 +116,16 @@ const start = async () => {
   }
 };
 
-app.whenReady().then(start);
+if (acquireSingleInstanceLock({ app, getMainWindow: () => mainWindow })) {
+  app.whenReady().then(start);
 
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
-});
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
 
-app.on('window-all-closed', () => {
-  app.quit();
-});
+  app.on('window-all-closed', () => {
+    app.quit();
+  });
+}
