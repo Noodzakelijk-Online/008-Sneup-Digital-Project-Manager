@@ -63,6 +63,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/models/Board');
     jest.dontMock('../src/models/List');
     jest.dontMock('../src/models/Card');
+    jest.dontMock('../src/models/Conversation');
     jest.dontMock('../src/models/WorkActor');
     jest.dontMock('../src/models/WorkComment');
     jest.dontMock('../src/models/WorkContainer');
@@ -76,6 +77,8 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/contextAnalyzer');
     jest.dontMock('../src/services/nlpService');
     jest.dontMock('../src/services/operatingLedgerAnalyzer');
+    jest.dontMock('../src/services/conversationalAI');
+    jest.dontMock('../src/services/priorityEngine');
     jest.dontMock('../src/services/policyRuleService');
     jest.dontMock('../src/services/githubWorkSignalClient');
     jest.dontMock('../src/services/trelloWorkSignalClient');
@@ -641,6 +644,30 @@ describe('request security boundaries', () => {
       expect(next).not.toHaveBeenCalled();
       expect(res.statusCode).toBe(403);
       expect(res.body.requiredPermission).toBe('follow-ups:manage');
+    }
+  });
+
+  test('requires chat access permission before returning stored conversation data', () => {
+    jest.resetModules();
+    jest.doMock('../src/models/Conversation', () => ({}));
+    jest.doMock('../src/services/conversationalAI', () => ({}));
+    jest.doMock('../src/services/priorityEngine', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getRequestWorkspaceObjectId: jest.fn(() => 'workspace-1'),
+      scopeQuery: jest.fn(() => ({}))
+    }));
+
+    const chatRoutes = require('../src/routes/chat');
+    for (const path of ['/conversations/:memberId', '/conversation/:conversationId', '/stats']) {
+      const route = chatRoutes.stack.find((layer) => layer.route?.path === path).route;
+      const res = createResponse();
+      const next = jest.fn();
+
+      route.stack[0].handle(createRequest({ auth: { authenticated: true, roles: [], permissions: [] } }), res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(403);
+      expect(res.body.requiredPermission).toBe('chat:write');
     }
   });
 

@@ -81,7 +81,7 @@ router.post('/message', requirePermission('chat:write'), async (req, res) => {
 });
 
 // Get conversation history
-router.get('/conversations/:memberId', async (req, res) => {
+router.get('/conversations/:memberId', requirePermission('chat:write'), async (req, res) => {
   try {
     const { memberId } = req.params;
     const limit = clampInteger(req.query.limit, 10, 1, 50);
@@ -103,7 +103,7 @@ router.get('/conversations/:memberId', async (req, res) => {
 });
 
 // Get specific conversation
-router.get('/conversation/:conversationId', async (req, res) => {
+router.get('/conversation/:conversationId', requirePermission('chat:write'), async (req, res) => {
   try {
     const conversation = await Conversation.findOne(scopeQuery(req, { _id: req.params.conversationId }))
       .populate('memberId boardId cardId');
@@ -253,7 +253,7 @@ router.get('/priorities/:memberId/daily', async (req, res) => {
 });
 
 // Get conversation statistics
-router.get('/stats', async (req, res) => {
+router.get('/stats', requirePermission('chat:write'), async (req, res) => {
   try {
     const days = clampInteger(req.query.days, 30, 1, 365);
     const stats = await Conversation.getStatistics(days, getRequestWorkspaceObjectId(req));
