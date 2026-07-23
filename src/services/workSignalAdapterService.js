@@ -683,7 +683,36 @@ airtableAdapter.capabilities.credentialBackedSync = true;
 airtableAdapter.list = async (account) => (await airtableWorkSignalClient.fetchDelta(account, null)).records;
 airtableAdapter.fetchDelta = (account, cursor) => airtableWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('airtable', airtableAdapter);
-const todoistAdapter = buildAdapter('todoist', 'Todoist task adapter', (account, task) => ({ externalId: pick(task.id), sourceType: 'task', title: pick(task.content), description: '', status: 'open', priority: priorityFromText({ 4: 'critical', 3: 'high', 2: 'normal', 1: 'low' }[Number(task.priority)]), url: pick(task.url), owners: userNames(task.assigneeId), labels: compact([task.project?.name, task.sectionId]), dueAt: pick(task.due), providerCreatedAt: pick(task.createdAt), providerUpdatedAt: pick(task.createdAt), evidenceRefs: baseEvidence(account, task, 'Todoist task'), raw: task }));
+const todoistAdapter = buildAdapter('todoist', 'Todoist task adapter', (account, task) => ({
+  externalId: pick(task.id),
+  sourceType: 'task',
+  title: titleFromText(task.content, 'Todoist task'),
+  description: '',
+  status: 'open',
+  priority: priorityFromText({ 4: 'critical', 3: 'high', 2: 'normal', 1: 'low' }[Number(task.priority)]),
+  url: undefined,
+  owners: userNames(task.assigneeId),
+  labels: compact(['todoist', task.project?.name, task.sectionId ? `section:${task.sectionId}` : undefined]),
+  dueAt: task.due,
+  providerCreatedAt: task.createdAt,
+  providerUpdatedAt: task.createdAt,
+  evidenceRefs: [{
+    provider: account.connectorId,
+    externalId: String(pick(task.id, 'unknown')),
+    label: 'Todoist task metadata',
+    type: account.connectorId
+  }],
+  raw: {
+    id: task.id,
+    projectId: task.projectId,
+    sectionId: task.sectionId,
+    priority: task.priority,
+    assigneeId: task.assigneeId,
+    due: task.due,
+    createdAt: task.createdAt,
+    project: task.project ? { id: task.project.id, name: task.project.name } : undefined
+  }
+}));
 todoistAdapter.capabilities.credentialBackedSync = true;
 todoistAdapter.list = async account => (await todoistWorkSignalClient.fetchDelta(account, null)).records;
 todoistAdapter.fetchDelta = (account, cursor) => todoistWorkSignalClient.fetchDelta(account, cursor);
