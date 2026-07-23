@@ -105,9 +105,21 @@ class OperationsBriefService {
       ...decisionItems.filter(item => item.ownerType === 'va'),
       ...findings.filter(item => item.waitingOn === 'va')
     ]);
+    const externalFindings = findings.filter(item => item.waitingOn === 'external');
+    const externalFindingCardIds = new Set(externalFindings
+      .map(item => this.toId(item.cardId))
+      .filter(Boolean));
+    const externalWaits = this.sortPriority([
+      ...externalFindings,
+      ...decisionItems.filter(item => this.isExternalWait(item))
+        .filter(item => {
+          const cardId = this.toId(item.cardId);
+          return !cardId || !externalFindingCardIds.has(cardId);
+        })
+    ]);
     const teamQueue = this.sortPriority([
-      ...decisionItems.filter(item => item.ownerType === 'team'),
-      ...findings.filter(item => ['team', 'worker', 'external'].includes(item.waitingOn))
+      ...decisionItems.filter(item => item.ownerType === 'team' && !this.isExternalWait(item)),
+      ...findings.filter(item => ['team', 'worker'].includes(item.waitingOn))
     ]);
     const criticalFindings = this.sortPriority(findings.filter(item =>
       ['critical', 'high'].includes(item.severity)
@@ -129,14 +141,15 @@ class OperationsBriefService {
       mode: records.mode || 'live',
       generatedAt,
       readonly: true,
-      headline: this.buildHeadline({ robertDecisions, boardsAtRisk, failedActions, criticalFindings }),
-      narrative: this.buildNarrative({ robertDecisions, vaReady, teamQueue, failedActions, dueFollowUps, boardsAtRisk }),
+      headline: this.buildHeadline({ robertDecisions, boardsAtRisk, failedActions, criticalFindings, externalWaits }),
+      narrative: this.buildNarrative({ robertDecisions, vaReady, teamQueue, externalWaits, failedActions, dueFollowUps, boardsAtRisk }),
       nextDecision: this.describeDecision(topDecision),
       confidence,
       counts: {
         robertDecisions: robertDecisions.length,
         vaReady: vaReady.length,
         teamQueue: teamQueue.length,
+        externalWaits: externalWaits.length,
         failedActions: failedActions.length,
         dueFollowUps: dueFollowUps.length,
         highRiskFindings: criticalFindings.length,
@@ -147,6 +160,7 @@ class OperationsBriefService {
       robertDecisions: robertDecisions.slice(0, 5).map(item => this.toBriefItem(item, 'robert_decision')),
       vaReady: vaReady.slice(0, 5).map(item => this.toBriefItem(item, 'va_ready')),
       teamQueue: teamQueue.slice(0, 5).map(item => this.toBriefItem(item, 'team_queue')),
+      externalWaits: externalWaits.slice(0, 5).map(item => this.toBriefItem(item, 'external_wait')),
       failedActions: failedActions.slice(0, 5).map(item => this.toBriefItem(item, 'failed_action')),
       dueFollowUps: dueFollowUps.slice(0, 5).map(item => this.toBriefItem(item, 'follow_up_due')),
       boardHealth: boardsAtRisk.slice(0, 5).map(item => this.toBriefItem(item, 'board_health')),
@@ -155,6 +169,7 @@ class OperationsBriefService {
         robertDecisions,
         vaReady,
         teamQueue,
+        externalWaits,
         failedActions,
         dueFollowUps,
         boardsAtRisk
@@ -162,7 +177,7 @@ class OperationsBriefService {
     };
   }
 
-  buildHeadline({ robertDecisions, boardsAtRisk, failedActions, criticalFindings }) {
+  buildHeadline({ robertDecisions, boardsAtRisk, failedActions, criticalFindings, externalWaits }) {
     if (failedActions.length > 0) {
       return `${failedActions.length} failed Trello action${failedActions.length === 1 ? '' : 's'} need review`;
     }
@@ -175,14 +190,18 @@ class OperationsBriefService {
     if (criticalFindings.length > 0) {
       return `${criticalFindings.length} high-risk finding${criticalFindings.length === 1 ? '' : 's'} detected`;
     }
+    if (externalWaits.length > 0) {
+      return `${externalWaits.length} external wait${externalWaits.length === 1 ? '' : 's'} need follow-up ownership`;
+    }
     return 'No critical operating decisions waiting';
   }
 
-  buildNarrative({ robertDecisions, vaReady, teamQueue, failedActions, dueFollowUps, boardsAtRisk }) {
+  buildNarrative({ robertDecisions, vaReady, teamQueue, externalWaits, failedActions, dueFollowUps, boardsAtRisk }) {
     const parts = [];
     parts.push(this.sentenceCount(robertDecisions.length, 'item', 'requires Robert', 'require Robert'));
     parts.push(this.sentenceCount(vaReady.length, 'item', 'is VA-ready', 'are VA-ready'));
     parts.push(this.sentenceCount(teamQueue.length, 'team follow-up', 'is queued', 'are queued'));
+    parts.push(this.sentenceCount(externalWaits.length, 'external wait', 'needs follow-up ownership', 'need follow-up ownership'));
     if (failedActions.length > 0) parts.push(`${failedActions.length} Trello write attempt${failedActions.length === 1 ? '' : 's'} failed.`);
     if (dueFollowUps.length > 0) parts.push(this.sentenceCount(dueFollowUps.length, 'follow-up', 'is due', 'are due'));
     if (boardsAtRisk.length > 0) parts.push(this.sentenceCount(boardsAtRisk.length, 'board', 'is at risk', 'are at risk'));
@@ -201,7 +220,7 @@ class OperationsBriefService {
     return 'Review the top operating item.';
   }
 
-  buildMorningPlan({ robertDecisions, vaReady, teamQueue, failedActions, dueFollowUps, boardsAtRisk }) {
+  buildMorningPlan({ robertDecisions, vaReady, teamQueue, externalWaits, failedActions, dueFollowUps, boardsAtRisk }) {
     const plan = [];
     if (failedActions.length > 0) {
       plan.push(`Inspect ${failedActions.length} failed Trello action${failedActions.length === 1 ? '' : 's'} before approving more writes.`);
@@ -214,6 +233,9 @@ class OperationsBriefService {
     }
     if (dueFollowUps.length > 0) {
       plan.push(`Clear ${dueFollowUps.length} due worker follow-up${dueFollowUps.length === 1 ? '' : 's'}.`);
+    }
+    if (externalWaits.length > 0 && plan.length < 5) {
+      plan.push(`Review the next owner and follow-up date for ${Math.min(externalWaits.length, 3)} external wait${externalWaits.length === 1 ? '' : 's'}.`);
     }
     if (vaReady.length > 0) {
       plan.push(`Delegate ${Math.min(vaReady.length, 3)} VA-ready item${vaReady.length === 1 ? '' : 's'}.`);
@@ -253,6 +275,12 @@ class OperationsBriefService {
       draftOnly: item.draftOnly || item.actionPayload?.draftOnly || false,
       executable: item.executable || item.actionPayload?.executable || false
     };
+  }
+
+  isExternalWait(item = {}) {
+    return item.waitingOn === 'external'
+      || item.findingType === 'external_waiting'
+      || item.recommendationId?.findingType === 'external_waiting';
   }
 
   normalizeGraphDecisionCandidates(candidates) {

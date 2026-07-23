@@ -9834,6 +9834,14 @@ describe('operations daily brief', () => {
           waitingOn: 'worker',
           severity: 'medium',
           status: 'open'
+        },
+        {
+          _id: 'finding-external',
+          title: 'Waiting on client approval',
+          findingType: 'external_waiting',
+          waitingOn: 'external',
+          severity: 'medium',
+          status: 'open'
         }
       ],
       healthSnapshots: [
@@ -9854,6 +9862,7 @@ describe('operations daily brief', () => {
       robertDecisions: 1,
       vaReady: 1,
       teamQueue: 2,
+      externalWaits: 1,
       failedActions: 1,
       dueFollowUps: 1,
       boardsAtRisk: 1
@@ -9867,7 +9876,35 @@ describe('operations daily brief', () => {
       'Ask worker for update: Yes/No.',
       'Worker follow-up needed'
     ]));
+    expect(brief.teamQueue.map(item => item.title)).not.toContain('Waiting on client approval');
+    expect(brief.externalWaits[0]).toMatchObject({
+      type: 'external_wait',
+      title: 'Waiting on client approval'
+    });
     expect(brief.morningPlan[0]).toContain('failed Trello action');
+  });
+
+  test('keeps an external-waiting recommendation decision out of the internal team queue', () => {
+    const operationsBriefService = require('../src/services/operationsBriefService');
+
+    const brief = operationsBriefService.buildBrief({
+      decisions: [{
+        _id: 'external-decision',
+        ownerType: 'team',
+        question: 'Assign an external follow-up owner: Yes/No.',
+        recommendationId: { findingType: 'external_waiting' },
+        cardId: { _id: 'card-1', name: 'Client asset approval' },
+        riskLevel: 'medium',
+        status: 'open'
+      }]
+    });
+
+    expect(brief.counts).toMatchObject({ teamQueue: 0, externalWaits: 1 });
+    expect(brief.teamQueue).toEqual([]);
+    expect(brief.externalWaits[0]).toMatchObject({
+      title: 'Assign an external follow-up owner: Yes/No.',
+      type: 'external_wait'
+    });
   });
 
   test('promotes graph decision candidates into the read-only daily brief', () => {

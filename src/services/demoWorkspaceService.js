@@ -210,6 +210,18 @@ function getDemoOperationsLedger(now = new Date()) {
       recommendedAction: 'Assign a VA owner and confirm the next action.',
       sourceEvidence,
       lastObservedAt: observedAt
+    }, {
+      _id: 'demo-finding-external-approval',
+      boardId: { _id: 'demo-board-client-launches', name: 'Client Launches' },
+      cardId: { _id: 'demo-card-client-approval', name: 'Confirm client approval for launch assets' },
+      title: 'Waiting externally: Confirm client approval for launch assets',
+      findingType: 'external_waiting',
+      waitingOn: 'external',
+      severity: 'medium',
+      signalScore: 62,
+      recommendedAction: 'Set a specific external owner and follow-up date before the launch is escalated.',
+      sourceEvidence,
+      lastObservedAt: new Date(generatedAt.getTime() - (3 * 60 * 60 * 1000))
     }],
     healthSnapshots: [{
       _id: 'demo-health-growth',

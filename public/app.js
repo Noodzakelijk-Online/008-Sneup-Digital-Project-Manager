@@ -1177,6 +1177,7 @@ function renderOperationsBrief() {
     ...(brief.robertDecisions || []),
     ...(brief.vaReady || []),
     ...(brief.teamQueue || []),
+    ...(brief.externalWaits || []),
     ...(brief.failedActions || []),
     ...(brief.dueFollowUps || []),
     ...(brief.boardHealth || [])
@@ -1216,6 +1217,7 @@ function openBriefRoute(route) {
     robert_decision: { queueFilter: 'robert', focusElementId: 'decisionQueue' },
     va_ready: { queueFilter: 'va', focusElementId: 'findingsList' },
     team_queue: { queueFilter: 'team', focusElementId: 'decisionQueue' },
+    external_wait: { focusElementId: 'findingsList' },
     follow_up_due: { focusElementId: 'followUps' },
     failed_action: { focusElementId: 'trelloAttempts' },
     board_health: { focusElementId: 'boardHealthList' }
@@ -1229,6 +1231,7 @@ function operationsBriefRoute(item = {}) {
     robert_decision: { label: 'Review Robert decision', route: 'robert_decision' },
     va_ready: { label: 'Open VA work', route: 'va_ready' },
     team_queue: { label: 'Open team queue', route: 'team_queue' },
+    external_wait: { label: 'Review external wait', route: 'external_wait' },
     follow_up_due: { label: 'Review follow-up', route: 'follow_up_due' },
     failed_action: { label: 'Review failed action', route: 'failed_action' },
     board_health: { label: 'Review board health', route: 'board_health' }

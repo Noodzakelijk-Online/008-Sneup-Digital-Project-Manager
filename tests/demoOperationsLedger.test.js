@@ -37,7 +37,7 @@ describe('demo operations ledger', () => {
       type: 'worker_response',
       title: 'Worker response: acknowledged'
     })]));
-    expect(ledger.findings).toHaveLength(2);
+    expect(ledger.findings).toHaveLength(3);
     expect(ledger.healthSnapshots).toHaveLength(1);
     expect(ledger.reconciliationHealth.summary).toEqual(expect.objectContaining({ requiresOperator: 1, critical: 1 }));
     expect(ledger.recommendations.every(item => item.actionPayload.executable !== true)).toBe(true);
@@ -51,6 +51,7 @@ describe('demo operations ledger', () => {
     expect(brief.dueFollowUps[0].id).toBe(String(ledger.followUps[0]._id));
     expect(brief.vaReady[0].id).toBe(String(ledger.findings.find(item => item.waitingOn === 'va')._id));
     expect(brief.teamQueue[0].id).toBe(String(ledger.decisions.find(item => item.ownerType === 'team')._id));
+    expect(brief.externalWaits[0].id).toBe(String(ledger.findings.find(item => item.waitingOn === 'external')._id));
     expect(brief.boardHealth[0].id).toBe(String(ledger.healthSnapshots[0]._id));
   });
 });

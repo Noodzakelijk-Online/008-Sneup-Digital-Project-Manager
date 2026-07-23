@@ -331,7 +331,7 @@ Datadog uses an API key plus an application key limited to `monitors_read` and `
 - `GET /api/decision-queue/robert` - Robert-only high-risk decision queue
 - `GET /api/decision-queue/team` - Team approval queue
 - `GET /api/decision-queue/va` - VA queue scaffold
-- `GET /api/autopilot/operations-brief` - Read-only daily operations brief across decisions, findings, follow-ups, failures, and board health
+- `GET /api/autopilot/operations-brief` - Read-only daily operations brief across decisions, findings, follow-ups, failures, board health, and distinct external waits; it never treats a client/vendor wait as internal team accountability
 - `GET /api/operations-ledger?timelineLimit=25` - Bounded workspace ledger with a redacted cross-record operational timeline; response text is never returned
 - `GET /api/trello-actions` - List Trello write attempts and failures
 - `GET /api/audit` - List audit events
