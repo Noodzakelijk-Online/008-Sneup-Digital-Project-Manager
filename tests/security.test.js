@@ -73,6 +73,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/everhourWorkSignalClient');
     jest.dontMock('../src/services/codaWorkSignalClient');
     jest.dontMock('../src/services/quipWorkSignalClient');
+    jest.dontMock('../src/services/hiveWorkSignalClient');
     jest.dontMock('../src/services/teamworkWorkSignalClient');
     jest.dontMock('../src/services/teamganttWorkSignalClient');
     jest.dontMock('../src/services/businessmapWorkSignalClient');
@@ -1615,6 +1616,7 @@ describe('connector registry', () => {
     const catalog = accountConnectorService.getCatalog();
     const github = catalog.connectors.find(connector => connector.id === 'github');
     const quip = catalog.connectors.find(connector => connector.id === 'quip');
+    const hive = catalog.connectors.find(connector => connector.id === 'hive');
     const microsoftProject = catalog.connectors.find(connector => connector.id === 'microsoft_project');
     const proofhub = catalog.connectors.find(connector => connector.id === 'proofhub');
 
@@ -1629,6 +1631,11 @@ describe('connector registry', () => {
       readOnly: true
     });
     expect(quip.syncReadiness).toEqual({
+      status: 'ready',
+      accountConnectionAvailable: true,
+      readOnly: true
+    });
+    expect(hive.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
       readOnly: true

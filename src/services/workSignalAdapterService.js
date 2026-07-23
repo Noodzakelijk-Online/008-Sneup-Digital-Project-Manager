@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject', 'hive',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -49,6 +49,7 @@ const harvestWorkSignalClient = lazyClient('./harvestWorkSignalClient');
 const everhourWorkSignalClient = lazyClient('./everhourWorkSignalClient');
 const codaWorkSignalClient = lazyClient('./codaWorkSignalClient');
 const quipWorkSignalClient = lazyClient('./quipWorkSignalClient');
+const hiveWorkSignalClient = lazyClient('./hiveWorkSignalClient');
 const teamworkWorkSignalClient = lazyClient('./teamworkWorkSignalClient');
 const teamGanttWorkSignalClient = lazyClient('./teamganttWorkSignalClient');
 const businessmapWorkSignalClient = lazyClient('./businessmapWorkSignalClient');
@@ -919,6 +920,14 @@ quipAdapter.capabilities.credentialBackedSync = true;
 quipAdapter.list = async account => (await quipWorkSignalClient.fetchDelta(account, null)).records;
 quipAdapter.fetchDelta = (account, cursor) => quipWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('quip', quipAdapter);
+
+const hiveAdapter = buildAdapter('hive', 'Hive project metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'project'), title: titleFromText(item.name, 'Hive project'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['hive', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined]), dueAt: undefined, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt || item.createdAt, evidenceRefs: baseEvidence(account, item, 'Hive project metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+hiveAdapter.capabilities.credentialBackedSync = true;
+hiveAdapter.list = async account => (await hiveWorkSignalClient.fetchDelta(account, null)).records;
+hiveAdapter.fetchDelta = (account, cursor) => hiveWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('hive', hiveAdapter);
 
 const youTrackAdapter = buildAdapter('youtrack', 'YouTrack issue metadata adapter', (account, item) => ({
   externalId: pick(item.id), sourceType: 'issue', title: titleFromText(item.name, 'YouTrack issue'), description: '',
