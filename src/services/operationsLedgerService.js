@@ -2260,6 +2260,67 @@ class OperationsLedgerService {
     return { recommendations, decisions, actions, followUps, workerResponses, outcomes, findings, auditEvents, timeline, graphContext };
   }
 
+  async getWorkspaceLedger(filters = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(filters.workspaceId);
+    const ledgerLimit = boundedInteger(filters.limit, 50, 1, 250);
+    const healthLimit = boundedInteger(filters.healthLimit, 20, 1, 100);
+    const notificationLimit = boundedInteger(filters.notificationLimit, 100, 1, 250);
+    const queryFilters = { ...filters, workspaceId, limit: ledgerLimit };
+    const notificationService = require('./notificationService');
+
+    // Keep each section isolated: a slow or unavailable collection must not hide the
+    // remaining approval evidence from an operator.
+    const sections = {
+      decisions: () => this.listDecisionQueue({ ...queryFilters, status: 'open' }),
+      recommendations: () => this.listRecommendations(queryFilters),
+      actions: () => this.listTrelloActions(queryFilters),
+      auditEvents: () => this.listAuditEvents(queryFilters),
+      followUps: () => this.listFollowUps({ ...queryFilters, dueOnly: true }),
+      accountability: () => this.getWorkerAccountability({ ...queryFilters, days: filters.days || 30 }),
+      outcomes: () => this.listInterventionOutcomes(queryFilters),
+      findings: () => CardFinding.find(this.workspaceQuery(queryFilters, { status: 'open' }))
+        .sort({ severity: -1, signalScore: -1, lastObservedAt: -1 })
+        .populate('boardId cardId memberId')
+        .limit(ledgerLimit),
+      healthSnapshots: () => BoardHealthSnapshot.find(this.workspaceQuery(queryFilters))
+        .sort({ generatedAt: -1 })
+        .populate('boardId')
+        .limit(healthLimit),
+      reconciliationHealth: () => this.getTrelloActionReconciliationHealth({ ...queryFilters, limit: notificationLimit }),
+      notificationPolicies: () => notificationService.listPolicies({ workspaceId, limit: notificationLimit }),
+      notificationDeliveries: () => notificationService.listDeliveries({ workspaceId, limit: notificationLimit })
+    };
+    const results = await Promise.all(Object.entries(sections).map(async ([section, load]) => {
+      try {
+        return [section, await load(), null];
+      } catch (error) {
+        logger.warn('Workspace operations ledger section unavailable.', {
+          section,
+          workspaceId: String(workspaceId),
+          message: error.message
+        });
+        return [section, null, error.statusCode ? error.message : 'Temporarily unavailable'];
+      }
+    }));
+
+    const ledger = {
+      workspaceId,
+      generatedAt: new Date(),
+      errors: []
+    };
+    results.forEach(([section, value, error]) => {
+      if (error) {
+        ledger[section] = section === 'accountability' || section === 'reconciliationHealth' ? null : [];
+        ledger.errors.push({ section, message: error });
+        return;
+      }
+      ledger[section] = value;
+    });
+
+    return ledger;
+  }
+
   async getWorkerAccountability(filters = {}) {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(filters.workspaceId);

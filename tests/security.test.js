@@ -519,6 +519,28 @@ describe('request security boundaries', () => {
     expect(res.body.requiredPermission).toBe('audit:read');
   });
 
+  test('requires audit read permission before returning the workspace operations ledger', () => {
+    jest.resetModules();
+    jest.doMock('../src/services/operationsLedgerService', () => ({
+      getWorkspaceLedger: jest.fn()
+    }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getRequestWorkspaceObjectId: jest.fn(() => 'workspace-1')
+    }));
+
+    const workspaceLedgerRoutes = require('../src/routes/operationsLedger');
+    const route = workspaceLedgerRoutes.stack.find((layer) => layer.route?.path === '/').route;
+    const guard = route.stack[0].handle;
+    const next = jest.fn();
+    const res = createResponse();
+
+    guard(createRequest({ auth: { authenticated: true, roles: [], permissions: [] } }), res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.body.requiredPermission).toBe('audit:read');
+  });
+
   test('verifies Trello webhook signatures', () => {
     process.env.NODE_ENV = 'production';
     process.env.TRELLO_WEBHOOK_SECRET = 'trello-secret';

@@ -872,50 +872,42 @@ async function loadWorkspaceAdmin() {
 }
 
 async function loadOperationsLedger() {
-  const requests = {
-    decisions: fetchApi('/api/decision-queue?status=open&limit=50'),
-    recommendations: fetchApi('/api/recommendations?limit=50'),
-    actions: fetchApi('/api/trello-actions?limit=50'),
-    auditEvents: fetchApi('/api/audit?limit=50'),
-    followUps: fetchApi('/api/follow-ups/due?limit=50'),
-    accountability: fetchApi('/api/team/accountability?days=30&limit=50'),
-    outcomes: fetchApi('/api/outcomes?limit=50'),
-    findings: fetchApi('/api/findings?status=open&limit=50'),
-    healthSnapshots: fetchApi('/api/findings/board-health?limit=20'),
-    reconciliationHealth: fetchApi('/api/trello-actions/reconciliation/health?limit=100'),
-    notificationPolicies: fetchApi('/api/notifications/policies?limit=100'),
-    notificationDeliveries: fetchApi('/api/notifications/deliveries?limit=100')
-  };
-
-  const entries = await Promise.all(Object.entries(requests).map(async ([key, promise]) => {
-    try {
-      return [key, await promise, null];
-    } catch (error) {
-      return [key, null, error.message];
-    }
-  }));
-
-  state.ledger.errors = [];
-  entries.forEach(([key, data, error]) => {
-    if (error) {
-      state.ledger[key] = key === 'reconciliationHealth' ? null : [];
-      state.ledger.errors.push(error);
-      return;
-    }
-
-    if (key === 'decisions') state.ledger.decisions = data.items || [];
-    if (key === 'recommendations') state.ledger.recommendations = data.recommendations || [];
-    if (key === 'actions') state.ledger.actions = data.actions || [];
-    if (key === 'auditEvents') state.ledger.auditEvents = data.auditEvents || [];
-    if (key === 'followUps') state.ledger.followUps = data.followUps || [];
-    if (key === 'accountability') state.ledger.accountability = data.accountability || null;
-    if (key === 'outcomes') state.ledger.outcomes = data.outcomes || [];
-    if (key === 'findings') state.ledger.findings = data.findings || [];
-    if (key === 'healthSnapshots') state.ledger.healthSnapshots = data.snapshots || [];
-    if (key === 'reconciliationHealth') state.ledger.reconciliationHealth = data.health || null;
-    if (key === 'notificationPolicies') state.ledger.notificationPolicies = data.policies || [];
-    if (key === 'notificationDeliveries') state.ledger.notificationDeliveries = data.deliveries || [];
-  });
+  try {
+    const data = await fetchApi('/api/operations-ledger');
+    const ledger = data.ledger || {};
+    state.ledger = {
+      decisions: ledger.decisions || [],
+      recommendations: ledger.recommendations || [],
+      actions: ledger.actions || [],
+      auditEvents: ledger.auditEvents || [],
+      followUps: ledger.followUps || [],
+      accountability: ledger.accountability || null,
+      outcomes: ledger.outcomes || [],
+      findings: ledger.findings || [],
+      healthSnapshots: ledger.healthSnapshots || [],
+      reconciliationHealth: ledger.reconciliationHealth || null,
+      notificationPolicies: ledger.notificationPolicies || [],
+      notificationDeliveries: ledger.notificationDeliveries || [],
+      errors: (ledger.errors || []).map((error) => error.message || String(error))
+    };
+  } catch (error) {
+    state.ledger = {
+      ...state.ledger,
+      decisions: [],
+      recommendations: [],
+      actions: [],
+      auditEvents: [],
+      followUps: [],
+      accountability: null,
+      outcomes: [],
+      findings: [],
+      healthSnapshots: [],
+      reconciliationHealth: null,
+      notificationPolicies: [],
+      notificationDeliveries: [],
+      errors: [error.message]
+    };
+  }
 
   renderOperationsLedger();
 }
