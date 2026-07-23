@@ -31,6 +31,10 @@ const state = {
   policyRuleError: '',
   policyHistory: [],
   policyHistoryError: '',
+  policyHistoryFilters: {
+    actionType: '',
+    rangeDays: 'all'
+  },
   activeWorkspaceId: localStorage.getItem('sneup.workspaceId') || '',
   sessionToken: sessionStorage.getItem(SESSION_TOKEN_KEY) || '',
   enhancements: [],
@@ -153,6 +157,8 @@ const els = {
   policyRuleList: document.getElementById('policyRuleList'),
   policyHistoryCount: document.getElementById('policyHistoryCount'),
   policyHistoryList: document.getElementById('policyHistoryList'),
+  policyHistoryActionFilter: document.getElementById('policyHistoryActionFilter'),
+  policyHistoryRangeFilter: document.getElementById('policyHistoryRangeFilter'),
   setupButton: document.getElementById('setupButton'),
   modal: document.getElementById('connectorModal'),
   modalTitle: document.getElementById('modalTitle'),
@@ -841,7 +847,7 @@ async function loadWorkspaceAdmin() {
     try {
       const [policyData, historyData] = await Promise.all([
         fetchApi('/api/policy-rules'),
-        fetchApi('/api/policy-rules/history?limit=25')
+        fetchApi(buildPolicyHistoryEndpoint())
       ]);
       state.policyRules = policyData.policies || [];
       state.policyRuleError = '';
@@ -892,6 +898,30 @@ async function loadWorkspaceAdmin() {
     state.workspaces = state.currentWorkspace ? [state.currentWorkspace] : [];
     renderWorkspaces(error.message);
   }
+}
+
+function buildPolicyHistoryEndpoint() {
+  const params = new URLSearchParams({ limit: '25' });
+  const actionType = String(state.policyHistoryFilters?.actionType || '').trim();
+  const rangeDays = Number.parseInt(state.policyHistoryFilters?.rangeDays, 10);
+  if (actionType) params.set('actionType', actionType);
+  if (Number.isInteger(rangeDays) && rangeDays > 0) {
+    params.set('from', new Date(Date.now() - (rangeDays * 24 * 60 * 60 * 1000)).toISOString());
+  }
+  return `/api/policy-rules/history?${params.toString()}`;
+}
+
+async function loadPolicyHistory() {
+  if (state.securityContext?.auth?.demoMode) return;
+  try {
+    const data = await fetchApi(buildPolicyHistoryEndpoint());
+    state.policyHistory = data.history || [];
+    state.policyHistoryError = '';
+  } catch (error) {
+    state.policyHistory = [];
+    state.policyHistoryError = error.message;
+  }
+  renderWorkspaces();
 }
 
 async function loadOperationsLedger() {
@@ -2516,6 +2546,7 @@ function renderWorkspaces(errorMessage = '') {
   const invitations = state.workspaceInvitations || [];
   const policyRules = state.policyRules || [];
   const policyHistory = state.policyHistory || [];
+  renderPolicyHistoryFilters(policyRules);
   const pendingInvitations = invitations.filter(invite => invite.status === 'pending');
   els.workspaceMetrics.innerHTML = [
     ['Workspace', currentWorkspace?.name || 'Current'],
@@ -2554,6 +2585,27 @@ function renderWorkspaces(errorMessage = '') {
     : listOrEmpty(policyHistory, renderPolicyHistory);
   bindWorkspaceIdentityActions();
   bindPolicyRuleActions();
+  bindPolicyHistoryActions();
+}
+
+function renderPolicyHistoryFilters(policyRules = []) {
+  if (!els.policyHistoryActionFilter || !els.policyHistoryRangeFilter) return;
+  const actions = policyRules
+    .map(policy => ({ actionType: String(policy.actionType || ''), label: policy.label || policy.actionType }))
+    .filter(policy => policy.actionType)
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const selectedAction = actions.some(policy => policy.actionType === state.policyHistoryFilters.actionType)
+    ? state.policyHistoryFilters.actionType
+    : '';
+  state.policyHistoryFilters.actionType = selectedAction;
+  els.policyHistoryActionFilter.innerHTML = [
+    '<option value="">All policies</option>',
+    ...actions.map(policy => `<option value="${escapeHtml(policy.actionType)}">${escapeHtml(policy.label)}</option>`)
+  ].join('');
+  els.policyHistoryActionFilter.value = selectedAction;
+  els.policyHistoryRangeFilter.value = ['all', '7', '30', '90'].includes(String(state.policyHistoryFilters.rangeDays))
+    ? String(state.policyHistoryFilters.rangeDays)
+    : 'all';
 }
 
 function renderWorkspace(workspace) {
@@ -2713,6 +2765,18 @@ function bindPolicyRuleActions() {
   document.querySelectorAll('[data-policy-rule]').forEach((button) => {
     button.addEventListener('click', () => openPolicyRuleEditor(button.dataset.policyRule));
   });
+}
+
+function bindPolicyHistoryActions() {
+  if (!els.policyHistoryActionFilter || !els.policyHistoryRangeFilter) return;
+  els.policyHistoryActionFilter.onchange = () => {
+    state.policyHistoryFilters.actionType = els.policyHistoryActionFilter.value;
+    loadPolicyHistory();
+  };
+  els.policyHistoryRangeFilter.onchange = () => {
+    state.policyHistoryFilters.rangeDays = els.policyHistoryRangeFilter.value;
+    loadPolicyHistory();
+  };
 }
 
 function openPolicyRuleEditor(actionType) {

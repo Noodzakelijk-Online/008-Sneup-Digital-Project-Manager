@@ -30,7 +30,11 @@ router.get('/history', requirePermission('audit:read'), async (req, res) => {
   try {
     const history = await policyRuleService.listPolicyHistory({
       ...options(req),
-      limit: req.query.limit
+      limit: req.query.limit,
+      actionType: req.query.actionType,
+      actor: req.query.actor,
+      from: req.query.from,
+      to: req.query.to
     });
     res.json({ success: true, count: history.length, history });
   } catch (error) {

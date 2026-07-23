@@ -70,5 +70,6 @@ auditEventSchema.index({ boardId: 1, createdAt: -1 });
 auditEventSchema.index({ cardId: 1, createdAt: -1 });
 auditEventSchema.index({ workspaceId: 1, createdAt: -1 });
 auditEventSchema.index({ workspaceId: 1, entityType: 1, entityId: 1, createdAt: -1 });
+auditEventSchema.index({ workspaceId: 1, entityType: 1, action: 1, createdAt: -1 });
 
 module.exports = mongoose.model('AuditEvent', auditEventSchema);

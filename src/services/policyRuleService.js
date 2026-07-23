@@ -12,6 +12,13 @@ const DECISION_QUEUE_SNOOZE_ACTION = 'decision_queue_snooze';
 const DECISION_QUEUE_ROUTING_ACTION = 'decision_queue_routing';
 const SCHEDULED_INTERVENTION_COOLDOWN_ACTION = 'scheduled_intervention_cooldown';
 const SCHEDULED_INTERVENTION_TIMING_ACTION = 'scheduled_intervention_timing';
+const POLICY_HISTORY_ACTIONS = Object.freeze([
+  'trello_action_policy_updated',
+  'decision_queue_snooze_policy_updated',
+  'decision_queue_routing_policy_updated',
+  'scheduled_intervention_cooldown_policy_updated',
+  'scheduled_intervention_timing_policy_updated'
+]);
 const DEFAULT_SNOOZE_HOURS = 24;
 const MIN_SNOOZE_HOURS = 1;
 const MAX_SNOOZE_HOURS = 168;
@@ -63,6 +70,22 @@ const toValidDate = (value) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const parsePolicyHistoryDate = (value, field) => {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'string' && value.length > 64) {
+    const error = new Error(`${field} must be a valid ISO date and time`);
+    error.statusCode = 400;
+    throw error;
+  }
+  const date = toValidDate(value);
+  if (!date) {
+    const error = new Error(`${field} must be a valid ISO date and time`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return date;
 };
 
 class PolicyRuleService {
@@ -401,19 +424,43 @@ class PolicyRuleService {
     this.requireDatabase();
     const workspaceId = this.resolveWorkspaceId(options.workspaceId);
     const limit = Math.min(Math.max(Number.parseInt(options.limit, 10) || 25, 1), 100);
-    return AuditEvent.find({
+    const actionType = String(options.actionType || '').trim();
+    if (actionType) this.assertActionType(actionType);
+    const actor = String(options.actor || '').trim();
+    if (actor.length > 160) {
+      const error = new Error('actor filter must be 160 characters or fewer');
+      error.statusCode = 400;
+      throw error;
+    }
+    const from = parsePolicyHistoryDate(options.from, 'from');
+    const to = parsePolicyHistoryDate(options.to, 'to');
+    if (from && to && from.getTime() > to.getTime()) {
+      const error = new Error('from must be before to');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const query = {
       workspaceId,
       entityType: 'policy_rule',
       action: {
-        $in: [
-          'trello_action_policy_updated',
-          'decision_queue_snooze_policy_updated',
-          'decision_queue_routing_policy_updated',
-          'scheduled_intervention_cooldown_policy_updated',
-          'scheduled_intervention_timing_policy_updated'
-        ]
+        $in: POLICY_HISTORY_ACTIONS
       }
-    })
+    };
+    if (actionType) {
+      query.$or = [
+        { 'afterState.actionType': actionType },
+        { 'beforeState.actionType': actionType }
+      ];
+    }
+    if (actor) query.actor = actor;
+    if (from || to) {
+      query.createdAt = {};
+      if (from) query.createdAt.$gte = from;
+      if (to) query.createdAt.$lte = to;
+    }
+
+    return AuditEvent.find(query)
       .sort({ createdAt: -1 })
       .limit(limit);
   }

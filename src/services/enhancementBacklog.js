@@ -270,11 +270,11 @@ const enhancements = [
     priority: 'P1',
     area: 'autonomy',
     title: 'Add workspace-scoped Trello action safety controls',
-    evidence: 'Workspace managers can inspect and configure the effective safety posture for every supported Trello write action. Rules may pause an action, raise its risk, or route it to a stricter owner, but cannot disable approval. Optional pause review times become visibly overdue without ever re-enabling a provider write, and the operations ledger rechecks policy before its atomic execution claim.',
+    evidence: 'Workspace managers can inspect and configure the effective safety posture for every supported Trello write action. Rules may pause an action, raise its risk, or route it to a stricter owner, but cannot disable approval. Optional pause review times become visibly overdue without ever re-enabling a provider write, the workspace safety history can be filtered by policy and bounded time window, and the operations ledger rechecks policy before its atomic execution claim.',
     impact: 'Lets humans immediately stop or tighten specific autonomous action types without bypassing the approval ledger or disabling the broader system.',
     effort: 'M',
     status: 'done',
-    nextStep: 'Add filterable policy history and retention controls for policy evidence.',
+    nextStep: 'Add bounded retention controls for policy evidence after collecting live operator requirements.',
     acceptanceCriteria: [
       'Each workspace has an independent action policy for every supported Trello write type.',
       'A policy cannot lower the baseline risk, weaken the baseline decision owner, or disable provider-write approval.',

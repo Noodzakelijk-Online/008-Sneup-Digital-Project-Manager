@@ -455,7 +455,16 @@
           <section class="panel">
             <div class="panel-head">
               <h2>Safety History</h2>
-              <span class="pill review" id="policyHistoryCount">0 changes</span>
+              <div class="toolbar">
+                <select id="policyHistoryActionFilter" aria-label="Safety history policy filter"></select>
+                <select id="policyHistoryRangeFilter" aria-label="Safety history time filter">
+                  <option value="all">All time</option>
+                  <option value="7">Last 7 days</option>
+                  <option value="30">Last 30 days</option>
+                  <option value="90">Last 90 days</option>
+                </select>
+                <span class="pill review" id="policyHistoryCount">0 changes</span>
+              </div>
             </div>
             <div class="panel-body">
               <div class="list" id="policyHistoryList"></div>
