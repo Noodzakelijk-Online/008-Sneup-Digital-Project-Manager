@@ -318,8 +318,10 @@ describe('Generic Webhook connector', () => {
       result.limit = jest.fn().mockResolvedValue(values);
       return result;
     };
-    const Member = { find: jest.fn(() => queryResult([{ _id: '507f1f77bcf86cd799439012', fullName: 'Alex Operator', username: 'alex', email: 'private@example.test' }])) };
-    const Card = { find: jest.fn(() => queryResult([{ _id: '507f1f77bcf86cd799439013', name: 'Deliver release', closed: false, description: 'Do not return this.' }])) };
+    const memberQuery = queryResult([{ _id: '507f1f77bcf86cd799439012', fullName: 'Alex Operator', username: 'alex', email: 'private@example.test' }]);
+    const cardQuery = queryResult([{ _id: '507f1f77bcf86cd799439013', name: 'Deliver release', closed: false, description: 'Do not return this.' }]);
+    const Member = { find: jest.fn(() => memberQuery) };
+    const Card = { find: jest.fn(() => cardQuery) };
     const optionsService = new GenericWebhookService({
       ConnectorAccount: { findOne: jest.fn().mockResolvedValue({ _id: ACCOUNT_ID, workspaceId: WORKSPACE_ID, connectorId: 'webhook_generic', status: 'connected' }) },
       Member,
@@ -333,15 +335,26 @@ describe('Generic Webhook connector', () => {
     await expect(optionsService.getWorkerResponseBindingOptions({
       accountId: ACCOUNT_ID,
       workspaceId: WORKSPACE_ID,
-      memberId: '507f1f77bcf86cd799439012',
       query: 'Alex',
       limit: 999
     })).resolves.toEqual({
       members: [{ id: '507f1f77bcf86cd799439012', name: 'Alex Operator', username: 'alex' }],
+      cards: []
+    });
+    await expect(optionsService.getWorkerResponseBindingOptions({
+      accountId: ACCOUNT_ID,
+      workspaceId: WORKSPACE_ID,
+      memberId: '507f1f77bcf86cd799439012',
+      query: 'Deliver',
+      limit: 999
+    })).resolves.toEqual({
+      members: [],
       cards: [{ id: '507f1f77bcf86cd799439013', name: 'Deliver release', closed: false }]
     });
     expect(Member.find).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: WORKSPACE_ID, $or: expect.any(Array) }));
-    expect(Card.find).toHaveBeenCalledWith({ workspaceId: WORKSPACE_ID, members: '507f1f77bcf86cd799439012' });
+    expect(Card.find).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: WORKSPACE_ID, members: '507f1f77bcf86cd799439012', name: expect.any(RegExp) }));
+    expect(memberQuery.limit).toHaveBeenCalledWith(250);
+    expect(cardQuery.limit).toHaveBeenCalledWith(250);
   });
 
   test('rejects invalid delivery identifiers before creating a signal', async () => {

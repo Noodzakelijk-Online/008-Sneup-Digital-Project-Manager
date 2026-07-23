@@ -4300,11 +4300,14 @@ async function openWorkerResponseBindingsModal(accountId) {
   try {
     const [bindingData, optionData] = await Promise.all([
       fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-bindings`),
-      fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-options?limit=250`)
+      fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-options?limit=100`)
     ]);
     let bindings = bindingData.bindings || [];
     let members = optionData.members || [];
     let cards = [];
+    let memberSearchTimer;
+    let cardSearchTimer;
+    let memberRequestId = 0;
     let cardRequestId = 0;
     const memberNames = new Map(members.map(member => [member.id, member.name]));
     const sourceLabels = {
@@ -4326,12 +4329,11 @@ async function openWorkerResponseBindingsModal(accountId) {
           </label>
           <label for="workerResponseSourceMember">Source worker identifier<input id="workerResponseSourceMember" type="text" maxlength="160" autocomplete="off" required></label>
           <label for="workerResponseSourceCard">Source card identifier<input id="workerResponseSourceCard" type="text" maxlength="160" autocomplete="off" required></label>
+          <label for="workerResponseMemberSearch">Find Sneup member<input id="workerResponseMemberSearch" type="search" maxlength="80" autocomplete="off" placeholder="Search name or username"></label>
           <label for="workerResponseMember">Sneup member
-            <select id="workerResponseMember" required>
-              <option value="" selected disabled>Select assigned member</option>
-              ${members.map(member => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}${member.username ? ` (${escapeHtml(member.username)})` : ''}</option>`).join('')}
-            </select>
+            <select id="workerResponseMember" required></select>
           </label>
+          <label for="workerResponseCardSearch">Find assigned card<input id="workerResponseCardSearch" type="search" maxlength="80" autocomplete="off" placeholder="Search card name" disabled></label>
           <label for="workerResponseCard">Assigned Sneup card
             <select id="workerResponseCard" required disabled><option value="" selected>Select a member first</option></select>
           </label>
@@ -4346,7 +4348,9 @@ async function openWorkerResponseBindingsModal(accountId) {
     els.modal.classList.add('open');
 
     const list = document.getElementById('workerResponseBindingList');
+    const memberSearch = document.getElementById('workerResponseMemberSearch');
     const memberSelect = document.getElementById('workerResponseMember');
+    const cardSearch = document.getElementById('workerResponseCardSearch');
     const cardSelect = document.getElementById('workerResponseCard');
     const renderBindings = () => {
       list.innerHTML = bindings.length
@@ -4367,21 +4371,44 @@ async function openWorkerResponseBindingsModal(accountId) {
         });
       });
     };
+    const renderMembers = () => {
+      memberSelect.innerHTML = `<option value="" selected disabled>${members.length ? 'Select assigned member' : 'No matching members'}</option>${members.map(member => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}${member.username ? ` (${escapeHtml(member.username)})` : ''}</option>`).join('')}`;
+      memberSelect.disabled = members.length === 0;
+    };
     const renderCards = () => {
       cardSelect.disabled = cards.length === 0;
       cardSelect.innerHTML = cards.length
         ? `<option value="" selected disabled>Select assigned card</option>${cards.map(card => `<option value="${escapeHtml(card.id)}">${escapeHtml(card.name)}${card.closed ? ' (closed)' : ''}</option>`).join('')}`
         : '<option value="" selected>No assigned cards available</option>';
     };
+    const loadMembers = async () => {
+      const query = memberSearch.value.trim();
+      const requestId = ++memberRequestId;
+      memberSelect.disabled = true;
+      memberSelect.innerHTML = '<option value="" selected>Loading members...</option>';
+      try {
+        const data = await fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-options?query=${encodeURIComponent(query)}&limit=100`);
+        if (requestId !== memberRequestId) return;
+        members = data.members || [];
+        members.forEach(member => memberNames.set(member.id, member.name));
+        renderMembers();
+      } catch (error) {
+        if (requestId !== memberRequestId) return;
+        members = [];
+        renderMembers();
+        openNotice('Response mapping members', error.message);
+      }
+    };
     const loadCards = async () => {
       const memberId = memberSelect.value;
       cards = [];
       renderCards();
+      cardSearch.disabled = !memberId;
       if (!memberId) return;
       const requestId = ++cardRequestId;
       cardSelect.innerHTML = '<option value="" selected>Loading assigned cards...</option>';
       try {
-        const data = await fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-options?memberId=${encodeURIComponent(memberId)}&limit=250`);
+        const data = await fetchApi(`/api/connectors/accounts/${accountId}/inbound-worker-response-options?memberId=${encodeURIComponent(memberId)}&query=${encodeURIComponent(cardSearch.value.trim())}&limit=100`);
         if (requestId !== cardRequestId) return;
         cards = data.cards || [];
         renderCards();
@@ -4393,7 +4420,16 @@ async function openWorkerResponseBindingsModal(accountId) {
     };
 
     renderBindings();
+    renderMembers();
+    memberSearch.addEventListener('input', () => {
+      clearTimeout(memberSearchTimer);
+      memberSearchTimer = setTimeout(() => loadMembers(), 180);
+    });
     memberSelect.addEventListener('change', loadCards);
+    cardSearch.addEventListener('input', () => {
+      clearTimeout(cardSearchTimer);
+      cardSearchTimer = setTimeout(() => loadCards(), 180);
+    });
     document.getElementById('cancelWorkerResponseBindings').addEventListener('click', closeModal);
     document.getElementById('addWorkerResponseBinding').addEventListener('click', () => {
       const source = document.getElementById('workerResponseSource').value;
@@ -4413,6 +4449,8 @@ async function openWorkerResponseBindingsModal(accountId) {
       document.getElementById('workerResponseSourceMember').value = '';
       document.getElementById('workerResponseSourceCard').value = '';
       memberSelect.value = '';
+      cardSearch.value = '';
+      cardSearch.disabled = true;
       cardRequestId += 1;
       cards = [];
       renderCards();

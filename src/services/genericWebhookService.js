@@ -270,12 +270,16 @@ class GenericWebhookService {
     const memberFilter = { workspaceId };
     if (match) memberFilter.$or = [{ fullName: match }, { username: match }];
 
-    const members = await this.Member.find(memberFilter)
-      .select('_id fullName username')
-      .sort({ fullName: 1, username: 1 })
-      .limit(optionLimit);
+    const members = memberId
+      ? []
+      : await this.Member.find(memberFilter)
+        .select('_id fullName username')
+        .sort({ fullName: 1, username: 1 })
+        .limit(optionLimit);
+    const cardFilter = { workspaceId, members: memberId };
+    if (match) cardFilter.name = match;
     const cards = memberId
-      ? await this.Card.find({ workspaceId, members: memberId })
+      ? await this.Card.find(cardFilter)
         .select('_id name closed lastActivity')
         .sort({ closed: 1, lastActivity: -1 })
         .limit(optionLimit)
