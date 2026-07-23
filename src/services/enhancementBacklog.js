@@ -372,11 +372,11 @@ const enhancements = [
     priority: 'P1',
     area: 'operations',
     title: 'Capture matched worker chat updates in the operating ledger',
-    evidence: 'Completed, blocked, and needs-help chat updates now become bounded WorkerResponse records only when they match an unanswered executed comment, follow-up, or escalation for the same workspace, worker, and card. The linked recommendation, intervention, follow-up outcome, and audit trail update without any provider write; generic or ambiguous chat remains unlinked.',
+    evidence: 'Completed, blocked, and needs-help chat updates now become bounded WorkerResponse records only when they match an unanswered executed comment, follow-up, or escalation for the same workspace, worker, and card. The linked recommendation, intervention, follow-up outcome, and audit trail update without any provider write; generic or ambiguous chat remains unlinked. A signed Generic Webhook inbound bridge now accepts only an administrator-audited source-worker/source-card mapping to a workspace member already assigned to the mapped card, and records matched or unmatched intake without retaining response text in webhook evidence.',
     impact: 'Closes the accountability loop automatically while preventing generic worker conversation from silently resolving unrelated follow-ups.',
     effort: 'S',
     status: 'done',
-    nextStep: 'Add a reviewed inbound-chat connector path that supplies the same exact workspace, worker, card, and source constraints.',
+    nextStep: 'Collect reviewed production evidence for inbound source-to-worker/card mappings before adding provider-native event parsers.',
     acceptanceCriteria: [
       'A card-specific chat update can update the matching executed intervention and follow-up evidence.',
       'Unmatched or context-free chat does not close a ledger item.',

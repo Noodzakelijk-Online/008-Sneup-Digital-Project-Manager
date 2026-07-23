@@ -848,6 +848,16 @@ describe('request security boundaries', () => {
       actorType: 'external_system',
       actorId: 'generic-webhook'
     });
+
+    const workerResponseReq = createRequest({
+      path: '/api/webhooks/generic/507f1f77bcf86cd799439011/worker-response',
+      method: 'POST'
+    });
+    await requireApiAccess(workerResponseReq, createResponse(), jest.fn());
+    expect(workerResponseReq.auth).toMatchObject({
+      authMethod: 'signed_webhook',
+      actorId: 'generic-worker-response-webhook'
+    });
   });
 
   test('does not trust request host for OAuth redirect URIs by default', () => {
@@ -1621,6 +1631,7 @@ describe('operational route authorization', () => {
     const intentionallyPublic = new Set([
       "connectors.js:router.get('/:connectorId/callback', async (req, res) => {",
       "webhooks.js:router.post('/trello', verifyTrelloWebhook, async (req, res) => {",
+      "webhooks.js:router.post('/generic/:accountId/worker-response', async (req, res) => {",
       "webhooks.js:router.post('/generic/:accountId', async (req, res) => {",
       "workspaces.js:router.post('/invitations/accept', async (req, res) => {"
     ]);

@@ -54,6 +54,25 @@ router.head('/trello', (req, res) => {
   res.status(200).send('OK');
 });
 
+router.post('/generic/:accountId/worker-response', async (req, res) => {
+  try {
+    const result = await genericWebhookService.ingestWorkerResponse({
+      accountId: req.params.accountId,
+      rawBody: req.rawBody,
+      body: req.body,
+      signature: req.get('x-sneup-signature'),
+      deliveryId: req.get('x-sneup-delivery-id')
+    });
+    res.status(202).json({ success: true, ...result });
+  } catch (error) {
+    logger.warn('Inbound worker response webhook rejected', {
+      statusCode: error.statusCode || 500,
+      code: error.code || 'processing_failed'
+    });
+    sendGenericWebhookError(res, error);
+  }
+});
+
 router.post('/generic/:accountId', async (req, res) => {
   try {
     const result = await genericWebhookService.ingest({

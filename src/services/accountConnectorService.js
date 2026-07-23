@@ -1443,10 +1443,17 @@ class AccountConnectorService {
 
   sanitizeAccountMetadata(metadata = {}) {
     const lastSync = metadata?.lastWorkSignalSync || {};
+    const workerResponseBindings = Array.isArray(metadata?.workerResponseBindings)
+      ? metadata.workerResponseBindings
+      : [];
     return {
       fields: metadata?.fields || {},
       sync: Array.isArray(metadata?.sync) ? metadata.sync : [],
       workSignalAdapter: metadata?.workSignalAdapter,
+      inboundWorkerResponses: workerResponseBindings.length > 0 ? {
+        configured: true,
+        bindingCount: workerResponseBindings.length
+      } : undefined,
       lastWorkSignalSync: Object.keys(lastSync).length > 0 ? {
         signalCount: Number(lastSync.signalCount || 0),
         signalWriteBatchCount: Math.max(0, Math.min(1000000, Math.floor(Number(lastSync.signalWriteBatchCount) || 0))),

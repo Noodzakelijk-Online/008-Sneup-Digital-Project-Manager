@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger');
 const accountConnectorService = require('../services/accountConnectorService');
+const genericWebhookService = require('../services/genericWebhookService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { hasPermission, requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
 
@@ -124,6 +125,34 @@ router.delete('/accounts/:accountId', requirePermission('connectors:manage'), as
     res.json(result);
   } catch (error) {
     logger.error('Failed to delete connector account:', error);
+    sendError(res, error);
+  }
+});
+
+router.get('/accounts/:accountId/inbound-worker-response-bindings', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const bindings = await genericWebhookService.getWorkerResponseBindings({
+      accountId: req.params.accountId,
+      workspaceId: getRequestWorkspaceObjectId(req)
+    });
+    res.json({ success: true, count: bindings.length, bindings });
+  } catch (error) {
+    logger.error('Failed to list inbound worker response bindings:', error);
+    sendError(res, error);
+  }
+});
+
+router.post('/accounts/:accountId/inbound-worker-response-bindings', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const bindings = await genericWebhookService.configureWorkerResponseBindings({
+      accountId: req.params.accountId,
+      bindings: req.body.bindings,
+      workspaceId: getRequestWorkspaceObjectId(req),
+      actor: req.auth?.actorId
+    });
+    res.json({ success: true, count: bindings.length, bindings });
+  } catch (error) {
+    logger.error('Failed to configure inbound worker response bindings:', error);
     sendError(res, error);
   }
 });

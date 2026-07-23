@@ -28,6 +28,10 @@ const webhookDeliverySchema = new mongoose.Schema({
     type: String,
     maxlength: 160
   },
+  workerResponseId: {
+    type: String,
+    maxlength: 160
+  },
   attemptCount: {
     type: Number,
     default: 0

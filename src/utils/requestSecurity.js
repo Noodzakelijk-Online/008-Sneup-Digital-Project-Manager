@@ -168,7 +168,7 @@ const isOAuthCallback = (req) =>
 
 const isWebhook = (req) =>
   (req.path === '/api/webhooks/trello' && ['HEAD', 'POST'].includes(req.method)) ||
-  (req.method === 'POST' && /^\/api\/webhooks\/generic\/[a-f\d]{24}$/i.test(req.path));
+  (req.method === 'POST' && /^\/api\/webhooks\/generic\/[a-f\d]{24}(?:\/worker-response)?$/i.test(req.path));
 
 const isPublicInviteAcceptance = (req) =>
   req.method === 'POST' && req.path === '/api/workspaces/invitations/accept';
@@ -279,11 +279,12 @@ const requireApiAccess = async (req, res, next) => {
   }
 
   if (isOAuthCallback(req) || isWebhook(req) || isPublicInviteAcceptance(req)) {
+    const isWorkerResponseWebhook = /\/worker-response$/i.test(req.path);
     attachAuthContext(req, buildAuthContext(req, {
       authMethod: isWebhook(req) ? (req.path === '/api/webhooks/trello' ? 'trello_webhook' : 'signed_webhook') : isPublicInviteAcceptance(req) ? 'invite_acceptance' : 'oauth_callback',
       actorType: isPublicInviteAcceptance(req) ? 'invite_recipient' : 'external_system',
-      actorId: isWebhook(req) ? (req.path === '/api/webhooks/trello' ? 'trello' : 'generic-webhook') : isPublicInviteAcceptance(req) ? 'pending-invite' : 'connector-oauth',
-      displayName: isWebhook(req) ? (req.path === '/api/webhooks/trello' ? 'Trello webhook' : 'Generic webhook') : isPublicInviteAcceptance(req) ? 'Invitation recipient' : 'Connector OAuth callback',
+      actorId: isWebhook(req) ? (req.path === '/api/webhooks/trello' ? 'trello' : isWorkerResponseWebhook ? 'generic-worker-response-webhook' : 'generic-webhook') : isPublicInviteAcceptance(req) ? 'pending-invite' : 'connector-oauth',
+      displayName: isWebhook(req) ? (req.path === '/api/webhooks/trello' ? 'Trello webhook' : isWorkerResponseWebhook ? 'Inbound worker response webhook' : 'Generic webhook') : isPublicInviteAcceptance(req) ? 'Invitation recipient' : 'Connector OAuth callback',
       roles: isPublicInviteAcceptance(req) ? [] : ['service'],
       permissions: isPublicInviteAcceptance(req) ? [] : ['webhooks:receive', 'connectors:complete-oauth']
     }));

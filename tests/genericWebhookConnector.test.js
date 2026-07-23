@@ -21,7 +21,14 @@ describe('Generic Webhook connector', () => {
       status: 'connected'
     }) };
     workSignalService = { upsertProviderRecord: jest.fn().mockResolvedValue({ id: 'signal-1' }) };
-    operationsLedgerService = { recordAudit: jest.fn().mockResolvedValue({ id: 'audit-1' }) };
+    operationsLedgerService = {
+      recordAudit: jest.fn().mockResolvedValue({ id: 'audit-1' }),
+      recordChatWorkerResponse: jest.fn().mockResolvedValue({
+        recorded: true,
+        response: { id: 'worker-response-1' },
+        interventionId: 'intervention-1'
+      })
+    };
     WebhookDelivery = {
       findOneAndUpdate: jest.fn(),
       findOne: jest.fn(),
@@ -136,6 +143,135 @@ describe('Generic Webhook connector', () => {
     }));
   });
 
+  test('accepts an exactly mapped, signed inbound worker response without retaining its text in webhook evidence', async () => {
+    const body = {
+      id: 'slack:message-1',
+      sourceMemberId: 'U12345',
+      sourceCardId: 'thread:67890',
+      responseType: 'completed',
+      responseText: 'Finished the private client work.'
+    };
+    const rawBody = Buffer.from(JSON.stringify(body));
+    ConnectorAccount.findOne.mockResolvedValueOnce({
+      _id: ACCOUNT_ID,
+      workspaceId: WORKSPACE_ID,
+      connectorId: 'webhook_generic',
+      status: 'connected',
+      metadata: {
+        workerResponseBindings: [{
+          source: 'slack',
+          sourceMemberId: 'U12345',
+          sourceCardId: 'thread:67890',
+          memberId: '507f1f77bcf86cd799439012',
+          cardId: '507f1f77bcf86cd799439013'
+        }]
+      }
+    });
+    WebhookDelivery.findOneAndUpdate.mockResolvedValue({ _id: 'delivery-response-1', status: 'processing' });
+
+    const result = await service.ingestWorkerResponse({
+      accountId: ACCOUNT_ID,
+      rawBody,
+      body,
+      signature: sign(rawBody, secret)
+    });
+
+    expect(result).toEqual({
+      event: { id: 'slack:message-1' },
+      workerResponse: { id: 'worker-response-1', recorded: true },
+      duplicate: false,
+      processing: false
+    });
+    expect(operationsLedgerService.recordChatWorkerResponse).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: WORKSPACE_ID,
+      memberId: '507f1f77bcf86cd799439012',
+      cardId: '507f1f77bcf86cd799439013',
+      responseType: 'completed',
+      source: 'slack',
+      actor: `connector:${ACCOUNT_ID}`
+    }));
+    expect(operationsLedgerService.recordAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'generic_webhook_worker_response_recorded',
+      afterState: expect.objectContaining({ eventId: 'slack:message-1', source: 'slack', workerResponseId: 'worker-response-1' })
+    }));
+    expect(JSON.stringify(operationsLedgerService.recordAudit.mock.calls)).not.toMatch(/private client work/i);
+    expect(WebhookDelivery.updateOne).toHaveBeenCalledWith({ _id: 'delivery-response-1' }, expect.objectContaining({
+      $set: expect.objectContaining({ status: 'succeeded', workerResponseId: 'worker-response-1' })
+    }));
+  });
+
+  test('rejects an unmapped inbound worker response before it reaches the ledger', async () => {
+    const body = {
+      id: 'slack:message-unmapped',
+      sourceMemberId: 'U12345',
+      sourceCardId: 'thread:67890',
+      responseType: 'completed',
+      responseText: 'Done'
+    };
+    const rawBody = Buffer.from(JSON.stringify(body));
+    ConnectorAccount.findOne.mockResolvedValueOnce({
+      _id: ACCOUNT_ID,
+      workspaceId: WORKSPACE_ID,
+      connectorId: 'webhook_generic',
+      status: 'connected',
+      metadata: { workerResponseBindings: [] }
+    });
+
+    await expect(service.ingestWorkerResponse({
+      accountId: ACCOUNT_ID,
+      rawBody,
+      body,
+      signature: sign(rawBody, secret)
+    })).rejects.toMatchObject({ statusCode: 403, code: 'not_configured' });
+    expect(operationsLedgerService.recordChatWorkerResponse).not.toHaveBeenCalled();
+    expect(WebhookDelivery.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  test('validates configured bindings against members assigned to their mapped cards', async () => {
+    const account = {
+      _id: ACCOUNT_ID,
+      workspaceId: WORKSPACE_ID,
+      connectorId: 'webhook_generic',
+      status: 'connected',
+      metadata: {},
+      save: jest.fn().mockResolvedValue(null)
+    };
+    const configured = new GenericWebhookService({
+      ConnectorAccount: { findOne: jest.fn().mockResolvedValue(account) },
+      Member: { find: jest.fn().mockResolvedValue([{ _id: '507f1f77bcf86cd799439012' }]) },
+      Card: { find: jest.fn().mockResolvedValue([{ _id: '507f1f77bcf86cd799439013', members: ['507f1f77bcf86cd799439012'] }]) },
+      accountConnectorService: { getAccountCredentials: jest.fn() },
+      workSignalService,
+      operationsLedgerService,
+      WebhookDelivery
+    });
+    const bindings = [{
+      source: 'slack',
+      sourceMemberId: 'U12345',
+      sourceCardId: 'thread:67890',
+      memberId: '507f1f77bcf86cd799439012',
+      cardId: '507f1f77bcf86cd799439013'
+    }];
+
+    await expect(configured.configureWorkerResponseBindings({
+      accountId: ACCOUNT_ID,
+      workspaceId: WORKSPACE_ID,
+      actor: 'admin-1',
+      bindings
+    })).resolves.toEqual(bindings);
+    expect(account.save).toHaveBeenCalledTimes(1);
+    expect(operationsLedgerService.recordAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'generic_webhook_worker_response_bindings_configured',
+      afterState: { connectorId: 'webhook_generic', bindingCount: 1 }
+    }));
+
+    await expect(configured.configureWorkerResponseBindings({
+      accountId: ACCOUNT_ID,
+      workspaceId: WORKSPACE_ID,
+      bindings: [{ ...bindings[0], cardId: '507f1f77bcf86cd799439014' }]
+    })).rejects.toMatchObject({ statusCode: 400, code: 'invalid_payload' });
+  });
+
   test('rejects invalid delivery identifiers before creating a signal', async () => {
     const body = { id: 'task:1', title: 'Ship safely' };
     const rawBody = Buffer.from(JSON.stringify(body));
@@ -165,6 +301,7 @@ describe('Generic Webhook connector', () => {
     expect(JSON.stringify(normalized)).not.toMatch(/Private detail|private\.example|Private owner/);
     expect(isGenericWebhookPath(`/api/webhooks/generic/${ACCOUNT_ID}`)).toBe(true);
     expect(isGenericWebhookPath(`/api/webhooks/generic/${ACCOUNT_ID}?source=provider`)).toBe(true);
+    expect(isGenericWebhookPath(`/api/webhooks/generic/${ACCOUNT_ID}/worker-response`)).toBe(true);
     expect(isGenericWebhookPath('/api/webhooks/generic/not-an-id')).toBe(false);
   });
 });

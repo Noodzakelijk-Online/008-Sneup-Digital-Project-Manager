@@ -34,7 +34,7 @@ const DEFAULT_APPROVAL_TTL_HOURS = Object.freeze({
   low: 168
 });
 const CHAT_RESPONSE_TYPES = new Set(['acknowledged', 'completed', 'blocked', 'needs_help']);
-const WORKER_RESPONSE_SOURCES = new Set(['trello_comment', 'slack', 'email', 'web_chat', 'api', 'manual', 'system']);
+const WORKER_RESPONSE_SOURCES = new Set(['trello_comment', 'slack', 'teams', 'google_chat', 'discord', 'mattermost', 'webex', 'email', 'web_chat', 'api', 'manual', 'system']);
 const MAX_LEDGER_TIMELINE_ENTRIES = 100;
 const APPROVABLE_RECOMMENDATION_STATUSES = new Set(['pending', 'change_requested', 'snoozed', 'delegated']);
 const REJECTABLE_RECOMMENDATION_STATUSES = new Set(['pending', 'approved', 'change_requested', 'snoozed', 'delegated']);
