@@ -2161,6 +2161,50 @@ describe('connector registry', () => {
     expect(JSON.stringify(oauth)).not.toContain('never-expose-this-either');
   });
 
+  test('reports connector sync freshness from redacted completion metadata without scheduling a provider call', () => {
+    const now = new Date('2026-07-23T12:00:00.000Z');
+    const environment = { SNEUP_CONNECTOR_SYNC_FRESHNESS_HOURS: '12' };
+    const current = accountConnectorService.sanitizeAccount({
+      _id: 'account-current-sync-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'github',
+      connectorName: 'GitHub',
+      category: 'software_delivery',
+      authType: 'oauth2',
+      status: 'connected',
+      credentials: { accessToken: 'never-expose-this' },
+      metadata: { lastWorkSignalSync: { finishedAt: '2026-07-23T05:00:00.000Z' } }
+    }, { now, environment });
+    const stale = accountConnectorService.sanitizeAccount({
+      _id: 'account-stale-sync-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'github',
+      connectorName: 'GitHub',
+      category: 'software_delivery',
+      authType: 'oauth2',
+      status: 'connected',
+      metadata: { lastWorkSignalSync: { finishedAt: '2026-07-22T23:00:00.000Z' } }
+    }, { now, environment });
+    const unsynced = accountConnectorService.sanitizeAccount({
+      _id: 'account-unsynced-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'github',
+      connectorName: 'GitHub',
+      category: 'software_delivery',
+      authType: 'oauth2',
+      status: 'connected'
+    }, { now, environment });
+
+    expect(current.syncFreshness).toMatchObject({
+      status: 'current', freshnessHours: 12, ageHours: 7, hoursUntilDue: 5, dueAt: '2026-07-23T17:00:00.000Z'
+    });
+    expect(stale.syncFreshness).toMatchObject({
+      status: 'stale', freshnessHours: 12, ageHours: 13, hoursUntilDue: -1
+    });
+    expect(unsynced.syncFreshness).toEqual({ status: 'not_synced', freshnessHours: 12 });
+    expect(JSON.stringify(current)).not.toContain('never-expose-this');
+  });
+
   test('rotates token connector credentials in place with renewed consent and secret-free audit evidence', async () => {
     const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
     process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';

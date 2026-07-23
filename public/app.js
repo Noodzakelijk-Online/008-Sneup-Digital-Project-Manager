@@ -4111,8 +4111,13 @@ function renderConnector(connector, account) {
   const syncReady = connector.syncReadiness?.accountConnectionAvailable === true;
   const adapterImplemented = syncReady;
   const catalogAvailability = connector.syncReadiness?.availabilityStatus || 'unavailable';
-  const connectionLabel = connected ? (adapterImplemented ? 'connected' : 'linked') : syncReady ? (configured ? 'ready' : 'setup') : catalogAvailability === 'retired' ? 'retired' : catalogAvailability === 'legacy' ? 'legacy' : 'unavailable';
-  const connectionStatusClass = connected && adapterImplemented ? 'connected' : connected || (syncReady && configured) ? 'review' : 'high';
+  const accountStatus = account?.status || '';
+  const connectionLabel = connected && accountStatus === 'failed' ? 'needs attention'
+    : connected && accountStatus === 'disabled' ? 'disabled'
+      : connected ? (adapterImplemented ? 'connected' : 'linked') : syncReady ? (configured ? 'ready' : 'setup') : catalogAvailability === 'retired' ? 'retired' : catalogAvailability === 'legacy' ? 'legacy' : 'unavailable';
+  const connectionStatusClass = connected && accountStatus === 'failed' ? 'high'
+    : connected && accountStatus === 'disabled' ? 'review'
+      : connected && adapterImplemented ? 'connected' : connected || (syncReady && configured) ? 'review' : 'high';
   const adapterSummary = syncReady
     ? 'Read-only sync adapter available.'
     : connector.syncReadiness?.reason || 'Account connection is not available yet.';
@@ -4188,6 +4193,14 @@ function renderConnector(connector, account) {
     : credentialRotation?.required
       ? '<div class="connector-policy review">Credential rotation date is unavailable. Rotate the credential to establish a review deadline.</div>'
       : '';
+  const syncFreshness = account?.syncFreshness;
+  const syncFreshnessSummary = canSync && syncFreshness
+    ? syncFreshness.status === 'stale'
+      ? `<div class="connector-policy review">Sync review overdue by ${Math.abs(syncFreshness.hoursUntilDue)} hour${Math.abs(syncFreshness.hoursUntilDue) === 1 ? '' : 's'}. Run a read-only sync to refresh this connector.</div>`
+      : syncFreshness.status === 'not_synced'
+        ? '<div class="connector-policy review">No completed read-only sync yet. Run a sync before relying on this connector in operations.</div>'
+        : `<div class="connector-policy">Sync current. Freshness review ${escapeHtml(formatDate(syncFreshness.dueAt))}.</div>`
+    : '';
   return `
     <div class="connector-card">
       <div class="connector-top">
@@ -4205,6 +4218,7 @@ function renderConnector(connector, account) {
       <div class="meta"><span>${escapeHtml(isGenericWebhook ? 'HMAC-verified inbound event adapter available.' : adapterSummary)}</span></div>
       ${consentSummary}
       ${credentialRotationSummary}
+      ${syncFreshnessSummary}
       ${syncSummary}
       ${genericWebhookEndpoint ? `<div class="connector-policy"><code>${escapeHtml(genericWebhookEndpoint)}</code><span>Send a compact JSON event, sign its exact request body with <code>x-sneup-signature: sha256=&lt;HMAC-SHA256&gt;</code>, and include a stable <code>x-sneup-delivery-id</code> for retry-safe delivery.</span></div>` : ''}
       <div class="connector-actions">

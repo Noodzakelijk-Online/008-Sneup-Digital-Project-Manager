@@ -13,6 +13,7 @@ const MAX_CATALOG_LIMIT = 300;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CREDENTIAL_ROTATION_DAYS = 90;
 const DEFAULT_CREDENTIAL_ROTATION_WARNING_DAYS = 14;
+const DEFAULT_SYNC_FRESHNESS_HOURS = 24;
 const CREDENTIAL_ROTATION_AUTH_TYPES = new Set(['api_key', 'personal_access_token', 'basic', 'webhook']);
 
 const sanitizeText = (value) => String(value || '').trim().toLowerCase();
@@ -1380,6 +1381,40 @@ class AccountConnectorService {
     };
   }
 
+  getSyncFreshnessPolicy(environment = process.env) {
+    return {
+      freshnessHours: clampPositiveInt(
+        environment.SNEUP_CONNECTOR_SYNC_FRESHNESS_HOURS,
+        DEFAULT_SYNC_FRESHNESS_HOURS,
+        1,
+        24 * 7
+      )
+    };
+  }
+
+  getSyncFreshnessHealth(account, options = {}) {
+    const { freshnessHours } = this.getSyncFreshnessPolicy(options.environment);
+    const completedAt = account?.metadata?.lastWorkSignalSync?.finishedAt || account?.lastSyncAt;
+    const referenceDate = completedAt ? new Date(completedAt) : null;
+    if (!referenceDate || Number.isNaN(referenceDate.getTime())) {
+      return { status: 'not_synced', freshnessHours };
+    }
+
+    const now = options.now instanceof Date ? options.now : new Date();
+    const dueAt = new Date(referenceDate.getTime() + freshnessHours * 60 * 60 * 1000);
+    const ageHours = Math.max(0, Math.floor((now.getTime() - referenceDate.getTime()) / (60 * 60 * 1000)));
+    const hoursUntilDue = Math.ceil((dueAt.getTime() - now.getTime()) / (60 * 60 * 1000));
+
+    return {
+      status: hoursUntilDue <= 0 ? 'stale' : 'current',
+      freshnessHours,
+      referenceAt: referenceDate.toISOString(),
+      dueAt: dueAt.toISOString(),
+      ageHours,
+      hoursUntilDue
+    };
+  }
+
   sanitizeAccount(account, options = {}) {
     return {
       id: account._id,
@@ -1398,6 +1433,7 @@ class AccountConnectorService {
       lastValidatedAt: account.lastValidatedAt,
       credentialsLastRotatedAt: account.credentialsLastRotatedAt || null,
       credentialRotation: this.getCredentialRotationHealth(account, options),
+      syncFreshness: this.getSyncFreshnessHealth(account, options),
       lastSyncAt: account.lastSyncAt,
       lastError: account.lastError,
       createdAt: account.createdAt,
