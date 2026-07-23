@@ -112,6 +112,13 @@ const missingWorkspaceQuery = () => ({
   ]
 });
 
+const plannedDefaultWorkspaceQuery = (workspaceId) => ({
+  $or: [
+    { workspaceId },
+    ...missingWorkspaceQuery().$or
+  ]
+});
+
 const getBackfillConcurrency = (value = process.env.SNEUP_WORKSPACE_BACKFILL_CONCURRENCY) => {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return DEFAULT_BACKFILL_CONCURRENCY;
@@ -195,6 +202,80 @@ const inspectDefaultWorkspaceBackfill = async ({
   };
 };
 
+const inspectWorkspaceScopedUniqueness = async ({ Model, workspaceId, fields }) => {
+  const groupingKey = Object.fromEntries(fields.map(field => [field, `$${field}`]));
+  let rows = [];
+
+  try {
+    rows = await Model.aggregate([
+      { $match: plannedDefaultWorkspaceQuery(workspaceId) },
+      { $group: { _id: groupingKey, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } },
+      {
+        $group: {
+          _id: null,
+          duplicateGroups: { $sum: 1 },
+          duplicateRecords: { $sum: '$count' }
+        }
+      },
+      { $project: { _id: 0, duplicateGroups: 1, duplicateRecords: 1 } }
+    ]);
+  } catch (error) {
+    if (error.code !== 26 && error.codeName !== 'NamespaceNotFound') throw error;
+  }
+
+  const summary = rows[0] || {};
+  return {
+    duplicateGroups: Number(summary.duplicateGroups) || 0,
+    duplicateRecords: Number(summary.duplicateRecords) || 0
+  };
+};
+
+const inspectDefaultWorkspaceMigration = async ({
+  models = workspaceScopedModels,
+  workspaceId = getDefaultWorkspaceObjectId(),
+  workspaceKey = getDefaultWorkspaceKey(),
+  concurrency = getBackfillConcurrency(),
+  policyRuleModel = PolicyRule,
+  jobControlModel = JobControl
+} = {}) => {
+  const [backfill, policyRules, jobControls] = await Promise.all([
+    inspectDefaultWorkspaceBackfill({ models, workspaceId, workspaceKey, concurrency }),
+    inspectWorkspaceScopedUniqueness({
+      Model: policyRuleModel,
+      workspaceId,
+      fields: ['actionType']
+    }),
+    inspectWorkspaceScopedUniqueness({
+      Model: jobControlModel,
+      workspaceId,
+      fields: ['jobName']
+    })
+  ]);
+  const duplicateGroups = policyRules.duplicateGroups + jobControls.duplicateGroups;
+  const duplicateRecords = policyRules.duplicateRecords + jobControls.duplicateRecords;
+
+  return {
+    ...backfill,
+    indexPreflight: {
+      canApply: duplicateGroups === 0,
+      duplicateGroups,
+      duplicateRecords,
+      policyRules,
+      jobControls
+    }
+  };
+};
+
+const assertWorkspaceMigrationReady = (preflight) => {
+  if (preflight?.indexPreflight?.canApply) return;
+  const error = new Error('Workspace migration preflight found duplicate workspace-scoped policy or job-control keys');
+  error.code = 'WORKSPACE_MIGRATION_PRECHECK_FAILED';
+  error.statusCode = 409;
+  error.preflight = preflight?.indexPreflight;
+  throw error;
+};
+
 const backfillDefaultWorkspace = async ({
   models = workspaceScopedModels,
   workspaceId = getDefaultWorkspaceObjectId(),
@@ -261,6 +342,7 @@ const ensureJobControlIndexes = async ({ Model = JobControl } = {}) => {
 };
 
 module.exports = {
+  assertWorkspaceMigrationReady,
   backfillDefaultWorkspace,
   defaultWorkspaceQuery,
   ensurePolicyRuleIndexes,
@@ -272,11 +354,14 @@ module.exports = {
   getDefaultWorkspaceObjectId,
   getRequestWorkspaceObjectId,
   inspectDefaultWorkspaceBackfill,
+  inspectDefaultWorkspaceMigration,
+  inspectWorkspaceScopedUniqueness,
   listActiveWorkspaceIds,
   mapWithConcurrency,
   missingWorkspaceQuery,
   normalizeWorkspaceObjectId,
   objectIdFromWorkspaceKey,
+  plannedDefaultWorkspaceQuery,
   scopeQuery,
   slugifyWorkspaceKey,
   workspaceScopedModels

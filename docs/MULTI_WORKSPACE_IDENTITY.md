@@ -117,7 +117,7 @@ npm run migrate:workspace
 npm run migrate:workspace -- --apply
 ```
 
-The first command is read-only JSON evidence: it reports each collection's records missing `workspaceId`, the target workspace, and the bounded concurrency used. The `--apply` command creates the default workspace if needed, then attaches only legacy records where `workspaceId` is absent or `null`. It does not overwrite a record already assigned to another workspace.
+The first command is read-only JSON evidence: it reports each collection's records missing `workspaceId`, the target workspace identifier, bounded concurrency, and aggregate-only duplicate counts that would conflict with the future `PolicyRule.workspaceId + actionType` or `JobControl.workspaceId + jobName` indexes. It never returns policy conditions, user data, credentials, affected record identifiers, or record content. The `--apply` command refuses any detected duplicate group before it creates the default workspace, backfills anything, or changes an index. Once clean, it attaches only legacy records where `workspaceId` is absent or `null`; it does not overwrite a record already assigned to another workspace.
 
 Use `--concurrency <1-16>` for constrained MongoDB deployments, or set `SNEUP_WORKSPACE_BACKFILL_CONCURRENCY` (default `4`). Sneup keeps the compatibility backfill at successful database startup, now with the same bounded concurrency; the explicit command is the recommended production preflight and change record.
 
@@ -143,4 +143,4 @@ Important MongoDB indexes:
 - workspace-scoped indexes on Trello/project collections
 - `PolicyRule.workspaceId + actionType`
 
-The app defines these indexes in Mongoose schemas. At successful database startup, Sneup backfills legacy policy rules, job runs, and job controls into the default workspace, replaces the former global `PolicyRule.name` and `JobControl.jobName` uniqueness indexes with workspace-scoped indexes, and then creates the current indexes. Production migrations should still monitor index build time and old duplicate data before enforcing uniqueness in shared databases.
+The app defines these indexes in Mongoose schemas. At successful database startup, Sneup reads the same duplicate-key preflight before it changes legacy workspace records or indexes. A connected database with a migration conflict fails closed rather than silently falling back to demo mode. Once clean, Sneup backfills legacy policy rules, job runs, and job controls into the default workspace, replaces the former global `PolicyRule.name` and `JobControl.jobName` uniqueness indexes with workspace-scoped indexes, and then creates the current indexes. Production migrations should still monitor index build time and preserve the JSON preflight output with the deployment change record.

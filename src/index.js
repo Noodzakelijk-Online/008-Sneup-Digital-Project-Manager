@@ -214,11 +214,19 @@ const initApp = async () => {
       try {
         await connectDatabase();
         databaseConnected = true;
+        const workspaceMigrationPreflight = await workspaceScopeService.inspectDefaultWorkspaceMigration();
+        workspaceScopeService.assertWorkspaceMigrationReady(workspaceMigrationPreflight);
         const workspaceBackfill = await workspaceScopeService.backfillDefaultWorkspace();
         const policyRuleIndexMigration = await workspaceScopeService.ensurePolicyRuleIndexes();
         const jobControlIndexMigration = await workspaceScopeService.ensureJobControlIndexes();
         if (workspaceBackfill.totalModified > 0) {
           logger.info('Default workspace migration applied', workspaceBackfill);
+        }
+        if (workspaceMigrationPreflight.totalMissing > 0) {
+          logger.info('Default workspace migration preflight passed', {
+            totalMissing: workspaceMigrationPreflight.totalMissing,
+            duplicateGroups: workspaceMigrationPreflight.indexPreflight.duplicateGroups
+          });
         }
         if (policyRuleIndexMigration.removedLegacyNameIndex) {
           logger.info('Migrated legacy global PolicyRule name index');
@@ -227,6 +235,13 @@ const initApp = async () => {
           logger.info('Migrated legacy global JobControl jobName index');
         }
       } catch (error) {
+        if (databaseConnected) {
+          logger.error('Live workspace migration preflight failed. Refusing to start in demo mode.', {
+            code: error.code,
+            message: error.message
+          });
+          throw error;
+        }
         logger.warn('MongoDB is not available. Starting Sneup in catalog/demo mode.');
         process.env.SNEUP_DEMO_MODE = 'true';
       }

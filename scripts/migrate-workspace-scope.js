@@ -6,8 +6,8 @@ const workspaceScopeService = require('../src/services/workspaceScopeService');
 const usage = () => [
   'Usage: npm run migrate:workspace [-- --apply] [-- --concurrency <1-16>]',
   '',
-  'Without --apply, Sneup only inspects legacy records missing workspaceId.',
-  '--apply creates the default workspace if needed, backfills those records, and replaces legacy global control indexes.'
+  'Without --apply, Sneup reads legacy workspace gaps and future workspace-scoped index conflicts.',
+  '--apply refuses index conflicts, then creates the default workspace if needed, backfills legacy records, and replaces legacy global control indexes.'
 ].join('\n');
 
 const parseArgs = (args) => {
@@ -51,13 +51,17 @@ const main = async () => {
   await connectDatabase();
 
   try {
-    const report = options.apply
-      ? {
+    const preflight = await workspaceScopeService.inspectDefaultWorkspaceMigration({ concurrency });
+    let report = preflight;
+    if (options.apply) {
+      workspaceScopeService.assertWorkspaceMigrationReady(preflight);
+      report = {
         ...(await workspaceScopeService.backfillDefaultWorkspace({ concurrency })),
+        preflight: preflight.indexPreflight,
         policyRuleIndexes: await workspaceScopeService.ensurePolicyRuleIndexes(),
         jobControlIndexes: await workspaceScopeService.ensureJobControlIndexes()
-      }
-      : await workspaceScopeService.inspectDefaultWorkspaceBackfill({ concurrency });
+      };
+    }
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } finally {
     await disconnectDatabase();
