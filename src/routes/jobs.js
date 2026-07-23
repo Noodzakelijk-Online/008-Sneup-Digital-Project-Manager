@@ -130,10 +130,15 @@ const manualJobHandlers = {
   'interventions.escalations': {
     jobType: 'intervention',
     run: async ({ workspaceId }) => {
+      const escalatedDecisionItems = await operationsLedgerService.processDueDecisionQueueEscalations({ workspaceId });
       const queuedInterventions = await interventionEngine.processEscalations({
         workspaceId
       });
-      return { processedCount: queuedInterventions.length, successCount: 1, failureCount: 0 };
+      return {
+        processedCount: escalatedDecisionItems.length + queuedInterventions.length,
+        successCount: 1,
+        failureCount: 0
+      };
     }
   },
   'performance.daily': {
