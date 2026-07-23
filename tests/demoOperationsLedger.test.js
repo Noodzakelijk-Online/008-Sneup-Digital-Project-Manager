@@ -17,11 +17,20 @@ describe('demo operations ledger', () => {
         requiresApproval: true,
         actionPayload: { draftOnly: true, executable: false }
       })],
-      actions: []
+      actions: [expect.objectContaining({
+        actionType: 'reassign',
+        status: 'failed',
+        reconciliation: expect.objectContaining({
+          status: 'required',
+          confirmedSteps: ['source_member_removed'],
+          pendingSteps: ['target_member_added']
+        })
+      })]
     });
     expect(ledger.accountability.summary).toEqual(expect.objectContaining({ overdueFollowUps: 1 }));
     expect(ledger.findings).toHaveLength(1);
     expect(ledger.healthSnapshots).toHaveLength(1);
+    expect(ledger.reconciliationHealth.summary).toEqual(expect.objectContaining({ requiresOperator: 1, critical: 1 }));
     expect(ledger.recommendations.every(item => item.actionPayload.executable !== true)).toBe(true);
   });
 });

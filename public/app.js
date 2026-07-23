@@ -1482,7 +1482,8 @@ function renderBoardHealth(snapshot) {
 function renderTrelloAttempt(attempt) {
   const attemptId = getId(attempt._id || attempt.id);
   const needsReconciliation = attempt.status === 'in_progress'
-    || (attempt.status === 'succeeded' && attempt.recommendationId?.status === 'executing');
+    || (attempt.status === 'succeeded' && attempt.recommendationId?.status === 'executing')
+    || attempt.reconciliation?.status === 'required';
   const reconciliation = attempt.reconciliation || {};
   return `
     <div class="item">
@@ -1505,7 +1506,13 @@ function renderTrelloAttempt(attempt) {
           <span>${formatDate(reconciliation.reconciledAt)}</span>
         </div>
       ` : ''}
-      ${needsReconciliation && attemptId ? `
+      ${reconciliation.confirmedSteps?.length || reconciliation.pendingSteps?.length ? `
+        <div class="meta">
+          ${reconciliation.confirmedSteps?.length ? `<span>Confirmed: ${escapeHtml(reconciliation.confirmedSteps.join(', ').replaceAll('_', ' '))}</span>` : ''}
+          ${reconciliation.pendingSteps?.length ? `<span>Check: ${escapeHtml(reconciliation.pendingSteps.join(', ').replaceAll('_', ' '))}</span>` : ''}
+        </div>
+      ` : ''}
+      ${needsReconciliation && attemptId && !state.ledger.demoMode ? `
         <div class="item-actions">
           <button class="button warn" data-trello-action-reconcile="${escapeHtml(attemptId)}" type="button">Reconcile result</button>
         </div>

@@ -1146,14 +1146,24 @@ class OperationsLedgerService {
         attempt.status = 'failed';
         attempt.finishedAt = new Date();
         attempt.errorMessage = error.message;
+        if (error.requiresReconciliation === true) {
+          attempt.reconciliation = {
+            status: 'required',
+            reason: error.reconciliationReason || 'A multi-step Trello action may be partially applied.',
+            confirmedSteps: error.confirmedSteps || [],
+            pendingSteps: error.pendingSteps || [],
+            detectedAt: attempt.finishedAt
+          };
+        }
         await attempt.save();
       }
 
-      claimedRecommendation.status = 'failed';
-      claimedRecommendation.failureReason = error.message;
+      const requiresReconciliation = error.requiresReconciliation === true;
+      claimedRecommendation.status = requiresReconciliation ? 'executing' : 'failed';
+      claimedRecommendation.failureReason = requiresReconciliation ? undefined : error.message;
       await claimedRecommendation.save();
 
-      if (claimedRecommendation.interventionId) {
+      if (claimedRecommendation.interventionId && !requiresReconciliation) {
         const intervention = await Intervention.findOne({
           _id: claimedRecommendation.interventionId,
           workspaceId: claimedRecommendation.workspaceId
@@ -1166,7 +1176,9 @@ class OperationsLedgerService {
       await this.recordAudit({
         entityType: attempt ? 'trello_action_attempt' : 'recommendation',
         entityId: attempt ? attempt._id : claimedRecommendation._id,
-        action: attempt ? 'trello_action_failed' : 'trello_action_attempt_creation_failed',
+        action: requiresReconciliation
+          ? 'trello_action_partial_result_requires_reconciliation'
+          : attempt ? 'trello_action_failed' : 'trello_action_attempt_creation_failed',
         actor: options.actor || approval?.decidedBy || 'sneup',
         source: 'trello',
         riskLevel: claimedRecommendation.riskLevel,
@@ -1312,9 +1324,25 @@ class OperationsLedgerService {
       case 'reassign':
         this.requirePayload(payload, ['cardTrelloId', 'fromMemberTrelloId', 'toMemberTrelloId']);
         await trelloClient.cardApi.removeMember(payload.cardTrelloId, payload.fromMemberTrelloId);
-        await trelloClient.cardApi.addMember(payload.cardTrelloId, payload.toMemberTrelloId);
+        try {
+          await trelloClient.cardApi.addMember(payload.cardTrelloId, payload.toMemberTrelloId);
+        } catch (error) {
+          throw this.partialReassignmentError({
+            confirmedSteps: ['source_member_removed'],
+            pendingSteps: ['target_member_added'],
+            cause: error
+          });
+        }
         if (payload.commentText) {
-          await trelloClient.cardApi.addComment(payload.cardTrelloId, payload.commentText);
+          try {
+            await trelloClient.cardApi.addComment(payload.cardTrelloId, payload.commentText);
+          } catch (error) {
+            throw this.partialReassignmentError({
+              confirmedSteps: ['source_member_removed', 'target_member_added'],
+              pendingSteps: ['reassignment_comment_posted'],
+              cause: error
+            });
+          }
         }
         if (payload.cardId && payload.fromMemberId && payload.toMemberId) {
           await Card.findOneAndUpdate(
@@ -1352,6 +1380,17 @@ class OperationsLedgerService {
     if (missing.length > 0) {
       throw new Error(`Approved Trello action is missing required payload field(s): ${missing.join(', ')}`);
     }
+  }
+
+  partialReassignmentError({ confirmedSteps, pendingSteps, cause }) {
+    const error = new Error('Trello reassignment may be partially applied. Reconcile the observed card membership before taking another action.');
+    error.statusCode = 502;
+    error.requiresReconciliation = true;
+    error.reconciliationReason = 'A reassignment provider step failed after an earlier membership change succeeded.';
+    error.confirmedSteps = confirmedSteps;
+    error.pendingSteps = pendingSteps;
+    error.causeMessage = cause?.message;
+    return error;
   }
 
   isExecutableRecommendation(recommendation) {
@@ -1569,7 +1608,7 @@ class OperationsLedgerService {
   async listTrelloActionsNeedingReconciliation(filters = {}) {
     this.requireDatabase();
     const query = this.workspaceQuery(filters, {
-      status: { $in: ['in_progress', 'succeeded'] }
+      status: { $in: ['in_progress', 'succeeded', 'failed'] }
     });
     const actionQuery = TrelloActionAttempt.find(query)
       .sort({ startedAt: 1, createdAt: 1 })
@@ -1579,7 +1618,9 @@ class OperationsLedgerService {
 
     return actions.filter((attempt) => {
       const recommendation = attempt.recommendationId;
-      return attempt.status === 'in_progress' || recommendation?.status === 'executing';
+      return attempt.reconciliation?.status === 'required'
+        || attempt.status === 'in_progress'
+        || recommendation?.status === 'executing';
     });
   }
 
@@ -1611,7 +1652,8 @@ class OperationsLedgerService {
       const startedAt = Number.isNaN(candidateStartedAt.getTime()) ? referenceNow : candidateStartedAt;
       const ageMinutes = Math.max(0, Math.floor((referenceNow.getTime() - startedAt.getTime()) / (60 * 1000)));
       const ageHours = Number((ageMinutes / 60).toFixed(1));
-      const severity = ageHours >= criticalHours
+      const partialResult = attempt.reconciliation?.status === 'required';
+      const severity = partialResult || ageHours >= criticalHours
         ? 'critical'
         : ageHours >= warningHours
           ? 'warning'
@@ -1628,7 +1670,9 @@ class OperationsLedgerService {
         severity,
         recommendationId: recommendation?._id ? String(recommendation._id) : attempt.recommendationId ? String(attempt.recommendationId) : null,
         sourceUrl: safeExternalSourceUrl(attempt.cardId?.url),
-        message: severity === 'critical'
+        message: partialResult
+          ? 'A multi-step action may be partially applied. Confirm the observed Trello result before any new action.'
+          : severity === 'critical'
           ? `Unresolved for ${ageHours}h. Confirm the observed Trello result before any new action.`
           : severity === 'warning'
             ? `Unresolved for ${ageHours}h. Operator evidence is due.`
@@ -1694,8 +1738,9 @@ class OperationsLedgerService {
       error.statusCode = 409;
       throw error;
     }
-    if (!['in_progress', 'succeeded'].includes(attempt.status)) {
-      const error = new Error('Only in-progress or partially finalized Trello attempts can be reconciled');
+    const partialResult = attempt.status === 'failed' && attempt.reconciliation?.status === 'required';
+    if (!['in_progress', 'succeeded'].includes(attempt.status) && !partialResult) {
+      const error = new Error('Only in-progress, partially finalized, or partial-result Trello attempts can be reconciled');
       error.statusCode = 409;
       throw error;
     }

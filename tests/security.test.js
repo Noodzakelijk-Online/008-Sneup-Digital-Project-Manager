@@ -8685,9 +8685,13 @@ describe('operations ledger intervention policy', () => {
 describe('approved Trello action execution safety', () => {
   afterEach(() => {
     jest.dontMock('../src/models/Recommendation');
+    jest.dontMock('../src/models/Approval');
+    jest.dontMock('../src/models/DecisionQueueItem');
+    jest.dontMock('../src/models/TrelloActionAttempt');
     jest.dontMock('../src/services/operationsLedgerService');
     jest.dontMock('../src/services/workspaceScopeService');
     jest.dontMock('../src/services/policyRuleService');
+    jest.dontMock('../src/services/trelloClient');
     jest.resetModules();
   });
 
@@ -8882,6 +8886,66 @@ describe('approved Trello action execution safety', () => {
       status: { $in: expect.arrayContaining(['approved', 'open', 'change_requested', 'snoozed', 'delegated']) },
       workspaceId: 'workspace-1'
     }, expect.objectContaining({ status: 'rejected' }));
+  });
+
+  test('marks a reassignment as requiring reconciliation when target assignment fails after removal', async () => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const removeMember = jest.fn().mockResolvedValue(undefined);
+    const addMember = jest.fn().mockRejectedValue(new Error('Target member is unavailable'));
+    jest.doMock('../src/services/trelloClient', () => ({
+      cardApi: { removeMember, addMember, addComment: jest.fn() }
+    }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+
+    await expect(operationsLedgerService.performTrelloAction({
+      actionType: 'reassign',
+      actionPayload: {
+        cardTrelloId: 'trello-card-1',
+        fromMemberTrelloId: 'member-old',
+        toMemberTrelloId: 'member-new'
+      }
+    })).rejects.toMatchObject({
+      statusCode: 502,
+      requiresReconciliation: true,
+      confirmedSteps: ['source_member_removed'],
+      pendingSteps: ['target_member_added']
+    });
+    expect(removeMember).toHaveBeenCalledWith('trello-card-1', 'member-old');
+    expect(addMember).toHaveBeenCalledWith('trello-card-1', 'member-new');
+  });
+
+  test('includes failed partial-result attempts in the reconciliation queue', async () => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const partialAttempt = {
+      _id: 'attempt-partial',
+      status: 'failed',
+      reconciliation: { status: 'required' },
+      recommendationId: { _id: 'recommendation-1', status: 'executing' }
+    };
+    const actionQuery = {
+      sort: jest.fn(() => actionQuery),
+      populate: jest.fn(() => actionQuery),
+      limit: jest.fn().mockResolvedValue([partialAttempt])
+    };
+    const find = jest.fn(() => actionQuery);
+    jest.doMock('../src/models/TrelloActionAttempt', () => ({ find }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({ normalizeWorkspaceObjectId: jest.fn(value => value) }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    jest.spyOn(operationsLedgerService, 'isDatabaseReady').mockReturnValue(true);
+
+    const attempts = await operationsLedgerService.listTrelloActionsNeedingReconciliation({ workspaceId: 'workspace-1' });
+
+    expect(attempts).toEqual([partialAttempt]);
+    expect(find).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      status: { $in: ['in_progress', 'succeeded', 'failed'] }
+    });
   });
 });
 

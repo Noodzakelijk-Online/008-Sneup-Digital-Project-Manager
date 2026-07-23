@@ -86,7 +86,22 @@ function getDemoOperationsLedger(now = new Date()) {
       status: 'pending',
       createdAt: observedAt
     }],
-    actions: [],
+    actions: [{
+      _id: 'demo-action-reassign-partial',
+      actionType: 'reassign',
+      status: 'failed',
+      startedAt: new Date(generatedAt.getTime() - (45 * 60 * 1000)),
+      finishedAt: new Date(generatedAt.getTime() - (44 * 60 * 1000)),
+      errorMessage: 'Demo partial result: confirm the observed card membership before any retry.',
+      payload: { draftOnly: true, executable: false },
+      reconciliation: {
+        status: 'required',
+        reason: 'Demo preview of a multi-step reassignment requiring operator review.',
+        confirmedSteps: ['source_member_removed'],
+        pendingSteps: ['target_member_added'],
+        detectedAt: new Date(generatedAt.getTime() - (44 * 60 * 1000))
+      }
+    }],
     auditEvents: [{
       _id: 'demo-audit-recovery',
       action: 'demo_recommendation_queued',
@@ -171,8 +186,12 @@ function getDemoOperationsLedger(now = new Date()) {
       generatedAt
     }],
     reconciliationHealth: {
-      summary: { requiresOperator: 0, critical: 0, warning: 0 },
-      alerts: [],
+      summary: { requiresOperator: 1, critical: 1, warning: 0 },
+      items: [{
+        actionType: 'reassign',
+        severity: 'critical',
+        message: 'Demo partial result: confirm the observed card membership before any retry.'
+      }],
       thresholds: { warningHours: 4, criticalHours: 24 }
     },
     notificationPolicies: [],

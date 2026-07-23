@@ -57,12 +57,15 @@ const trelloActionAttemptSchema = new mongoose.Schema({
   reconciliation: {
     status: {
       type: String,
-      enum: ['not_needed', 'confirmed_succeeded', 'confirmed_failed'],
+      enum: ['not_needed', 'required', 'confirmed_succeeded', 'confirmed_failed'],
       default: 'not_needed',
       index: true
     },
     reason: String,
     evidence: String,
+    confirmedSteps: [{ type: String }],
+    pendingSteps: [{ type: String }],
+    detectedAt: Date,
     reconciledBy: String,
     reconciledAt: Date
   }
