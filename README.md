@@ -251,6 +251,8 @@ Power BI is available as a reviewed Microsoft OAuth connection with `Report.Read
 
 Data Studio (formerly Looker Studio) is available for Google Workspace or Cloud Identity organizations after an administrator has authorized Sneup for domain-wide delegation with the restrictive `datastudio.readonly` scope. Sneup makes two capped GET requests for report and data-source asset metadata, retaining only opaque asset IDs, redacted titles, asset type, and timestamps. It excludes descriptions, owners, creators, URLs, filters, sections, dimensions, permissions, data-source configuration, and provider writes.
 
+Zapier is available after Sneup is published as a public Zapier integration and receives an OAuth client ID and secret. It requests `zap:all`, makes one capped GET request for Zap inventory, and retains only opaque IDs, redacted titles, enabled state, and timestamps. Zap steps, inputs, linked app authentications, editor URLs, run payloads, user profiles, webhooks, and provider writes are excluded.
+
 SurveyMonkey is available with a View Surveys access token. Sneup makes one bounded survey-list GET and retains only redacted survey title and ID. It excludes questions, responses, collectors, contacts, links, and provider writes.
 
 Google Drive is available as a separate metadata-only Google OAuth connection. Sneup reads one bounded user-Drive page, rejects incomplete pagination, and retains only redacted file or folder names plus timestamps. It excludes file content, web URLs, permissions, owners, shared drives, and provider writes.

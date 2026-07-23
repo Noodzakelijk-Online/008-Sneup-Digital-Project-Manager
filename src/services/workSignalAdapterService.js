@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'motion',
   'wrike', 'opsgenie',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zapier', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
 ];
 // Resolve each provider client only when its adapter performs a sync.
 const lazyClient = (modulePath) => new Proxy(Object.create(null), {
@@ -123,6 +123,7 @@ const canvaWorkSignalClient = lazyClient('./canvaWorkSignalClient');
 const quickBooksWorkSignalClient = lazyClient('./quickBooksWorkSignalClient');
 const powerBiWorkSignalClient = lazyClient('./powerBiWorkSignalClient');
 const dataStudioWorkSignalClient = lazyClient('./dataStudioWorkSignalClient');
+const zapierWorkSignalClient = lazyClient('./zapierWorkSignalClient');
 const scoroWorkSignalClient = lazyClient('./scoroWorkSignalClient');
 const planeWorkSignalClient = lazyClient('./planeWorkSignalClient');
 const openProjectWorkSignalClient = lazyClient('./openProjectWorkSignalClient');
@@ -1531,6 +1532,27 @@ dataStudioAdapter.capabilities.credentialBackedSync = true;
 dataStudioAdapter.list = async account => (await dataStudioWorkSignalClient.fetchDelta(account, null)).records;
 dataStudioAdapter.fetchDelta = (account, cursor) => dataStudioWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('looker_studio', dataStudioAdapter);
+
+const zapierAdapter = buildAdapter('zapier', 'Zapier bounded automation-metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: 'automation',
+  title: titleFromText(item.name, 'Zapier automation'),
+  description: '',
+  status: item.status || 'inactive',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['zapier', 'automation', item.status]),
+  dueAt: undefined,
+  providerCreatedAt: undefined,
+  providerUpdatedAt: item.updatedAt,
+  evidenceRefs: [{ provider: account.connectorId, externalId: String(pick(item.id, 'unknown')), label: 'Zapier automation metadata', type: account.connectorId }],
+  raw: { id: item.id, zapId: item.zapId, sourceType: 'automation', status: item.status, lastSuccessfulRunAt: item.lastSuccessfulRunAt, updatedAt: item.updatedAt }
+}));
+zapierAdapter.capabilities.credentialBackedSync = true;
+zapierAdapter.list = async account => (await zapierWorkSignalClient.fetchDelta(account, null)).records;
+zapierAdapter.fetchDelta = (account, cursor) => zapierWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('zapier', zapierAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),
