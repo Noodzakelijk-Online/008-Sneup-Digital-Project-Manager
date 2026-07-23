@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'taskade', 'motion', 'ganttpro',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'taskade', 'motion', 'ganttpro', 'paymo',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zapier', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -57,6 +57,7 @@ const taskworldWorkSignalClient = lazyClient('./taskworldWorkSignalClient');
 const taskadeWorkSignalClient = lazyClient('./taskadeWorkSignalClient');
 const motionWorkSignalClient = lazyClient('./motionWorkSignalClient');
 const ganttProWorkSignalClient = lazyClient('./ganttProWorkSignalClient');
+const paymoWorkSignalClient = lazyClient('./paymoWorkSignalClient');
 const teamworkWorkSignalClient = lazyClient('./teamworkWorkSignalClient');
 const teamGanttWorkSignalClient = lazyClient('./teamganttWorkSignalClient');
 const businessmapWorkSignalClient = lazyClient('./businessmapWorkSignalClient');
@@ -988,6 +989,14 @@ ganttProAdapter.capabilities.credentialBackedSync = true;
 ganttProAdapter.list = async account => (await ganttProWorkSignalClient.fetchDelta(account, null)).records;
 ganttProAdapter.fetchDelta = (account, cursor) => ganttProWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('ganttpro', ganttProAdapter);
+
+const paymoAdapter = buildAdapter('paymo', 'Paymo active project and task metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'Paymo work item'), description: '', status: statusFromText(item.status), priority: item.priority || 'unknown', url: undefined, owners: [], labels: compact(['paymo', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.status]), dueAt: item.dueAt, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt || item.createdAt, evidenceRefs: baseEvidence(account, item, 'Paymo metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, status: item.status, priority: item.priority, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+paymoAdapter.capabilities.credentialBackedSync = true;
+paymoAdapter.list = async account => (await paymoWorkSignalClient.fetchDelta(account, null)).records;
+paymoAdapter.fetchDelta = (account, cursor) => paymoWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('paymo', paymoAdapter);
 
 const motionAdapter = buildAdapter('motion', 'Motion project and task metadata adapter', (account, item) => ({
   externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'Motion task'), description: '', status: item.status || 'open', priority: priorityFromText(item.priority), url: undefined, owners: [], labels: compact(['motion', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.schedulingIssue === true ? 'scheduling_issue' : undefined]), dueAt: item.dueAt, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt || item.createdAt, evidenceRefs: baseEvidence(account, item, 'Motion project and task metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, status: item.status, priority: item.priority, dueAt: item.dueAt, startOn: item.startOn, durationMinutes: item.durationMinutes, assigneeIds: item.assigneeIds, scheduledStart: item.scheduledStart, scheduledEnd: item.scheduledEnd, schedulingIssue: item.schedulingIssue, createdAt: item.createdAt, updatedAt: item.updatedAt }
