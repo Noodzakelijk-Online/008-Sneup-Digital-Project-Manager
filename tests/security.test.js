@@ -8931,6 +8931,29 @@ describe('operating ledger analyzer', () => {
     expect(analyzer.ownerTypeForFinding({ waitingOn: 'external' })).toBe('team');
     expect(analyzer.ownerTypeForFinding({ waitingOn: 'unknown' })).toBe('team');
   });
+
+  test('keeps ordinary external waits out of blocker and Robert queues', () => {
+    const analyzer = require('../src/services/operatingLedgerAnalyzer');
+    const board = { _id: 'board-1', name: 'Client Launches' };
+    const card = {
+      _id: 'card-2',
+      name: 'Collect brand feedback',
+      description: 'Waiting for client reply on the latest design proof.',
+      labels: [],
+      members: [{ _id: 'member-1' }],
+      checklists: [{ items: [{ complete: false }] }],
+      lastActivity: new Date(),
+      updatedAt: new Date(),
+      isOverdue: () => false,
+      isStuck: () => false
+    };
+
+    const types = analyzer.detectCardFindings(board, card).map(finding => finding.findingType);
+
+    expect(types).toContain('external_waiting');
+    expect(types).not.toContain('blocked');
+    expect(types).not.toContain('robert_required');
+  });
 });
 
 describe('operations daily brief', () => {

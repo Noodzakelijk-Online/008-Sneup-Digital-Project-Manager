@@ -369,11 +369,11 @@ class OperatingLedgerAnalyzer {
 
   hasBlockedSignal(card) {
     const text = `${card.name || ''} ${card.description || ''} ${(card.labels || []).map(label => label.name).join(' ')}`.toLowerCase();
-    return /(blocked|blocker|waiting|stuck|cannot proceed|dependency)/i.test(text);
+    return /\b(blocked|blocker|stuck|cannot proceed|dependenc(?:y|ies))\b/i.test(text);
   }
 
   requiresRobert(text) {
-    return /(robert|client|legal|contract|invoice|payment|money|tax|government|policy|commitment|signature|budget)/i.test(text);
+    return /\b(robert|legal|contract|invoice|payment|money|tax|government|policy|commitment|signature|budget)\b/i.test(text);
   }
 
   hasExternalWaitingSignal(text) {
