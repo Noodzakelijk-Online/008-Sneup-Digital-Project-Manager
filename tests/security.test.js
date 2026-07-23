@@ -1943,6 +1943,8 @@ describe('connector registry', () => {
           lastWorkSignalSync: {
             source: 'github_api',
             signalCount: 4,
+            signalWriteBatchCount: 2,
+            signalWriteBatchSize: 100,
             tasks: 5,
             taskLists: 2,
             calendars: 1,
@@ -1955,7 +1957,15 @@ describe('connector registry', () => {
       expect(credentials).toEqual({ accessToken: 'github-token-value' });
       expect(account).not.toHaveProperty('credentials');
       expect(account.metadata).toMatchObject({
-        lastWorkSignalSync: { source: 'github_api', signalCount: 4, tasks: 5, taskLists: 2, calendars: 1 }
+        lastWorkSignalSync: {
+          source: 'github_api',
+          signalCount: 4,
+          signalWriteBatchCount: 2,
+          signalWriteBatchSize: 100,
+          tasks: 5,
+          taskLists: 2,
+          calendars: 1
+        }
       });
       expect(account.metadata).not.toHaveProperty('workSignalCursor');
       expect(account.metadata).not.toHaveProperty('syncRecords');
@@ -9999,7 +10009,7 @@ describe('job observability', () => {
   test('batches connector dependency freshness per provider instead of per synced record', async () => {
     jest.resetModules();
     const markStaleDependencies = jest.fn().mockResolvedValue({ modifiedCount: 3, staleAfterDays: 21 });
-    const upsertProviderRecords = jest.fn().mockResolvedValue({ count: 3 });
+    const upsertProviderRecords = jest.fn().mockResolvedValue({ count: 3, batchCount: 1, batchSize: 100 });
     const account = {
       _id: 'account-1',
       workspaceId: 'workspace-1',
@@ -10044,6 +10054,11 @@ describe('job observability', () => {
       ], expect.objectContaining({ deferDependencyFreshness: true, deferAccountSave: true }));
       expect(markStaleDependencies).not.toHaveBeenCalled();
       expect(deferred.dependencyFreshness).toBeNull();
+      expect(deferred).toMatchObject({ signalWriteBatchCount: 1, signalWriteBatchSize: 100 });
+      expect(account.metadata.lastWorkSignalSync).toMatchObject({
+        signalWriteBatchCount: 1,
+        signalWriteBatchSize: 100
+      });
 
       const freshness = await connectorSyncService.finalizeDependencyFreshness('workspace-1', ['github', 'github']);
       expect(markStaleDependencies).toHaveBeenCalledTimes(1);

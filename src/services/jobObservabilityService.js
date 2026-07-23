@@ -469,6 +469,8 @@ class JobObservabilityService {
           mode: 'demo',
           providerQueueCount: 2,
           concurrency: 2,
+          signalWriteBatchCount: 2,
+          signalWriteBatchSize: 100,
           dependencyFreshness: {
             providerCount: 2,
             markedStale: 1,

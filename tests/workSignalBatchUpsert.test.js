@@ -52,7 +52,12 @@ describe('work-signal batch upsert', () => {
     await expect(service.upsertProviderRecords(account, [
       { id: 'one', title: 'One' },
       { id: 'two', title: 'Two' }
-    ], { workspaceId, actorId: 'connector-sync', deferDependencyFreshness: true })).resolves.toMatchObject({ count: 2, lastSignal: { externalId: 'two' } });
+    ], { workspaceId, actorId: 'connector-sync', deferDependencyFreshness: true })).resolves.toMatchObject({
+      count: 2,
+      lastSignal: { externalId: 'two' },
+      batchCount: 1,
+      batchSize: 100
+    });
 
     expect(account.save).toHaveBeenCalledTimes(1);
     expect(WorkSignal.bulkWrite).toHaveBeenCalledTimes(1);
@@ -76,7 +81,11 @@ describe('work-signal batch upsert', () => {
     jest.spyOn(workGraphService, 'upsertFromSignal').mockResolvedValue(undefined);
 
     const records = Array.from({ length: 11 }, (_, index) => ({ id: `item-${index + 1}`, title: `Item ${index + 1}` }));
-    await service.upsertProviderRecords(account, records, { workspaceId, batchSize: 2 });
+    await expect(service.upsertProviderRecords(account, records, { workspaceId, batchSize: 2 })).resolves.toMatchObject({
+      count: 11,
+      batchCount: 2,
+      batchSize: 10
+    });
 
     expect(WorkSignal.bulkWrite.mock.calls.map(([operations]) => operations.length)).toEqual([10, 1]);
     expect(workGraphService.upsertFromSignal.mock.calls.map(([signal]) => signal.externalId)).toEqual(records.map(record => record.id));
@@ -99,7 +108,12 @@ describe('work-signal batch upsert', () => {
     service.resolveWorkspaceId = jest.fn(() => 'workspace-1');
     const account = { _id: 'account-1', workspaceId: 'workspace-1', connectorId: 'github', save: jest.fn() };
 
-    await expect(service.upsertProviderRecords(account, [], { workspaceId: 'workspace-1', deferAccountSave: true })).resolves.toMatchObject({ count: 0, lastSignal: null });
+    await expect(service.upsertProviderRecords(account, [], { workspaceId: 'workspace-1', deferAccountSave: true })).resolves.toMatchObject({
+      count: 0,
+      lastSignal: null,
+      batchCount: 0,
+      batchSize: 100
+    });
     expect(account.save).not.toHaveBeenCalled();
   });
 });

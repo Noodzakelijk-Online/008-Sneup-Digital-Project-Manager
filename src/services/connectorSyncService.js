@@ -126,6 +126,8 @@ class ConnectorSyncService {
     let successCount = 0;
     let failureCount = 0;
     let signalCount = 0;
+    let signalWriteBatchCount = 0;
+    let signalWriteBatchSize = 0;
     let retryCount = 0;
     let rateLimitWaitMs = 0;
     const providerStats = {};
@@ -136,6 +138,8 @@ class ConnectorSyncService {
         const result = outcome.result;
         successCount += 1;
         signalCount += result.signalCount;
+        signalWriteBatchCount += result.signalWriteBatchCount || 0;
+        signalWriteBatchSize = Math.max(signalWriteBatchSize, result.signalWriteBatchSize || 0);
         retryCount += result.retryCount || 0;
         rateLimitWaitMs += result.rateLimitWaitMs || 0;
         successfulProviders.add(result.connectorId);
@@ -163,6 +167,8 @@ class ConnectorSyncService {
       failureCount,
       metadata: {
         signalCount,
+        signalWriteBatchCount,
+        signalWriteBatchSize,
         adapterCount: connectorIds.length,
         providerQueueCount: providerQueues.length,
         concurrency,
@@ -229,7 +235,11 @@ class ConnectorSyncService {
       options
     );
     const delta = syncResult.result || {};
-    const { count: signalCount } = await workSignalService.upsertProviderRecords(account, delta.records || [], {
+    const {
+      count: signalCount,
+      batchCount: signalWriteBatchCount,
+      batchSize: signalWriteBatchSize
+    } = await workSignalService.upsertProviderRecords(account, delta.records || [], {
       workspaceId: account.workspaceId,
       actorId: options.actor || 'connector-sync',
       deferDependencyFreshness: options.deferDependencyFreshness === true,
@@ -249,6 +259,8 @@ class ConnectorSyncService {
       workSignalAdapter: account.connectorId,
       lastWorkSignalSync: {
         signalCount,
+        signalWriteBatchCount,
+        signalWriteBatchSize,
         hasMore: Boolean(delta.hasMore),
         retryCount: syncResult.retryCount,
         rateLimitWaitMs: syncResult.rateLimitWaitMs,
@@ -265,6 +277,8 @@ class ConnectorSyncService {
       accountId: String(account._id),
       connectorId: account.connectorId,
       signalCount,
+      signalWriteBatchCount,
+      signalWriteBatchSize,
       nextCursor: delta.nextCursor || cursor,
       retryCount: syncResult.retryCount,
       rateLimitWaitMs: syncResult.rateLimitWaitMs,
@@ -310,12 +324,16 @@ class ConnectorSyncService {
       accounts: 0,
       failures: 0,
       retryCount: 0,
-      rateLimitWaitMs: 0
+      rateLimitWaitMs: 0,
+      signalWriteBatchCount: 0,
+      signalWriteBatchSize: 0
     };
     current.accounts += 1;
     current.failures += result.failed ? 1 : 0;
     current.retryCount += result.retryCount || 0;
     current.rateLimitWaitMs += result.rateLimitWaitMs || 0;
+    current.signalWriteBatchCount += result.signalWriteBatchCount || 0;
+    current.signalWriteBatchSize = Math.max(current.signalWriteBatchSize, result.signalWriteBatchSize || 0);
     stats[provider] = current;
   }
 

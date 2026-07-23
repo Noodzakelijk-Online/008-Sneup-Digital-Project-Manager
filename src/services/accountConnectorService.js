@@ -1361,6 +1361,8 @@ class AccountConnectorService {
       workSignalAdapter: metadata?.workSignalAdapter,
       lastWorkSignalSync: Object.keys(lastSync).length > 0 ? {
         signalCount: Number(lastSync.signalCount || 0),
+        signalWriteBatchCount: Math.max(0, Math.min(1000000, Math.floor(Number(lastSync.signalWriteBatchCount) || 0))),
+        signalWriteBatchSize: Math.max(0, Math.min(500, Math.floor(Number(lastSync.signalWriteBatchSize) || 0))),
         hasMore: Boolean(lastSync.hasMore),
         retryCount: Number(lastSync.retryCount || 0),
         rateLimitWaitMs: Number(lastSync.rateLimitWaitMs || 0),

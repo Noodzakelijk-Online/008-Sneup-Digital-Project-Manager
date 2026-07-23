@@ -283,7 +283,12 @@ class WorkSignalService {
       }
     }
 
-    return { count: normalizedRecords.length, lastSignal };
+    return {
+      count: normalizedRecords.length,
+      lastSignal,
+      batchCount: Math.ceil(normalizedRecords.length / batchSize),
+      batchSize
+    };
   }
 
   async upsertProviderRecords(account, records = [], options = {}) {
@@ -315,7 +320,12 @@ class WorkSignalService {
         workspaceId,
         actorId: options.actorId || 'provider-adapter'
       })
-      : { count: 0, lastSignal: null };
+      : {
+        count: 0,
+        lastSignal: null,
+        batchCount: 0,
+        batchSize: this.getProviderBatchSize(options.batchSize)
+      };
 
     if (options.deferAccountSave !== true) {
       account.lastSyncAt = new Date();

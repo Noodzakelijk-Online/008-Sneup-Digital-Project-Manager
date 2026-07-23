@@ -36,7 +36,14 @@ describe('connector sync concurrency', () => {
       starts.push(`${provider}:${account._id}`);
       await gate;
       activeByProvider.set(provider, (activeByProvider.get(provider) || 1) - 1);
-      return { connectorId: provider, signalCount: 1, retryCount: 0, rateLimitWaitMs: 0 };
+      return {
+        connectorId: provider,
+        signalCount: 1,
+        signalWriteBatchCount: 1,
+        signalWriteBatchSize: 100,
+        retryCount: 0,
+        rateLimitWaitMs: 0
+      };
     });
 
     const workspaceId = '507f1f77bcf86cd799439011';
@@ -51,7 +58,13 @@ describe('connector sync concurrency', () => {
       processedCount: 4,
       successCount: 4,
       failureCount: 0,
-      metadata: { signalCount: 4, concurrency: 2, providerQueueCount: 2 }
+      metadata: {
+        signalCount: 4,
+        signalWriteBatchCount: 4,
+        signalWriteBatchSize: 100,
+        concurrency: 2,
+        providerQueueCount: 2
+      }
     });
     expect(service.syncAccount.mock.calls.map(([account]) => `${account.connectorId}:${account._id}`)).toEqual([
       'github:a1', 'asana:a3', 'github:a2', 'asana:a4'
