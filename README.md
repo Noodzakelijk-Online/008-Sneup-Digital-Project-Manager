@@ -228,6 +228,8 @@ Plane is available for one explicit Plane Cloud workspace slug and an API key re
 
 Kantata OX (formerly Mavenlink) connects through an administrator-registered OAuth application. Sneup reads only bounded workspace (project) metadata from its fixed HTTPS API endpoint, redacts emails and URLs from retained titles, and excludes stories, people, schedules, resource allocations, budgets, financials, attachments, comments, custom fields, provider URLs, and provider writes.
 
+LiquidPlanner New connects with an administrator-created API token and one explicit numeric workspace ID. Sneup uses only the documented, bounded GET-only active-project listing with continuation-token pagination, retaining redacted project names, opaque IDs, lifecycle state, and dates. It excludes tasks, assignments, descriptions, dependencies, time entries, estimates, resources, files, custom fields, URLs, and provider writes.
+
 Todoist uses its fixed HTTPS API host with bounded project and task collections, a 1 MB response ceiling by default, no redirects, and no proxy use. Sneup redacts email addresses and URLs from retained titles and excludes task descriptions, comments, attachments, provider URLs, and provider writes.
 
 Airtable requires an explicit base, table, and allowlisted task fields. Sneup rejects malformed or repeated page cursors, caps each fixed-host response at 1 MB by default, disables redirects and proxy use, redacts emails and URLs from retained field values, and excludes unselected fields, provider URLs, and provider writes.
