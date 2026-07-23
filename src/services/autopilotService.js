@@ -37,17 +37,28 @@ class AutopilotService {
     try {
       const workspaceId = normalizeWorkspaceObjectId(options.workspaceId);
       const [boards, cards, members, interventions, graphDecisionResult, forecast] = await Promise.all([
-        Board.find({ workspaceId, closed: false }).populate('members').sort({ name: 1 }),
+        Board.find({ workspaceId, closed: false })
+          .select('_id trelloId name url lastSync updatedAt')
+          .sort({ name: 1 })
+          .lean(),
         Card.find({ workspaceId, closed: false })
-          .populate('boardId')
-          .populate('listId')
-          .populate('members')
-          .sort({ due: 1, riskLevel: -1 }),
-        Member.find({ workspaceId }).sort({ username: 1 }),
+          .select('_id trelloId name boardId listId members due dueComplete closed riskLevel riskFactors labels checklists lastActivity updatedAt createdAt')
+          .populate({ path: 'boardId', select: '_id trelloId name url' })
+          .populate({ path: 'listId', select: '_id name' })
+          .populate({ path: 'members', select: '_id username fullName' })
+          .sort({ due: 1, riskLevel: -1 })
+          .lean(),
+        Member.find({ workspaceId })
+          .select('_id trelloId username fullName workloadLevel specialties updatedAt')
+          .sort({ username: 1 })
+          .lean(),
         Intervention.find({ workspaceId, status: { $in: ['pending', 'failed'] } })
-          .populate('boardId cardId memberId')
+          .select('_id boardId cardId memberId type severity action status updatedAt createdAt')
+          .populate({ path: 'boardId', select: '_id name' })
+          .populate({ path: 'memberId', select: '_id username' })
           .sort({ severity: -1, createdAt: 1 })
-          .limit(25),
+          .limit(25)
+          .lean(),
         workGraphService.listDecisionCandidates({ workspaceId, limit: 25 }),
         this.getMissionControlForecast(workspaceId)
       ]);
@@ -241,8 +252,12 @@ class AutopilotService {
     const boardIds = boards.map(board => board._id);
     const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || boards[0]?.workspaceId);
 
+    if (boardIds.length === 0) return analyticsByBoard;
+
     const analyticsRecords = await Analytics.find({ workspaceId, boardId: { $in: boardIds } })
-      .sort({ boardId: 1, date: -1 });
+      .select('_id boardId date updatedAt createdAt velocity projectHealth bottlenecks')
+      .sort({ boardId: 1, date: -1 })
+      .lean();
 
     for (const analytics of analyticsRecords) {
       const boardId = analytics.boardId.toString();
@@ -256,11 +271,16 @@ class AutopilotService {
 
   async getListsByBoard(boards, options = {}) {
     const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || boards[0]?.workspaceId);
+    if (boards.length === 0) return {};
+
     const lists = await List.find({
       workspaceId,
       boardId: { $in: boards.map(board => board._id) },
       closed: false
-    }).sort({ position: 1 });
+    })
+      .select('_id boardId name position averageTimeInList')
+      .sort({ position: 1 })
+      .lean();
 
     return lists.reduce((grouped, list) => {
       const boardId = list.boardId.toString();
@@ -338,7 +358,7 @@ class AutopilotService {
       name: list.name,
       count: (cardIndex.byList.get(list._id.toString()) || []).length,
       averageTimeInList: Number((list.averageTimeInList || 0).toFixed(1)),
-      done: typeof list.isDoneList === 'function' ? list.isDoneList() : false
+      done: this.isDoneList(list)
     }));
   }
 
@@ -818,8 +838,9 @@ class AutopilotService {
     if (!card.members || card.members.length === 0) score += 18;
     if (this.hasLabel(card, 'blocked')) score += 18;
     if (this.daysSince(card.lastActivity) > 5) score += 8;
-    if (card.checklists && card.checklists.length > 0 && card.completionPercentage !== null) {
-      score += card.completionPercentage > 80 ? 8 : 0;
+    const completionPercentage = this.getChecklistCompletionPercentage(card);
+    if (completionPercentage !== null) {
+      score += completionPercentage > 80 ? 8 : 0;
     }
 
     return Math.min(score, 100);
@@ -834,6 +855,26 @@ class AutopilotService {
     if (overdueRatio > 0.25 || riskRatio > 0.35) return 'critical';
     if (overdueRatio > 0.1 || riskRatio > 0.2) return 'at_risk';
     return 'healthy';
+  }
+
+  isDoneList(list = {}) {
+    if (typeof list.isDoneList === 'function') return list.isDoneList();
+    const name = String(list.name || '').toLowerCase();
+    return ['done', 'complete', 'finished', 'closed', 'archive'].some(keyword => name.includes(keyword));
+  }
+
+  getChecklistCompletionPercentage(card = {}) {
+    if (typeof card.completionPercentage === 'number') return card.completionPercentage;
+    if (!Array.isArray(card.checklists) || card.checklists.length === 0) return null;
+
+    let total = 0;
+    let completed = 0;
+    for (const checklist of card.checklists) {
+      const items = Array.isArray(checklist?.items) ? checklist.items : [];
+      total += items.length;
+      completed += items.filter(item => item?.complete).length;
+    }
+    return total > 0 ? Math.round((completed / total) * 100) : null;
   }
 
   getAutonomyState(isControl) {
