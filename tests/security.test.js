@@ -1911,6 +1911,10 @@ describe('connector registry', () => {
           lastWorkSignalSync: {
             source: 'github_api',
             signalCount: 4,
+            tasks: 5,
+            taskLists: 2,
+            calendars: 1,
+            description: 'Private sync payload',
             finishedAt: new Date('2026-07-10T00:00:00Z')
           }
         }
@@ -1919,10 +1923,11 @@ describe('connector registry', () => {
       expect(credentials).toEqual({ accessToken: 'github-token-value' });
       expect(account).not.toHaveProperty('credentials');
       expect(account.metadata).toMatchObject({
-        lastWorkSignalSync: { source: 'github_api', signalCount: 4 }
+        lastWorkSignalSync: { source: 'github_api', signalCount: 4, tasks: 5, taskLists: 2, calendars: 1 }
       });
       expect(account.metadata).not.toHaveProperty('workSignalCursor');
       expect(account.metadata).not.toHaveProperty('syncRecords');
+      expect(account.metadata.lastWorkSignalSync).not.toHaveProperty('description');
     } finally {
       if (originalEncryptionKey === undefined) delete process.env.CONNECTOR_ENCRYPTION_KEY;
       else process.env.CONNECTOR_ENCRYPTION_KEY = originalEncryptionKey;

@@ -5,6 +5,7 @@ const ConnectorAccount = require('../models/ConnectorAccount');
 const AuditEvent = require('../models/AuditEvent');
 const { CATEGORIES, getCategories, getConnector, getConnectors } = require('./connectorRegistry');
 const { buildConnectorSafetyProfile, summarizeConnectorSafety } = require('./connectorSafetyProfile');
+const { copyWorkSignalSyncCounts } = require('../utils/workSignalSyncMetadata');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -1365,12 +1366,7 @@ class AccountConnectorService {
         rateLimitWaitMs: Number(lastSync.rateLimitWaitMs || 0),
         attemptCount: Number(lastSync.attemptCount || 0),
         source: lastSync.source || undefined,
-        repositories: Number(lastSync.repositories || 0),
-        boards: Number(lastSync.boards || 0),
-        sites: Number(lastSync.sites || 0),
-        workspaces: Number(lastSync.workspaces || 0),
-        projects: Number(lastSync.projects || 0),
-        channels: Number(lastSync.channels || 0),
+        ...copyWorkSignalSyncCounts(lastSync),
         finishedAt: lastSync.finishedAt
       } : undefined
     };

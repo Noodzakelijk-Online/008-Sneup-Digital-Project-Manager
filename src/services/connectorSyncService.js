@@ -7,6 +7,7 @@ const workGraphService = require('./workGraphService');
 const workSignalAdapterService = require('./workSignalAdapterService');
 const workSignalService = require('./workSignalService');
 const logger = require('../utils/logger');
+const { copyWorkSignalSyncCounts } = require('../utils/workSignalSyncMetadata');
 const {
   getDefaultWorkspaceObjectId,
   listActiveWorkspaceIds,
@@ -199,21 +200,7 @@ class ConnectorSyncService {
         rateLimitWaitMs: syncResult.rateLimitWaitMs,
         attemptCount: syncResult.attemptCount,
         source: delta.metadata?.source,
-        repositories: delta.metadata?.repositories || 0,
-        boards: delta.metadata?.boards || 0,
-        sites: delta.metadata?.sites || 0,
-        workspaces: delta.metadata?.workspaces || 0,
-        projects: delta.metadata?.projects || 0,
-        tasks: delta.metadata?.tasks || 0,
-        channels: delta.metadata?.channels || 0,
-        issues: delta.metadata?.issues || 0,
-        workflows: delta.metadata?.workflows || 0,
-        executions: delta.metadata?.executions || 0,
-        timeEntries: delta.metadata?.timeEntries || 0,
-        mergeRequests: delta.metadata?.mergeRequests || 0,
-        items: delta.metadata?.items || 0,
-        pages: delta.metadata?.pages || 0,
-        dataSources: delta.metadata?.dataSources || 0,
+        ...copyWorkSignalSyncCounts(delta.metadata),
         dependencyFreshness,
         finishedAt: new Date()
       }
