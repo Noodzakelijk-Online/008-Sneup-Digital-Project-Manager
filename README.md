@@ -483,6 +483,8 @@ pm2 startup
 | `FULL_SYNC_CRON` | Full sync schedule | `0 1 * * *` |
 | `INCREMENTAL_SYNC_CRON` | Incremental sync schedule | `*/15 * * * *` |
 | `SNEUP_TRELLO_BOARD_SYNC_CONCURRENCY` | Bounded boards processed in parallel during Trello full and incremental syncs | `2` |
+| `SNEUP_CONNECTOR_CREDENTIAL_ROTATION_DAYS` | Review interval for secret-based connector credentials; it never rotates a provider credential automatically | `90` |
+| `SNEUP_CONNECTOR_CREDENTIAL_ROTATION_WARNING_DAYS` | Days before the review deadline when Sneup shows a connector rotation warning | `14` |
 | `ANALYTICS_CRON` | Analytics schedule | `0 * * * *` |
 | `LOG_LEVEL` | Logging level | `info` |
 

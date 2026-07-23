@@ -4169,6 +4169,16 @@ function renderConnector(connector, account) {
   const consentSummary = account?.consent?.acknowledgedAt
     ? `<div class="meta"><span>scope review ${escapeHtml(formatDate(account.consent.acknowledgedAt))}</span><span>${escapeHtml(account.consent.acknowledgedBy || 'local user')}</span></div>`
     : '';
+  const credentialRotation = account?.credentialRotation;
+  const credentialRotationSummary = credentialRotation?.required && credentialRotation.status !== 'unknown'
+    ? `<div class="connector-policy ${credentialRotation.status === 'overdue' ? 'review' : ''}">${credentialRotation.status === 'overdue'
+      ? `Credential rotation overdue by ${Math.abs(credentialRotation.daysUntilDue)} day${Math.abs(credentialRotation.daysUntilDue) === 1 ? '' : 's'}.`
+      : credentialRotation.status === 'due_soon'
+        ? `Rotate this credential within ${credentialRotation.daysUntilDue} day${credentialRotation.daysUntilDue === 1 ? '' : 's'}.`
+        : `Credential rotation current. Next review ${escapeHtml(formatDate(credentialRotation.dueAt))}.`}</div>`
+    : credentialRotation?.required
+      ? '<div class="connector-policy review">Credential rotation date is unavailable. Rotate the credential to establish a review deadline.</div>'
+      : '';
   return `
     <div class="connector-card">
       <div class="connector-top">
@@ -4185,6 +4195,7 @@ function renderConnector(connector, account) {
       ${syncReady ? `<div class="connector-policy ${safety.scopeRisk === 'review' ? 'review' : ''}">${escapeHtml(safety.summary || 'Read-only ingestion only.')}</div>` : ''}
       <div class="meta"><span>${escapeHtml(isGenericWebhook ? 'HMAC-verified inbound event adapter available.' : adapterSummary)}</span></div>
       ${consentSummary}
+      ${credentialRotationSummary}
       ${syncSummary}
       ${genericWebhookEndpoint ? `<div class="connector-policy"><code>${escapeHtml(genericWebhookEndpoint)}</code><span>Send a compact JSON event, sign its exact request body with <code>x-sneup-signature: sha256=&lt;HMAC-SHA256&gt;</code>, and include a stable <code>x-sneup-delivery-id</code> for retry-safe delivery.</span></div>` : ''}
       <div class="connector-actions">

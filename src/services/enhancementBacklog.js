@@ -241,7 +241,7 @@ const enhancements = [
     impact: 'Makes account linking legible and prevents a convenience connection flow from silently requesting broad provider permissions.',
     effort: 'M',
     status: 'done',
-    nextStep: 'Credential rotation now keeps token-based connector accounts in place, renews scope evidence, and records secret-free audit history. Add retention controls for consent evidence.',
+    nextStep: 'Credential rotation keeps token-based connector accounts in place, renews scope evidence, records secret-free audit history, and exposes a bounded read-only rotation deadline. Collect operator evidence before changing rotation intervals or consent retention.',
     acceptanceCriteria: [
       'Connector catalog displays requested scopes and safety posture.',
       'OAuth and credential flows require an explicit scope-review acknowledgement.',

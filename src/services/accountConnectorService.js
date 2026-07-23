@@ -10,6 +10,10 @@ const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./w
 
 const STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_CATALOG_LIMIT = 300;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_CREDENTIAL_ROTATION_DAYS = 90;
+const DEFAULT_CREDENTIAL_ROTATION_WARNING_DAYS = 14;
+const CREDENTIAL_ROTATION_AUTH_TYPES = new Set(['api_key', 'personal_access_token', 'basic', 'webhook']);
 
 const sanitizeText = (value) => String(value || '').trim().toLowerCase();
 const normalizeText = (value) => sanitizeText(value).replace(/[^a-z0-9]+/g, '');
@@ -1329,7 +1333,54 @@ class AccountConnectorService {
     };
   }
 
-  sanitizeAccount(account) {
+  getCredentialRotationPolicy(environment = process.env) {
+    const rotationDays = clampPositiveInt(
+      environment.SNEUP_CONNECTOR_CREDENTIAL_ROTATION_DAYS,
+      DEFAULT_CREDENTIAL_ROTATION_DAYS,
+      30,
+      365
+    );
+    const warningDays = clampPositiveInt(
+      environment.SNEUP_CONNECTOR_CREDENTIAL_ROTATION_WARNING_DAYS,
+      DEFAULT_CREDENTIAL_ROTATION_WARNING_DAYS,
+      1,
+      Math.max(1, rotationDays - 1)
+    );
+
+    return { rotationDays, warningDays };
+  }
+
+  getCredentialRotationHealth(account, options = {}) {
+    const { rotationDays, warningDays } = this.getCredentialRotationPolicy(options.environment);
+    const required = CREDENTIAL_ROTATION_AUTH_TYPES.has(account?.authType);
+    if (!required) {
+      return { required: false, status: 'not_required' };
+    }
+
+    const referenceDate = new Date(account?.credentialsLastRotatedAt || account?.createdAt || 0);
+    if (Number.isNaN(referenceDate.getTime()) || referenceDate.getTime() === 0) {
+      return { required: true, status: 'unknown', rotationDays, warningDays };
+    }
+
+    const now = options.now instanceof Date ? options.now : new Date();
+    const dueAt = new Date(referenceDate.getTime() + rotationDays * DAY_MS);
+    const ageDays = Math.max(0, Math.floor((now.getTime() - referenceDate.getTime()) / DAY_MS));
+    const daysUntilDue = Math.ceil((dueAt.getTime() - now.getTime()) / DAY_MS);
+    const status = daysUntilDue <= 0 ? 'overdue' : daysUntilDue <= warningDays ? 'due_soon' : 'current';
+
+    return {
+      required: true,
+      status,
+      rotationDays,
+      warningDays,
+      referenceAt: referenceDate.toISOString(),
+      dueAt: dueAt.toISOString(),
+      ageDays,
+      daysUntilDue
+    };
+  }
+
+  sanitizeAccount(account, options = {}) {
     return {
       id: account._id,
       workspaceId: account.workspaceId,
@@ -1346,6 +1397,7 @@ class AccountConnectorService {
       metadata: this.sanitizeAccountMetadata(account.metadata),
       lastValidatedAt: account.lastValidatedAt,
       credentialsLastRotatedAt: account.credentialsLastRotatedAt || null,
+      credentialRotation: this.getCredentialRotationHealth(account, options),
       lastSyncAt: account.lastSyncAt,
       lastError: account.lastError,
       createdAt: account.createdAt,

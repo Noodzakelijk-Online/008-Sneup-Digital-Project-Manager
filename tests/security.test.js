@@ -2014,6 +2014,59 @@ describe('connector registry', () => {
     expect(account).not.toHaveProperty('credentials');
   });
 
+  test('reports a bounded secret-credential rotation deadline without exposing credentials', () => {
+    const now = new Date('2026-07-23T12:00:00.000Z');
+    const environment = {
+      SNEUP_CONNECTOR_CREDENTIAL_ROTATION_DAYS: '30',
+      SNEUP_CONNECTOR_CREDENTIAL_ROTATION_WARNING_DAYS: '7'
+    };
+    const overdue = accountConnectorService.sanitizeAccount({
+      _id: 'account-overdue-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'azure_devops',
+      connectorName: 'Azure DevOps',
+      category: 'software_delivery',
+      authType: 'personal_access_token',
+      status: 'connected',
+      credentials: { apiKey: 'never-expose-this' },
+      credentialsLastRotatedAt: '2026-06-20T12:00:00.000Z'
+    }, { now, environment });
+    const dueSoon = accountConnectorService.sanitizeAccount({
+      _id: 'account-due-soon-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'github',
+      connectorName: 'GitHub',
+      category: 'software_delivery',
+      authType: 'api_key',
+      status: 'connected',
+      credentialsLastRotatedAt: '2026-06-28T12:00:00.000Z'
+    }, { now, environment });
+    const oauth = accountConnectorService.sanitizeAccount({
+      _id: 'account-oauth-1',
+      workspaceId: 'workspace-1',
+      connectorId: 'miro',
+      connectorName: 'Miro',
+      category: 'collaboration',
+      authType: 'oauth2',
+      status: 'connected',
+      credentials: { accessToken: 'never-expose-this-either' }
+    }, { now, environment });
+
+    expect(overdue.credentialRotation).toMatchObject({
+      required: true,
+      status: 'overdue',
+      rotationDays: 30,
+      warningDays: 7,
+      ageDays: 33,
+      daysUntilDue: -3,
+      dueAt: '2026-07-20T12:00:00.000Z'
+    });
+    expect(dueSoon.credentialRotation).toMatchObject({ required: true, status: 'due_soon', daysUntilDue: 5 });
+    expect(oauth.credentialRotation).toEqual({ required: false, status: 'not_required' });
+    expect(JSON.stringify(overdue)).not.toContain('never-expose-this');
+    expect(JSON.stringify(oauth)).not.toContain('never-expose-this-either');
+  });
+
   test('rotates token connector credentials in place with renewed consent and secret-free audit evidence', async () => {
     const originalEncryptionKey = process.env.CONNECTOR_ENCRYPTION_KEY;
     process.env.CONNECTOR_ENCRYPTION_KEY = 'connector-encryption-key-for-security-tests-123456';
