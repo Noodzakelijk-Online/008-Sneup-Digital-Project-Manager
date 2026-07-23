@@ -76,6 +76,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/hiveWorkSignalClient');
     jest.dontMock('../src/services/clarizenWorkSignalClient');
     jest.dontMock('../src/services/lucidWorkSignalClient');
+    jest.dontMock('../src/services/taskworldWorkSignalClient');
     jest.dontMock('../src/services/teamworkWorkSignalClient');
     jest.dontMock('../src/services/teamganttWorkSignalClient');
     jest.dontMock('../src/services/businessmapWorkSignalClient');
@@ -1621,6 +1622,7 @@ describe('connector registry', () => {
     const hive = catalog.connectors.find(connector => connector.id === 'hive');
     const clarizen = catalog.connectors.find(connector => connector.id === 'clarizen');
     const lucid = catalog.connectors.find(connector => connector.id === 'lucid');
+    const taskworld = catalog.connectors.find(connector => connector.id === 'taskworld');
     const microsoftProject = catalog.connectors.find(connector => connector.id === 'microsoft_project');
     const proofhub = catalog.connectors.find(connector => connector.id === 'proofhub');
 
@@ -1650,6 +1652,11 @@ describe('connector registry', () => {
       readOnly: true
     });
     expect(lucid.syncReadiness).toEqual({
+      status: 'ready',
+      accountConnectionAvailable: true,
+      readOnly: true
+    });
+    expect(taskworld.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
       readOnly: true
