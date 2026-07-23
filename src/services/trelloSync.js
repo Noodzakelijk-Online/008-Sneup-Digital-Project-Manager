@@ -9,6 +9,47 @@ const schedule = require('node-schedule');
 const jobObservabilityService = require('./jobObservabilityService');
 const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
+const DEFAULT_BOARD_SYNC_CONCURRENCY = 2;
+const MAX_BOARD_SYNC_CONCURRENCY = 4;
+const boardSyncQueues = new Map();
+const memberSyncQueues = new Map();
+
+const clampInteger = (value, fallback, minimum, maximum) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+};
+
+const mapWithConcurrency = async (items, concurrency, worker) => {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length || 1);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
+  }));
+
+  return results;
+};
+
+const getBoardSyncConcurrency = (value = process.env.SNEUP_TRELLO_BOARD_SYNC_CONCURRENCY) =>
+  clampInteger(value, DEFAULT_BOARD_SYNC_CONCURRENCY, 1, MAX_BOARD_SYNC_CONCURRENCY);
+
+const runSerialized = async (queues, key, callback) => {
+  const previous = queues.get(key) || Promise.resolve();
+  const queued = previous.catch(() => undefined).then(callback);
+  queues.set(key, queued);
+
+  try {
+    return await queued;
+  } finally {
+    if (queues.get(key) === queued) queues.delete(key);
+  }
+};
+
 /**
  * Trello Synchronization Service
  * Handles syncing data from Trello to local database
@@ -83,27 +124,32 @@ const syncAllBoards = async (options = {}) => {
     const trelloBoards = await trelloClient.boardApi.getBoards();
     logger.info(`Found ${trelloBoards.length} boards in Trello`);
     
-    // Sync each board
-    let successCount = 0;
-    let failureCount = 0;
-
-    for (const trelloBoard of trelloBoards) {
+    // Keep a small board pool so large workspaces finish promptly without flooding Trello.
+    const boardSyncConcurrency = getBoardSyncConcurrency(options.concurrency);
+    const syncOneBoard = options.syncBoard || syncBoard;
+    const outcomes = await mapWithConcurrency(trelloBoards, boardSyncConcurrency, async (trelloBoard) => {
       try {
-        await syncBoard(trelloBoard.id, { workspaceId });
-        successCount += 1;
+        await syncOneBoard(trelloBoard.id, { workspaceId });
+        return { succeeded: true };
       } catch (error) {
-        failureCount += 1;
         logger.error(`Failed to sync board ${trelloBoard.id}:`, error);
         // Continue with other boards
+        return { succeeded: false };
       }
-    }
+    });
+    const successCount = outcomes.filter(outcome => outcome.succeeded).length;
+    const failureCount = outcomes.length - successCount;
     
     logger.info('Full sync completed');
     return {
       processedCount: trelloBoards.length,
       successCount,
       failureCount,
-      metadata: { trelloBoardCount: trelloBoards.length, workspaceId: String(workspaceId) }
+      metadata: {
+        trelloBoardCount: trelloBoards.length,
+        boardSyncConcurrency,
+        workspaceId: String(workspaceId)
+      }
     };
   } catch (error) {
     logger.error('Failed to sync all boards:', error);
@@ -112,7 +158,7 @@ const syncAllBoards = async (options = {}) => {
 };
 
 // Sync a specific board
-const syncBoard = async (boardId, options = {}) => {
+const syncBoardNow = async (boardId, options = {}) => {
   try {
     logger.info(`Syncing board: ${boardId}`);
     const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
@@ -167,6 +213,13 @@ const syncBoard = async (boardId, options = {}) => {
     logger.error(`Failed to sync board ${boardId}:`, error);
     throw error;
   }
+};
+
+const syncBoard = async (boardId, options = {}) => {
+  const workspaceId = normalizeWorkspaceObjectId(options.workspaceId || getDefaultWorkspaceObjectId());
+  const key = `${workspaceId}:${String(boardId)}`;
+  const syncOneBoard = options.syncBoardNow || syncBoardNow;
+  return runSerialized(boardSyncQueues, key, () => syncOneBoard(boardId, { ...options, workspaceId }));
 };
 
 // Sync lists for a board
@@ -235,32 +288,35 @@ const syncMembers = async (board) => {
     
     // Process each member
     for (const trelloMember of trelloMembers) {
-      let member = await Member.findOne({ trelloId: trelloMember.id, workspaceId: board.workspaceId });
-      
-      if (!member) {
-        member = new Member({
-          trelloId: trelloMember.id,
-          username: trelloMember.username,
-          fullName: trelloMember.fullName,
-          avatarUrl: trelloMember.avatarUrl,
-          email: trelloMember.email,
-          workspaceId: board.workspaceId,
-          boards: [board._id]
-        });
-      } else {
-        member.username = trelloMember.username;
-        member.fullName = trelloMember.fullName;
-        member.avatarUrl = trelloMember.avatarUrl;
-        member.workspaceId = board.workspaceId;
-        
-        // Add board if not already present
-        if (!member.boards.some(existingBoard => existingBoard.toString() === board._id.toString())) {
-          member.boards.push(board._id);
+      const memberKey = `${board.workspaceId}:${trelloMember.id}`;
+      const member = await runSerialized(memberSyncQueues, memberKey, async () => {
+        let existing = await Member.findOne({ trelloId: trelloMember.id, workspaceId: board.workspaceId });
+
+        if (!existing) {
+          existing = new Member({
+            trelloId: trelloMember.id,
+            username: trelloMember.username,
+            fullName: trelloMember.fullName,
+            avatarUrl: trelloMember.avatarUrl,
+            email: trelloMember.email,
+            workspaceId: board.workspaceId,
+            boards: [board._id]
+          });
+        } else {
+          existing.username = trelloMember.username;
+          existing.fullName = trelloMember.fullName;
+          existing.avatarUrl = trelloMember.avatarUrl;
+          existing.workspaceId = board.workspaceId;
+
+          if (!existing.boards.some(existingBoard => existingBoard.toString() === board._id.toString())) {
+            existing.boards.push(board._id);
+          }
         }
-      }
-      
-      member.lastSync = new Date();
-      await member.save();
+
+        existing.lastSync = new Date();
+        await existing.save();
+        return existing;
+      });
       
       processedMemberIds.push(member.trelloId);
     }
@@ -418,11 +474,11 @@ const syncCards = async (board) => {
           if (member) {
             cardMemberIds.push(member._id);
             
-            // Add card to member's assigned cards
-            if (!member.assignedCards.some(existingCard => existingCard.toString() === card._id.toString())) {
-              member.assignedCards.push(card._id);
-              await member.save();
-            }
+            // Atomic membership updates avoid lost assignments when two boards share a worker.
+            await Member.updateOne(
+              { _id: member._id, workspaceId: board.workspaceId },
+              { $addToSet: { assignedCards: card._id } }
+            );
           }
         }
       }
@@ -526,28 +582,32 @@ const syncRecentActivity = async (options = {}) => {
     // Get all boards
     const boards = await Board.find({ workspaceId, closed: false });
     
-    // Sync each board's recent activity
-    let successCount = 0;
-    let failureCount = 0;
-
-    for (const board of boards) {
+    const boardSyncConcurrency = getBoardSyncConcurrency(options.concurrency);
+    const syncBoardCards = options.syncCards || syncCards;
+    const outcomes = await mapWithConcurrency(boards, boardSyncConcurrency, async (board) => {
       try {
-        // For simplicity, sync all cards
-        // In production, you would use Trello's activity endpoints
-        await syncCards(board);
-        successCount += 1;
+        // Incremental sync retains its existing card-only scope while sharing the bounded board pool.
+        await syncBoardCards(board);
+        return { succeeded: true };
       } catch (error) {
-        failureCount += 1;
         logger.error(`Failed to sync recent activity for board ${board.name}:`, error);
         // Continue with other boards
+        return { succeeded: false };
       }
-    }
+    });
+    const successCount = outcomes.filter(outcome => outcome.succeeded).length;
+    const failureCount = outcomes.length - successCount;
     
     logger.info('Incremental sync completed');
     return {
       processedCount: boards.length,
       successCount,
-      failureCount
+      failureCount,
+      metadata: {
+        trelloBoardCount: boards.length,
+        boardSyncConcurrency,
+        workspaceId: String(workspaceId)
+      }
     };
   } catch (error) {
     logger.error('Failed to sync recent activity:', error);
@@ -654,5 +714,8 @@ module.exports = {
   syncAllBoards,
   syncBoard,
   syncRecentActivity,
-  handleWebhookEvent
+  handleWebhookEvent,
+  getBoardSyncConcurrency,
+  mapWithConcurrency,
+  runSerialized
 };

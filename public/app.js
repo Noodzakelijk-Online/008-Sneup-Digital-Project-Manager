@@ -1071,17 +1071,18 @@ function renderJobDashboard() {
 
   const summary = dashboard.summary || {};
   const health = dashboard.health || [];
-  const freshnessEvidenceJobs = health.filter(job =>
+  const observabilityEvidenceJobs = health.filter(job =>
     job.status === 'healthy' && (
       Number(job.metadata?.dependencyFreshness?.providerCount) > 0
       || Number(job.metadata?.syncRegressionWatch?.signalCount) > 0
+      || Number(job.metadata?.trelloBoardCount) > 0
     )
-  ).slice(0, 1);
+  ).slice(0, 2);
   const problemJobs = health
     .filter(job => job.status !== 'healthy')
-    .slice(0, freshnessEvidenceJobs.length > 0 ? 7 : 8);
+    .slice(0, observabilityEvidenceJobs.length > 0 ? 8 - observabilityEvidenceJobs.length : 8);
   const displayJobs = problemJobs.length > 0
-    ? [...problemJobs, ...freshnessEvidenceJobs]
+    ? [...problemJobs, ...observabilityEvidenceJobs]
     : health.slice(0, 5);
 
   els.jobHealthCount.textContent = `${summary.trackedJobs || health.length || 0} tracked`;
@@ -1297,6 +1298,8 @@ function renderJobHealthItem(job) {
   const connectorConcurrency = Number(job.metadata?.concurrency) || 0;
   const scheduledWorkspaceCount = Number(job.metadata?.scheduledWorkspaceCount) || 0;
   const scheduledWorkspaceConcurrency = Number(job.metadata?.scheduledWorkspaceConcurrency) || 0;
+  const trelloBoardCount = Number(job.metadata?.trelloBoardCount) || 0;
+  const boardSyncConcurrency = Number(job.metadata?.boardSyncConcurrency) || 0;
   const signalWriteBatchCount = Number(job.metadata?.signalWriteBatchCount) || 0;
   const signalWriteBatchSize = Number(job.metadata?.signalWriteBatchSize) || 0;
   const dependencyFreshness = job.metadata?.dependencyFreshness;
@@ -1336,6 +1339,7 @@ function renderJobHealthItem(job) {
       ${connectorRetries || connectorPacingMs ? `<div class="meta"><span>${connectorRetries} provider retries</span><span>${Math.round(connectorPacingMs / 1000)}s provider pacing</span></div>` : ''}
       ${providerQueueCount || connectorConcurrency ? `<div class="meta"><span>${providerQueueCount} provider queues</span><span>up to ${connectorConcurrency || 1} in parallel</span></div>` : ''}
       ${scheduledWorkspaceCount ? `<div class="meta"><span>${scheduledWorkspaceCount} scheduled ${scheduledWorkspaceCount === 1 ? 'workspace' : 'workspaces'}</span><span>up to ${scheduledWorkspaceConcurrency || 1} at once</span></div>` : ''}
+      ${trelloBoardCount ? `<div class="meta"><span>${trelloBoardCount} Trello ${trelloBoardCount === 1 ? 'board' : 'boards'}</span><span>up to ${boardSyncConcurrency || 1} at once</span></div>` : ''}
       ${signalWriteBatchCount ? `<div class="meta"><span>${signalWriteBatchCount} signal write ${signalWriteBatchCount === 1 ? 'batch' : 'batches'}</span><span>up to ${signalWriteBatchSize || 1} signals each</span></div>` : ''}
       ${freshnessProviders || staleDependencies || freshnessFailures ? `<div class="meta"><span>Graph freshness: ${freshnessProviders} providers checked</span><span>${staleDependencies} stale edges marked</span>${freshnessHorizon ? `<span>${freshnessHorizon}</span>` : ''}${freshnessFailures ? `<span>${freshnessFailures} freshness checks failed</span>` : ''}</div>` : ''}
       ${syncRegressionSignals ? `<div class="meta"><span>Sync regression watch: ${syncRegressionSignals} ${syncRegressionSignals === 1 ? 'signal' : 'signals'} across ${syncRegressionProviders.length} ${syncRegressionProviders.length === 1 ? 'provider' : 'providers'}</span><span>${escapeHtml(syncRegressionDetails.join(' | '))}</span></div>` : ''}

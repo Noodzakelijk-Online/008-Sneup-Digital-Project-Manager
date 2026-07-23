@@ -482,6 +482,7 @@ pm2 startup
 | `WEBHOOK_CALLBACK_URL` | Webhook URL | Optional |
 | `FULL_SYNC_CRON` | Full sync schedule | `0 1 * * *` |
 | `INCREMENTAL_SYNC_CRON` | Incremental sync schedule | `*/15 * * * *` |
+| `SNEUP_TRELLO_BOARD_SYNC_CONCURRENCY` | Bounded boards processed in parallel during Trello full and incremental syncs | `2` |
 | `ANALYTICS_CRON` | Analytics schedule | `0 * * * *` |
 | `LOG_LEVEL` | Logging level | `info` |
 

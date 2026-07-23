@@ -502,7 +502,11 @@ class JobObservabilityService {
         processedCount: 3,
         successCount: 3,
         failureCount: 0,
-        metadata: { mode: 'demo' }
+        metadata: {
+          mode: 'demo',
+          trelloBoardCount: 3,
+          boardSyncConcurrency: 2
+        }
       },
       {
         _id: 'demo-job-run-2',
