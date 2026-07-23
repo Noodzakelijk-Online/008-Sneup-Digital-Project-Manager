@@ -92,6 +92,13 @@ const trackedJobs = [
     manualTriggerAllowed: true
   },
   {
+    jobName: 'notifications.weekly_status_reports',
+    jobType: 'system',
+    label: 'Weekly status report delivery',
+    staleAfterMinutes: 8 * 24 * 60,
+    manualTriggerAllowed: false
+  },
+  {
     jobName: 'identity.invitation_retention',
     jobType: 'security',
     label: 'Invitation privacy retention',

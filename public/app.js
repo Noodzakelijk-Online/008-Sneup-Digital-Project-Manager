@@ -1438,6 +1438,9 @@ function renderNotificationPolicy(policy) {
   const policyId = getId(policy.id || policy._id);
   const statusClass = policy.status === 'active' ? 'healthy' : 'review';
   const channel = String(policy.channel || '').replaceAll('_', ' ');
+  const isWeeklyStatus = (policy.eventTypes || []).includes('weekly_status_report');
+  const reportSchedule = policy.reportSchedule || {};
+  const weekDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   return `
     <div class="item">
       <div class="item-title">
@@ -1451,6 +1454,7 @@ function renderNotificationPolicy(policy) {
       </div>
       <div class="meta"><span>${policy.destinationConfigured ? 'Encrypted destination configured' : 'Destination needs configuration'}</span><span>${policy.quietHours?.enabled ? `Warning alerts defer ${escapeHtml(policy.quietHours.startHourUtc)}:00-${escapeHtml(policy.quietHours.endHourUtc)}:00 UTC` : 'No quiet hours'}</span></div>
       <div class="meta"><span>${policy.digest?.enabled ? `Warning digest at ${escapeHtml(policy.digest.hourUtc)}:00 UTC, up to ${escapeHtml(policy.digest.maximumItems)} items` : 'Warning alerts deliver individually'}</span></div>
+      <div class="meta"><span>${isWeeklyStatus && reportSchedule.enabled ? `Weekly status every ${escapeHtml(weekDays[reportSchedule.dayOfWeekUtc] || 'Monday')} at ${escapeHtml(reportSchedule.hourUtc)}:00 UTC` : 'No scheduled status report'}</span></div>
       <div class="item-actions">
         ${policy.status === 'active'
     ? `<button class="button" data-notification-policy-pause="${escapeHtml(policyId)}" type="button">Pause</button>`
@@ -4566,10 +4570,16 @@ function openTrelloActionReconciliation(actionId) {
 }
 
 function openNotificationPolicy() {
-  els.modalTitle.textContent = 'Add alert policy';
+  els.modalTitle.textContent = 'Add delivery policy';
   els.modalBody.innerHTML = `
     <form id="notificationPolicyForm" class="notice-stack">
       <label>Name<input name="name" type="text" maxlength="120" required placeholder="Operations alerts"></label>
+      <label>Delivery type
+        <select name="eventType" required>
+          <option value="reconciliation_alert">Reconciliation alerts</option>
+          <option value="weekly_status_report">Weekly status report</option>
+        </select>
+      </label>
       <label>Channel
         <select name="channel" required>
           <option value="slack_webhook">Slack webhook</option>
@@ -4581,6 +4591,7 @@ function openNotificationPolicy() {
       <label>Destination label<input name="destinationLabel" type="text" maxlength="160" required placeholder="Project operations channel"></label>
       <label id="notificationWebhookDestination">HTTPS webhook URL<input name="destinationUrl" type="url" inputmode="url" autocomplete="off" required placeholder="https://..."></label>
       <label id="notificationEmailDestination" hidden>Email recipient<input name="destinationEmail" type="email" inputmode="email" autocomplete="email" placeholder="operations@example.com"></label>
+      <div id="notificationAlertSettings">
       <label>Minimum severity
         <select name="minimumSeverity">
           <option value="warning">Warning and critical</option>
@@ -4597,7 +4608,18 @@ function openNotificationPolicy() {
         <label>Digest hour UTC<input name="digestHourUtc" type="number" min="0" max="23" value="9"></label>
         <label>Maximum digest items<input name="digestMaximumItems" type="number" min="1" max="25" value="10"></label>
       </div>
-      <div class="notice">The policy starts paused. Activate it separately when this workspace is ready to deliver matching reconciliation alerts.</div>
+      </div>
+      <div id="notificationReportSettings" hidden>
+        <div class="form-grid">
+          <label>Weekly day UTC
+            <select name="reportDayOfWeekUtc">
+              <option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option>
+            </select>
+          </label>
+          <label>Delivery hour UTC<input name="reportHourUtc" type="number" min="0" max="23" value="9"></label>
+        </div>
+      </div>
+      <div class="notice">The policy starts paused. Activate it separately when this workspace is ready to deliver its configured alert or weekly status report.</div>
       <div class="toolbar modal-actions">
         <button class="button" type="button" id="cancelNotificationPolicy">Cancel</button>
         <button class="button primary" type="submit">Save paused policy</button>
@@ -4608,8 +4630,11 @@ function openNotificationPolicy() {
   document.getElementById('cancelNotificationPolicy').addEventListener('click', closeModal);
   const policyForm = document.getElementById('notificationPolicyForm');
   const channelInput = policyForm.elements.channel;
+  const eventTypeInput = policyForm.elements.eventType;
   const webhookDestination = document.getElementById('notificationWebhookDestination');
   const emailDestination = document.getElementById('notificationEmailDestination');
+  const alertSettings = document.getElementById('notificationAlertSettings');
+  const reportSettings = document.getElementById('notificationReportSettings');
   const syncDestinationInput = () => {
     const emailSelected = channelInput.value === 'email';
     webhookDestination.hidden = emailSelected;
@@ -4618,7 +4643,14 @@ function openNotificationPolicy() {
     policyForm.elements.destinationEmail.required = emailSelected;
   };
   channelInput.addEventListener('change', syncDestinationInput);
+  const syncEventSettings = () => {
+    const isWeeklyStatus = eventTypeInput.value === 'weekly_status_report';
+    alertSettings.hidden = isWeeklyStatus;
+    reportSettings.hidden = !isWeeklyStatus;
+  };
+  eventTypeInput.addEventListener('change', syncEventSettings);
   syncDestinationInput();
+  syncEventSettings();
   policyForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const submitButton = event.currentTarget.querySelector('button[type="submit"]');
@@ -4639,6 +4671,13 @@ function openNotificationPolicy() {
             enabled: event.currentTarget.elements.digestEnabled.checked,
             hourUtc: Number(event.currentTarget.elements.digestHourUtc.value),
             maximumItems: Number(event.currentTarget.elements.digestMaximumItems.value)
+          },
+          eventTypes: [event.currentTarget.elements.eventType.value],
+          reportSchedule: {
+            enabled: event.currentTarget.elements.eventType.value === 'weekly_status_report',
+            reportType: 'weekly_status',
+            dayOfWeekUtc: Number(event.currentTarget.elements.reportDayOfWeekUtc.value),
+            hourUtc: Number(event.currentTarget.elements.reportHourUtc.value)
           }
         })
       });

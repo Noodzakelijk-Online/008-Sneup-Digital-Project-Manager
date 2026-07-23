@@ -15,6 +15,10 @@ class NotificationWorker {
       process.env.SNEUP_NOTIFICATION_CRON || '*/15 * * * *',
       async () => this.runScheduledReconciliationAlerts()
     );
+    this.jobs.weeklyStatusReports = schedule.scheduleJob(
+      process.env.SNEUP_REPORT_DELIVERY_CRON || '*/15 * * * *',
+      async () => this.runScheduledReports()
+    );
 
     logger.info('Notification worker initialized');
   }
@@ -30,6 +34,22 @@ class NotificationWorker {
         triggerType: 'scheduled',
         workspaceId
       }, () => notificationService.dispatchReconciliationAlerts({ workspaceId })));
+    }
+
+    return results;
+  }
+
+  async runScheduledReports() {
+    const workspaceIds = await notificationService.listActiveReportWorkspaceIds();
+    const results = [];
+
+    for (const workspaceId of workspaceIds) {
+      results.push(await jobObservabilityService.trackJob({
+        jobName: 'notifications.weekly_status_reports',
+        jobType: 'system',
+        triggerType: 'scheduled',
+        workspaceId
+      }, () => notificationService.dispatchScheduledReports({ workspaceId })));
     }
 
     return results;

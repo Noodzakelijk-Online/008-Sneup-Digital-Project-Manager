@@ -30,7 +30,7 @@ const notificationPolicySchema = new mongoose.Schema({
   },
   eventTypes: [{
     type: String,
-    enum: ['reconciliation_alert']
+    enum: ['reconciliation_alert', 'weekly_status_report']
   }],
   minimumSeverity: {
     type: String,
@@ -46,6 +46,12 @@ const notificationPolicySchema = new mongoose.Schema({
     enabled: { type: Boolean, default: false },
     hourUtc: { type: Number, min: 0, max: 23, default: 9 },
     maximumItems: { type: Number, min: 1, max: 25, default: 10 }
+  },
+  reportSchedule: {
+    enabled: { type: Boolean, default: false },
+    reportType: { type: String, enum: ['weekly_status'], default: 'weekly_status' },
+    dayOfWeekUtc: { type: Number, min: 0, max: 6, default: 1 },
+    hourUtc: { type: Number, min: 0, max: 23, default: 9 }
   },
   status: {
     type: String,

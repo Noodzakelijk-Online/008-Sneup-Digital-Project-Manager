@@ -7,6 +7,7 @@ const NotificationDelivery = require('../models/NotificationDelivery');
 const AuditEvent = require('../models/AuditEvent');
 const accountConnectorService = require('./accountConnectorService');
 const operationsLedgerService = require('./operationsLedgerService');
+const reportingService = require('./reportingService');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 const { safeExternalSourceUrl } = require('../utils/externalSourceUrl');
 const logger = require('../utils/logger');
@@ -14,6 +15,7 @@ const logger = require('../utils/logger');
 const MAX_POLICY_LIMIT = 100;
 const MAX_DELIVERY_LIMIT = 250;
 const MAX_DIGEST_ITEMS = 25;
+const MAX_REPORT_SOURCE_EVIDENCE = 12;
 const EMAIL_PATTERN = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 const severityRank = { warning: 1, critical: 2 };
 
@@ -97,8 +99,8 @@ class NotificationService {
   normalizeEventTypes(value) {
     const eventTypes = Array.isArray(value) ? value : [value || 'reconciliation_alert'];
     const unique = [...new Set(eventTypes.map(item => String(item || '').trim()).filter(Boolean))];
-    if (unique.length === 0 || unique.some(item => item !== 'reconciliation_alert')) {
-      const error = new Error('Only reconciliation_alert notification events are currently supported');
+    if (unique.length === 0 || unique.some(item => !['reconciliation_alert', 'weekly_status_report'].includes(item))) {
+      const error = new Error('Notification events must be reconciliation_alert or weekly_status_report');
       error.statusCode = 400;
       throw error;
     }
@@ -150,15 +152,37 @@ class NotificationService {
       error.statusCode = 400;
       throw error;
     }
+    const reportSchedule = body.reportSchedule || {};
+    const reportType = compact(reportSchedule.reportType || 'weekly_status', 40);
+    const reportDayOfWeekUtc = Number(reportSchedule.dayOfWeekUtc ?? 1);
+    const reportHourUtc = Number(reportSchedule.hourUtc ?? 9);
+    if (reportType !== 'weekly_status' || !Number.isInteger(reportDayOfWeekUtc) || reportDayOfWeekUtc < 0 || reportDayOfWeekUtc > 6
+      || !Number.isInteger(reportHourUtc) || reportHourUtc < 0 || reportHourUtc > 23) {
+      const error = new Error('Weekly status report settings require a valid UTC day and hour');
+      error.statusCode = 400;
+      throw error;
+    }
+    const eventTypes = this.normalizeEventTypes(body.eventTypes);
+    if (eventTypes.includes('weekly_status_report') && reportSchedule.enabled !== true) {
+      const error = new Error('Enable a weekly status report schedule before adding that notification event');
+      error.statusCode = 400;
+      throw error;
+    }
     return {
       name,
       channel,
       destinationLabel,
       minimumSeverity,
       status,
-      eventTypes: this.normalizeEventTypes(body.eventTypes),
+      eventTypes,
       quietHours: { enabled: quietHours.enabled === true, startHourUtc, endHourUtc },
-      digest: { enabled: digest.enabled === true, hourUtc: digestHourUtc, maximumItems: digestMaximumItems }
+      digest: { enabled: digest.enabled === true, hourUtc: digestHourUtc, maximumItems: digestMaximumItems },
+      reportSchedule: {
+        enabled: reportSchedule.enabled === true,
+        reportType,
+        dayOfWeekUtc: reportDayOfWeekUtc,
+        hourUtc: reportHourUtc
+      }
     };
   }
 
@@ -175,6 +199,7 @@ class NotificationService {
       minimumSeverity: policy.minimumSeverity,
       quietHours: policy.quietHours || { enabled: false, startHourUtc: 18, endHourUtc: 8 },
       digest: policy.digest || { enabled: false, hourUtc: 9, maximumItems: 10 },
+      reportSchedule: policy.reportSchedule || { enabled: false, reportType: 'weekly_status', dayOfWeekUtc: 1, hourUtc: 9 },
       status: policy.status,
       activatedBy: policy.activatedBy || '',
       activatedAt: policy.activatedAt,
@@ -277,7 +302,8 @@ class NotificationService {
       status: body.status ?? policy.status,
       eventTypes: body.eventTypes ?? policy.eventTypes,
       quietHours: body.quietHours ?? policy.quietHours,
-      digest: body.digest ?? policy.digest
+      digest: body.digest ?? policy.digest,
+      reportSchedule: body.reportSchedule ?? policy.reportSchedule
     });
     const actor = options.actor || body.updatedBy || 'sneup-operator';
     const statusChangedToActive = input.status === 'active' && policy.status !== 'active';
@@ -398,6 +424,108 @@ class NotificationService {
     });
   }
 
+  reportDedupeKey(now = new Date()) {
+    return `weekly-status-report:${new Date(now).toISOString().slice(0, 10)}`;
+  }
+
+  isReportDue(policy, now = new Date()) {
+    const schedule = policy.reportSchedule;
+    const date = new Date(now);
+    return Boolean(schedule?.enabled)
+      && schedule.reportType === 'weekly_status'
+      && date.getUTCDay() === schedule.dayOfWeekUtc
+      && date.getUTCHours() === schedule.hourUtc;
+  }
+
+  buildWeeklyStatusReportEvent(report = {}, now = new Date()) {
+    const evidence = [];
+    const details = [];
+    for (const section of report.sections || []) {
+      const items = (section.items || []).slice(0, 4);
+      if (items.length) details.push(`${compact(section.heading, 120)}: ${items.map(item => compact(item.title, 180)).filter(Boolean).join('; ')}`);
+      for (const item of items) {
+        for (const source of (item.sources || []).slice(0, 3)) {
+          const url = safeExternalSourceUrl(source.url);
+          if (!url || evidence.length >= MAX_REPORT_SOURCE_EVIDENCE) continue;
+          evidence.push({
+            sourceType: 'project_report',
+            sourceId: compact(report.filename, 160),
+            label: compact(`${section.heading || 'Report'}: ${item.title || source.label || 'Source'}`, 240),
+            url
+          });
+        }
+      }
+    }
+    const message = compact([
+      compact(report.narrative, 900),
+      ...details
+    ].filter(Boolean).join('\n\n'), 4000) || 'No project items need attention this week.';
+    return {
+      eventType: 'weekly_status_report',
+      dedupeKey: this.reportDedupeKey(now),
+      severity: 'info',
+      title: compact(`Sneup weekly status: ${report.headline || 'Project update'}`, 240),
+      message,
+      sourceType: 'project_report',
+      sourceId: compact(report.filename, 160),
+      sourceUrl: evidence[0]?.url,
+      sourceEvidence: evidence,
+      now
+    };
+  }
+
+  async dispatchScheduledReports(options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const now = new Date(options.now || Date.now());
+    const policies = await NotificationPolicy.find({
+      workspaceId,
+      status: 'active',
+      eventTypes: 'weekly_status_report',
+      'reportSchedule.enabled': true,
+      'reportSchedule.reportType': 'weekly_status'
+    }).select('+destinationEncrypted');
+    const duePolicies = policies.filter(policy => this.isReportDue(policy, now));
+    if (duePolicies.length === 0) return { processedCount: 0, successCount: 0, failureCount: 0, metadata: { activePolicies: policies.length, duePolicies: 0 } };
+
+    let report;
+    try {
+      report = await reportingService.generateReport('weekly_status', { workspaceId });
+    } catch (error) {
+      logger.error('Scheduled weekly status report generation failed:', error);
+      return { processedCount: duePolicies.length, successCount: 0, failureCount: duePolicies.length, metadata: { activePolicies: policies.length, duePolicies: duePolicies.length } };
+    }
+
+    let successCount = 0;
+    let failureCount = 0;
+    for (const policy of duePolicies) {
+      try {
+        const result = await this.createAndDeliver(policy, this.buildWeeklyStatusReportEvent(report, now), 'sneup-notification-worker');
+        if (['delivered', 'duplicate', 'in_progress'].includes(result.status)) successCount += 1;
+        else failureCount += 1;
+      } catch (error) {
+        failureCount += 1;
+        logger.error('Scheduled weekly status report delivery failed:', error);
+      }
+    }
+    return {
+      processedCount: duePolicies.length,
+      successCount,
+      failureCount,
+      metadata: { activePolicies: policies.length, duePolicies: duePolicies.length, reportFilename: report.filename }
+    };
+  }
+
+  async listActiveReportWorkspaceIds() {
+    this.requireDatabase();
+    return NotificationPolicy.distinct('workspaceId', {
+      status: 'active',
+      eventTypes: 'weekly_status_report',
+      'reportSchedule.enabled': true,
+      'reportSchedule.reportType': 'weekly_status'
+    });
+  }
+
   async dispatchAllReconciliationAlerts() {
     const workspaceIds = await this.listActiveReconciliationWorkspaceIds();
     const totals = { processedCount: 0, successCount: 0, failureCount: 0, workspaces: workspaceIds.length };
@@ -434,7 +562,7 @@ class NotificationService {
       return { status: 'digest_pending', delivery: this.sanitizeDelivery(delivery) };
     }
 
-    if (event.severity !== 'critical' && this.isQuietHours(policy, event.now)) {
+    if (event.eventType !== 'weekly_status_report' && event.severity !== 'critical' && this.isQuietHours(policy, event.now)) {
       delivery.status = 'deferred';
       delivery.deferredUntil = this.nextQuietHoursEnd(policy, event.now);
       await delivery.save();

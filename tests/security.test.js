@@ -18,6 +18,8 @@ const accountConnectorService = require('../src/services/accountConnectorService
 const enhancementBacklog = require('../src/services/enhancementBacklog');
 const { getCategories, getConnectors } = require('../src/services/connectorRegistry');
 const { NotificationService } = require('../src/services/notificationService');
+const NotificationPolicy = require('../src/models/NotificationPolicy');
+const reportingService = require('../src/services/reportingService');
 
 const createResponse = () => ({
   statusCode: 200,
@@ -1058,6 +1060,95 @@ describe('notification delivery safety', () => {
       channel: 'generic_webhook',
       digest: { enabled: true, hourUtc: 24, maximumItems: 50 }
     })).toThrow(/digest settings/i);
+  });
+
+  test('keeps weekly status reports explicit, weekly, bounded, and idempotent', () => {
+    const policy = notificationService.normalizePolicyInput({
+      name: 'Stakeholder weekly status',
+      channel: 'generic_webhook',
+      eventTypes: ['weekly_status_report'],
+      reportSchedule: { enabled: true, reportType: 'weekly_status', dayOfWeekUtc: 1, hourUtc: 9 }
+    });
+    const report = {
+      filename: 'weekly-status-2026-07-13',
+      headline: 'Client launch is on track',
+      narrative: 'The release has a small set of named follow-ups.',
+      sections: [{
+        heading: 'Delivery focus',
+        items: Array.from({ length: 14 }, (_, index) => ({
+          title: `Priority ${index + 1}`,
+          sources: Array.from({ length: 3 }, (_, sourceIndex) => ({
+            label: 'Board card',
+            url: `https://trello.com/c/card-${index + 1}-${sourceIndex + 1}`
+          }))
+        }))
+      }]
+    };
+
+    expect(notificationService.isReportDue(policy, '2026-07-13T08:59:00.000Z')).toBe(false);
+    expect(notificationService.isReportDue(policy, '2026-07-13T09:00:00.000Z')).toBe(true);
+    expect(notificationService.reportDedupeKey('2026-07-13T09:00:00.000Z')).toBe('weekly-status-report:2026-07-13');
+    const event = notificationService.buildWeeklyStatusReportEvent(report, '2026-07-13T09:00:00.000Z');
+    expect(event).toMatchObject({
+      eventType: 'weekly_status_report',
+      severity: 'info',
+      dedupeKey: 'weekly-status-report:2026-07-13'
+    });
+    expect(event.sourceEvidence[0]).toMatchObject({ label: 'Delivery focus: Priority 1', url: 'https://trello.com/c/card-1-1' });
+    expect(event.sourceEvidence).toHaveLength(12);
+    expect(() => notificationService.normalizePolicyInput({
+      name: 'Unscheduled status report',
+      channel: 'generic_webhook',
+      eventTypes: ['weekly_status_report']
+    })).toThrow(/schedule/i);
+  });
+
+  test('generates one bounded report only for due active policies', async () => {
+    const service = new NotificationService();
+    const duePolicy = {
+      _id: 'policy-due',
+      workspaceId: 'workspace-1',
+      reportSchedule: { enabled: true, reportType: 'weekly_status', dayOfWeekUtc: 1, hourUtc: 9 }
+    };
+    const futurePolicy = {
+      _id: 'policy-future',
+      workspaceId: 'workspace-1',
+      reportSchedule: { enabled: true, reportType: 'weekly_status', dayOfWeekUtc: 2, hourUtc: 9 }
+    };
+    const select = jest.fn().mockResolvedValue([duePolicy, futurePolicy]);
+    const find = jest.spyOn(NotificationPolicy, 'find').mockReturnValue({ select });
+    const generateReport = jest.spyOn(reportingService, 'generateReport').mockResolvedValue({
+      filename: 'weekly-status-2026-07-13',
+      headline: 'Launch update',
+      narrative: 'One task needs attention.',
+      sections: []
+    });
+    service.requireDatabase = jest.fn();
+    service.resolveWorkspaceId = jest.fn(value => value);
+    service.createAndDeliver = jest.fn().mockResolvedValue({ status: 'duplicate' });
+
+    try {
+      await expect(service.dispatchScheduledReports({ workspaceId: 'workspace-1', now: '2026-07-13T09:00:00.000Z' })).resolves.toMatchObject({
+        processedCount: 1,
+        successCount: 1,
+        failureCount: 0,
+        metadata: { activePolicies: 2, duePolicies: 1, reportFilename: 'weekly-status-2026-07-13' }
+      });
+      expect(find).toHaveBeenCalledWith(expect.objectContaining({
+        workspaceId: 'workspace-1',
+        status: 'active',
+        eventTypes: 'weekly_status_report',
+        'reportSchedule.enabled': true
+      }));
+      expect(generateReport).toHaveBeenCalledTimes(1);
+      expect(service.createAndDeliver).toHaveBeenCalledWith(duePolicy, expect.objectContaining({
+        eventType: 'weekly_status_report',
+        dedupeKey: 'weekly-status-report:2026-07-13'
+      }), 'sneup-notification-worker');
+    } finally {
+      find.mockRestore();
+      generateReport.mockRestore();
+    }
   });
 });
 
@@ -9667,6 +9758,39 @@ describe('job observability', () => {
       expect(trackJob.mock.calls.map(([context]) => context.workspaceId)).toEqual([
         'workspace-1',
         'workspace-2'
+      ]);
+    } finally {
+      jest.dontMock('../src/services/notificationService');
+      jest.dontMock('../src/services/jobObservabilityService');
+      jest.resetModules();
+    }
+  });
+
+  test('runs scheduled weekly reports in each explicitly configured workspace', async () => {
+    jest.resetModules();
+    const listActiveReportWorkspaceIds = jest.fn().mockResolvedValue(['workspace-1', 'workspace-2']);
+    const dispatchScheduledReports = jest.fn(async ({ workspaceId }) => ({ workspaceId }));
+    const trackJob = jest.fn(async (context, handler) => handler());
+
+    jest.doMock('../src/services/notificationService', () => ({
+      listActiveReportWorkspaceIds,
+      dispatchScheduledReports
+    }));
+    jest.doMock('../src/services/jobObservabilityService', () => ({ trackJob }));
+
+    try {
+      const notificationWorker = require('../src/workers/notificationWorker');
+      await expect(notificationWorker.runScheduledReports()).resolves.toEqual([
+        { workspaceId: 'workspace-1' },
+        { workspaceId: 'workspace-2' }
+      ]);
+      expect(dispatchScheduledReports.mock.calls.map(([options]) => options.workspaceId)).toEqual([
+        'workspace-1',
+        'workspace-2'
+      ]);
+      expect(trackJob.mock.calls.map(([context]) => context.jobName)).toEqual([
+        'notifications.weekly_status_reports',
+        'notifications.weekly_status_reports'
       ]);
     } finally {
       jest.dontMock('../src/services/notificationService');
