@@ -354,6 +354,58 @@ class AccountConnectorService {
     return this.sanitizeAccount(account);
   }
 
+  async selectProcoreCompany(accountId, procoreCompanyId, options = {}) {
+    const account = await this.getManagedAccount(accountId, options);
+    this.requireProcoreAccount(account);
+    const requestedCompanyId = String(procoreCompanyId || '').trim();
+    if (!/^\d{1,20}$/.test(requestedCompanyId)) {
+      const error = new Error('A valid Procore company ID is required.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const credentials = this.getAccountCredentials(account);
+    const accessToken = credentials.accessToken || credentials.token || credentials.apiKey;
+    if (!accessToken) {
+      const error = new Error('Procore access token is missing. Reconnect this account to continue.');
+      error.statusCode = 503;
+      throw error;
+    }
+
+    const response = await this.http.get('https://api.procore.com/rest/v1.1/projects', {
+      params: { company_id: requestedCompanyId, page: 1, per_page: 1 },
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'Procore-Company-Id': requestedCompanyId
+      },
+      timeout: 15000,
+      maxContentLength: 2000000,
+      maxBodyLength: 2000000,
+      maxRedirects: 0,
+      proxy: false
+    });
+    if (!Array.isArray(response?.data)) {
+      const error = new Error('Procore did not confirm project-read access for that company. Reconnect this account before trying again.');
+      error.statusCode = 502;
+      throw error;
+    }
+
+    account.metadata = {
+      ...(account.metadata || {}),
+      fields: {
+        ...(account.metadata?.fields || {}),
+        procoreCompanyId: requestedCompanyId
+      }
+    };
+    account.accountName = `${account.connectorName} - Company ${requestedCompanyId}`;
+    account.externalAccountId = requestedCompanyId;
+    account.status = 'connected';
+    account.lastError = undefined;
+    await account.save();
+    return this.sanitizeAccount(account);
+  }
+
   getCatalog(filters = {}) {
     const { category, readiness, search, limit, offset } = this.normalizeCatalogFilter(filters);
     const catalogConnectors = getConnectors();
@@ -830,6 +882,14 @@ class AccountConnectorService {
   requireXeroAccount(account) {
     if (account.connectorId !== 'xero') {
       const error = new Error('Xero organisation selection is only available for Xero connector accounts.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  requireProcoreAccount(account) {
+    if (account.connectorId !== 'procore') {
+      const error = new Error('Procore company selection is only available for Procore connector accounts.');
       error.statusCode = 400;
       throw error;
     }
@@ -1712,4 +1772,6 @@ class AccountConnectorService {
   }
 }
 
-module.exports = new AccountConnectorService();
+const accountConnectorService = new AccountConnectorService();
+module.exports = accountConnectorService;
+module.exports.AccountConnectorService = AccountConnectorService;

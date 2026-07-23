@@ -229,6 +229,20 @@ const CONNECTORS = [
     sync: ['workspaces', 'tasks']
   },
   {
+    id: 'procore',
+    name: 'Procore',
+    category: 'work_management',
+    description: 'Read-only bounded active construction-project metadata from one explicitly selected Procore company. Sneup excludes budgets, contracts, RFIs, submittals, drawings, people, addresses, descriptions, attachments, URLs, and provider writes.',
+    auth: oauth2({
+      envPrefix: 'PROCORE',
+      authorizationUrl: 'https://login.procore.com/oauth/authorize',
+      tokenUrl: 'https://login.procore.com/oauth/token',
+      scopes: [],
+      docsUrl: 'https://developers.procore.com/reference/rest/projects?version=1.1'
+    }),
+    sync: ['active_projects']
+  },
+  {
     id: 'linear',
     name: 'Linear',
     category: 'software_delivery',

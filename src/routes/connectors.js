@@ -394,6 +394,20 @@ router.get('/:connectorId', requirePermission('api:read'), (req, res) => {
   }
 });
 
+router.post('/accounts/:accountId/procore-company', requirePermission('connectors:manage'), async (req, res) => {
+  try {
+    const account = await accountConnectorService.selectProcoreCompany(
+      req.params.accountId,
+      req.body.procoreCompanyId,
+      connectorRequestOptions(req)
+    );
+    res.json({ success: true, account });
+  } catch (error) {
+    logger.error('Failed to select Procore company:', error);
+    sendError(res, error);
+  }
+});
+
 router.post('/:connectorId/connect', requirePermission('connectors:manage'), (req, res) => {
   try {
     const result = accountConnectorService.beginConnection(req.params.connectorId, {

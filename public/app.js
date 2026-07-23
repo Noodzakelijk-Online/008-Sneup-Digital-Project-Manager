@@ -4159,6 +4159,9 @@ function renderConnectors() {
   document.querySelectorAll('[data-xero-tenant]').forEach((button) => {
     button.addEventListener('click', () => openXeroTenantModal(button.dataset.xeroTenant));
   });
+  document.querySelectorAll('[data-procore-company]').forEach((button) => {
+    button.addEventListener('click', () => openProcoreCompanyModal(button.dataset.procoreCompany));
+  });
   document.querySelectorAll('[data-load-more-connectors]').forEach((button) => {
     button.addEventListener('click', () => {
       loadConnectors({ append: true });
@@ -4247,6 +4250,8 @@ function renderConnector(connector, account) {
   const isSharePoint = connector.id === 'sharepoint';
   const selectedXeroTenantId = account?.metadata?.fields?.xeroTenantId;
   const isXero = connector.id === 'xero';
+  const selectedProcoreCompanyId = account?.metadata?.fields?.procoreCompanyId;
+  const isProcore = connector.id === 'procore';
   const selectedMuralWorkspaceId = account?.metadata?.fields?.muralWorkspaceId;
   const isMural = connector.id === 'mural';
   const isGenericWebhook = connector.id === 'webhook_generic';
@@ -4254,7 +4259,7 @@ function renderConnector(connector, account) {
   const genericWebhookEndpoint = isGenericWebhook && account
     ? `${window.location.origin}/api/webhooks/generic/${account.id}`
     : '';
-  const canSync = Boolean(account && adapterImplemented && !isGenericWebhook && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId) && (!isSharePoint || selectedSharePointSiteId) && (!isXero || selectedXeroTenantId) && (!isMural || selectedMuralWorkspaceId));
+  const canSync = Boolean(account && adapterImplemented && !isGenericWebhook && (!isFigma || selectedFigmaTeamId) && (!isConfluence || selectedConfluenceCloudId) && (!isSharePoint || selectedSharePointSiteId) && (!isXero || selectedXeroTenantId) && (!isProcore || selectedProcoreCompanyId) && (!isMural || selectedMuralWorkspaceId));
   const lastSync = account?.metadata?.lastWorkSignalSync || {};
   const sourceLabel = lastSync.source === 'github_api' ? 'GitHub API'
     : lastSync.source === 'trello_api' ? 'Trello API'
@@ -4342,6 +4347,7 @@ function renderConnector(connector, account) {
         ${isFigma && account ? `<button class="button" data-figma-team="${escapeHtml(account.id)}" type="button">${selectedFigmaTeamId ? 'Figma team selected' : 'Configure Figma team'}</button>` : ''}
         ${isSharePoint && account ? `<button class="button" data-sharepoint-site="${escapeHtml(account.id)}" type="button">${selectedSharePointSiteId ? 'SharePoint site selected' : 'Select SharePoint site'}</button>` : ''}
         ${isXero && account ? `<button class="button" data-xero-tenant="${escapeHtml(account.id)}" type="button">${selectedXeroTenantId ? 'Xero organisation selected' : 'Select Xero organisation'}</button>` : ''}
+        ${isProcore && account ? `<button class="button" data-procore-company="${escapeHtml(account.id)}" type="button">${selectedProcoreCompanyId ? 'Procore company selected' : 'Select Procore company'}</button>` : ''}
         ${isMural && account ? `<button class="button" data-mural-workspace="${escapeHtml(account.id)}" type="button">${selectedMuralWorkspaceId ? 'Mural workspace selected' : 'Select Mural workspace'}</button>` : ''}
         ${genericWebhookEndpoint ? `<button class="button" data-copy-webhook-endpoint="${escapeHtml(genericWebhookEndpoint)}" type="button">Copy endpoint</button>` : ''}
         ${isGenericWebhook && account ? `<button class="button" data-worker-response-bindings="${escapeHtml(account.id)}" type="button">${workerResponseBindingCount ? `Response mappings (${workerResponseBindingCount})` : 'Configure response mappings'}</button>` : ''}
@@ -4747,6 +4753,43 @@ async function openXeroTenantModal(accountId) {
   } catch (error) {
     openNotice('Xero organisation selection', error.message);
   }
+}
+
+async function openProcoreCompanyModal(accountId) {
+  const account = state.accounts.find(item => item.id === accountId);
+  if (!account) return;
+
+  const selectedCompanyId = account.metadata?.fields?.procoreCompanyId || '';
+  els.modalTitle.textContent = 'Select Procore company';
+  els.modalBody.innerHTML = `
+    <form id="procoreCompanyForm">
+      <div class="field">
+        <label for="procoreCompanyId">Authorized Procore company ID</label>
+        <input id="procoreCompanyId" name="procoreCompanyId" inputmode="numeric" pattern="[0-9]{1,20}" maxlength="20" value="${escapeHtml(selectedCompanyId)}" required>
+      </div>
+      <div class="notice">Sneup verifies project-read access before saving this company. It then reads only capped active-project name, status, and schedule metadata. Budgets, contracts, RFIs, drawings, people, addresses, descriptions, attachments, links, and provider writes stay out of Sneup.</div>
+      <div class="toolbar modal-actions">
+        <button class="button" type="button" id="cancelProcoreCompany">Cancel</button>
+        <button class="button primary" type="submit">Use this company</button>
+      </div>
+    </form>
+  `;
+  els.modal.classList.add('open');
+  document.getElementById('cancelProcoreCompany').addEventListener('click', closeModal);
+  document.getElementById('procoreCompanyForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const body = Object.fromEntries(new FormData(event.target).entries());
+    try {
+      await fetchApi(`/api/connectors/accounts/${accountId}/procore-company`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      closeModal();
+      openNotice('Procore company selected', 'Sneup will use this company for the next read-only active-project metadata sync.');
+      await loadConnectors();
+    } catch (error) {
+      openNotice('Procore company selection', error.message);
+    }
+  });
 }
 
 async function openResourceGuruAccountModal(accountId) {

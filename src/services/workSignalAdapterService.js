@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'taskade', 'motion', 'ganttpro', 'paymo', 'kantata',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'taskade', 'motion', 'ganttpro', 'paymo', 'kantata', 'procore',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zapier', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -39,6 +39,7 @@ const linearWorkSignalClient = lazyClient('./linearWorkSignalClient');
 const notionWorkSignalClient = lazyClient('./notionWorkSignalClient');
 const mondayWorkSignalClient = lazyClient('./mondayWorkSignalClient');
 const clickUpWorkSignalClient = lazyClient('./clickupWorkSignalClient');
+const procoreWorkSignalClient = lazyClient('./procoreWorkSignalClient');
 const azureDevOpsWorkSignalClient = lazyClient('./azureDevOpsWorkSignalClient');
 const wrikeWorkSignalClient = lazyClient('./wrikeWorkSignalClient');
 const smartsheetWorkSignalClient = lazyClient('./smartsheetWorkSignalClient');
@@ -593,6 +594,37 @@ clickUpAdapter.capabilities.credentialBackedSync = true;
 clickUpAdapter.list = async (account) => (await clickUpWorkSignalClient.fetchDelta(account, null)).records;
 clickUpAdapter.fetchDelta = (account, cursor) => clickUpWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('clickup', clickUpAdapter);
+
+const procoreAdapter = buildAdapter('procore', 'Procore active construction-project metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'project'),
+  title: titleFromText(item.name, 'Procore project'),
+  description: '',
+  status: statusFromText(item.status),
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['procore', 'construction', item.sourceType, item.status]),
+  dueAt: pick(item.dueAt),
+  providerCreatedAt: pick(item.createdAt),
+  providerUpdatedAt: pick(item.updatedAt, item.createdAt),
+  evidenceRefs: baseEvidence(account, item, 'Procore active project metadata'),
+  raw: {
+    id: item.id,
+    sourceType: item.sourceType,
+    projectId: item.projectId,
+    companyId: item.companyId,
+    status: item.status,
+    startAt: item.startAt,
+    dueAt: item.dueAt,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt
+  }
+}));
+procoreAdapter.capabilities.credentialBackedSync = true;
+procoreAdapter.list = async account => (await procoreWorkSignalClient.fetchDelta(account, null)).records;
+procoreAdapter.fetchDelta = (account, cursor) => procoreWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('procore', procoreAdapter);
 
 const azureDevOpsPriority = (value) => ({ 1: 'critical', 2: 'high', 3: 'normal', 4: 'low' }[Number(value)] || 'unknown');
 const azureDevOpsStatus = (item) => {
