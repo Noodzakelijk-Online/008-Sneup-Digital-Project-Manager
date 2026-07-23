@@ -6,6 +6,7 @@ const Recommendation = require('../models/Recommendation');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
+const { bodyWithAuthenticatedActor } = require('../utils/requestActor');
 
 const RESPONSE_ELIGIBLE_TYPES = new Set(['comment', 'follow_up', 'escalate']);
 
@@ -35,9 +36,8 @@ router.post('/:interventionId/execute-approved', requirePermission('trello-actio
     }
 
     const result = await operationsLedgerService.executeApprovedRecommendation(recommendation._id, {
-      ...req.body,
+      ...bodyWithAuthenticatedActor(req, 'actor'),
       ...workspaceOptions(req),
-      actor: req.body.actor || req.auth?.actorId
     });
     return res.json({ success: true, ...result });
   } catch (error) {
@@ -77,14 +77,13 @@ router.post('/:interventionId/record-response', requirePermission('worker-respon
     }).sort({ createdAt: -1 });
 
     const response = await operationsLedgerService.recordWorkerResponse({
-      ...req.body,
+      ...bodyWithAuthenticatedActor(req, 'actor'),
       ...workspaceOptions(req),
       interventionId: intervention._id,
       recommendationId: recommendation?._id,
       boardId: intervention.boardId,
       cardId: intervention.cardId,
       memberId: intervention.memberId,
-      actor: req.body.actor || req.auth?.actorId
     });
 
     return res.json({ success: true, response });

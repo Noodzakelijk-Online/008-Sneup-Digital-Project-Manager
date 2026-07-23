@@ -5,6 +5,7 @@ const autopilotService = require('../services/autopilotService');
 const operationsBriefService = require('../services/operationsBriefService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { requirePermission } = require('../utils/requestSecurity');
+const { getAuthenticatedActor } = require('../utils/requestActor');
 
 const sendError = (res, error, fallback) => res.status(error.statusCode || 500).json({
   success: false,
@@ -50,7 +51,7 @@ router.get('/operations-brief', requirePermission('audit:read'), async (req, res
 router.post('/commands/queue', requirePermission('autopilot:queue'), async (req, res) => {
   try {
     const result = await autopilotService.queueCommandForApproval(req.body.command, {
-      actor: req.body.actor || req.auth?.actorId,
+      actor: getAuthenticatedActor(req),
       workspaceId: getRequestWorkspaceObjectId(req)
     });
 
@@ -68,7 +69,7 @@ router.post('/commands/queue', requirePermission('autopilot:queue'), async (req,
 router.post('/commands/queue-all', requirePermission('autopilot:queue'), async (req, res) => {
   try {
     const result = await autopilotService.queueMissionControlCommands({
-      actor: req.body.actor || req.auth?.actorId,
+      actor: getAuthenticatedActor(req),
       workspaceId: getRequestWorkspaceObjectId(req),
       limit: req.body.limit
     });

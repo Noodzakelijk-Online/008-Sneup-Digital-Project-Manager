@@ -3,6 +3,7 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
+const { bodyWithAuthenticatedActor } = require('../utils/requestActor');
 const {
   clampInteger,
   requirePermission,
@@ -57,9 +58,8 @@ router.get('/due', requirePermission('follow-ups:manage'), async (req, res) => {
 router.post('/:followUpId/resolve', requirePermission('follow-ups:manage'), async (req, res) => {
   try {
     const followUp = await operationsLedgerService.resolveFollowUp(req.params.followUpId, {
-      ...req.body,
+      ...bodyWithAuthenticatedActor(req, 'resolvedBy'),
       ...workspaceOptions(req),
-      resolvedBy: req.body.resolvedBy || req.auth?.actorId
     });
     res.json({ success: true, followUp });
   } catch (error) {

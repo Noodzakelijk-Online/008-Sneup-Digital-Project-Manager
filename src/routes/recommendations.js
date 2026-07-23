@@ -3,6 +3,7 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
+const { bodyWithAuthenticatedActor } = require('../utils/requestActor');
 const {
   clampInteger,
   requirePermission,
@@ -16,9 +17,8 @@ const workspaceOptions = (req) => ({
 });
 
 const actorBody = (req, actorField = 'decidedBy') => ({
-  ...req.body,
+  ...bodyWithAuthenticatedActor(req, actorField),
   ...workspaceOptions(req),
-  [actorField]: req.body[actorField] || req.auth?.actorId
 });
 
 const sendError = (res, error, fallback) => res.status(error.statusCode || 500).json({

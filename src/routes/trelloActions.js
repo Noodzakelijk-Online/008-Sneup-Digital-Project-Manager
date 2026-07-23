@@ -3,6 +3,7 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
+const { bodyWithAuthenticatedActor } = require('../utils/requestActor');
 const {
   clampInteger,
   requirePermission,
@@ -68,9 +69,8 @@ router.get('/reconciliation/health', requirePermission('audit:read'), async (req
 router.post('/:actionAttemptId/reconcile', requirePermission('trello-actions:reconcile'), async (req, res) => {
   try {
     const result = await operationsLedgerService.reconcileTrelloActionAttempt(req.params.actionAttemptId, {
-      ...req.body,
+      ...bodyWithAuthenticatedActor(req, 'reconciledBy'),
       workspaceId: getRequestWorkspaceObjectId(req),
-      reconciledBy: req.body.reconciledBy || req.auth?.actorId
     });
     res.json({ success: true, ...result });
   } catch (error) {

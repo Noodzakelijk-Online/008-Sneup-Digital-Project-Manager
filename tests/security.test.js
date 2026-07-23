@@ -4,6 +4,7 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 const path = require('path');
 const { safeExternalSourceUrl } = require('../src/utils/externalSourceUrl');
+const { bodyWithAuthenticatedActor, getAuthenticatedActor } = require('../src/utils/requestActor');
 
 const {
   getPermissionsForRoles,
@@ -150,6 +151,28 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/confluenceWorkSignalClient');
     jest.dontMock('../src/services/teamManager');
     jest.dontMock('mongoose');
+  });
+
+  test('derives audit actors exclusively from authenticated request identity', () => {
+    const request = createRequest({
+      auth: { actorId: 'authenticated-operator' },
+      body: {
+        actor: 'spoofed-actor',
+        actorId: 'spoofed-actor-id',
+        decidedBy: 'spoofed-decision-maker',
+        reconciledBy: 'spoofed-reconciler',
+        reason: 'Legitimate operator note'
+      }
+    });
+
+    const options = bodyWithAuthenticatedActor(request, 'decidedBy');
+
+    expect(getAuthenticatedActor(request)).toBe('authenticated-operator');
+    expect(options).toEqual({
+      decidedBy: 'authenticated-operator',
+      reason: 'Legitimate operator note'
+    });
+    expect(getAuthenticatedActor(createRequest({ body: { actor: 'spoofed-actor' } }))).toBe('api');
   });
 
   test('blocks remote API access when no API key is configured', async () => {

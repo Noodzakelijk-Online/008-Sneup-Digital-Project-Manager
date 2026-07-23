@@ -6,6 +6,7 @@ const workSignalAdapterService = require('../services/workSignalAdapterService')
 const workSignalService = require('../services/workSignalService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
+const { getAuthenticatedActor } = require('../utils/requestActor');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -131,7 +132,7 @@ router.post('/graph/items/:itemId/queue', requirePermission('autopilot:queue'), 
   try {
     const result = await operationsLedgerService.createRecommendationFromWorkItem(req.params.itemId, {
       workspaceId: getRequestWorkspaceObjectId(req),
-      actor: req.body.actor || req.auth?.actorId || 'api'
+      actor: getAuthenticatedActor(req)
     });
     res.status(result.created ? 201 : 200).json({
       success: true,
@@ -150,7 +151,7 @@ router.post('/graph/dependencies/:dependencyId/review', requirePermission('analy
       ...requestOptions(req),
       action: req.body.action,
       reason: req.body.reason,
-      actorId: req.body.actor || req.auth?.actorId || 'api'
+      actorId: getAuthenticatedActor(req)
     });
     res.json({
       success: true,

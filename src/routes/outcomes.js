@@ -3,6 +3,7 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
+const { bodyWithAuthenticatedActor } = require('../utils/requestActor');
 const {
   clampInteger,
   requirePermission,
@@ -54,8 +55,8 @@ router.get('/recommendations/:recommendationId', requirePermission('audit:read')
 router.post('/recommendations/:recommendationId/evaluate', requirePermission('trello-actions:reconcile'), async (req, res) => {
   try {
     const outcome = await operationsLedgerService.evaluateRecommendationOutcome(req.params.recommendationId, {
+      ...bodyWithAuthenticatedActor(req, 'evaluatedBy'),
       ...workspaceOptions(req),
-      evaluatedBy: req.body.evaluatedBy || req.auth?.actorId
     });
     res.json({ success: true, outcome });
   } catch (error) {
