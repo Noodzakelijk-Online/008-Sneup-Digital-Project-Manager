@@ -298,9 +298,13 @@ const allocationSummary = ({ signals = [], boards = [], members = [], profilesBy
       const memberId = duplicateIdentities.has(key) ? null : memberIdByIdentity.get(key);
       if (!memberId) return;
       matchedHoursInSignal += hoursPerAssignee;
-      const current = byMember.get(memberId) || { entries: 0, hours: 0 };
+      const current = byMember.get(memberId) || { entries: 0, hours: 0, providers: {} };
       current.entries += 1;
       current.hours += hoursPerAssignee;
+      const providerCurrent = current.providers[provider] || { entries: 0, hours: 0 };
+      providerCurrent.entries += 1;
+      providerCurrent.hours += hoursPerAssignee;
+      current.providers[provider] = providerCurrent;
       byMember.set(memberId, current);
     });
     if (matchedHoursInSignal <= 0) {
@@ -467,6 +471,7 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
       scheduledAllocationEntriesNext28Days: scheduled.entries,
       scheduledAllocationHoursNext28Days: round(scheduled.hours),
       scheduledAllocationWeeklyHours: round(scheduled.hours / (ALLOCATION_WINDOW_DAYS / 7)),
+      scheduledAllocationProvidersNext28Days: Object.keys(scheduled.providers || {}),
       calendarEventsNext28Days: meetings.entries,
       calendarBusyHoursNext28Days: round(meetings.hours),
       calendarBusyWeeklyHours: round(meetings.hours / (CALENDAR_WINDOW_DAYS / 7))

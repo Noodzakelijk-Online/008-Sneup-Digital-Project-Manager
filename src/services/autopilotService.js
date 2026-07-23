@@ -12,12 +12,19 @@ const interventionEngine = require('./interventionEngine');
 const operationsLedgerService = require('./operationsLedgerService');
 const trelloSync = require('./trelloSync');
 const workGraphService = require('./workGraphService');
+const forecastService = require('./forecastService');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 
 const HOURS_PER_DAY = 24;
 const MAX_COMMAND_QUEUE = 12;
+const MISSION_FORECAST_TTL_MS = 15000;
+const MAX_MISSION_FORECAST_CACHE_ENTRIES = 50;
 
 class AutopilotService {
+  constructor() {
+    this.missionForecastCache = new Map();
+  }
+
   isDemoMode() {
     return process.env.SNEUP_DEMO_MODE === 'true' || mongoose.connection.readyState !== 1;
   }
@@ -29,7 +36,7 @@ class AutopilotService {
 
     try {
       const workspaceId = normalizeWorkspaceObjectId(options.workspaceId);
-      const [boards, cards, members, interventions, graphDecisionResult] = await Promise.all([
+      const [boards, cards, members, interventions, graphDecisionResult, forecast] = await Promise.all([
         Board.find({ workspaceId, closed: false }).populate('members').sort({ name: 1 }),
         Card.find({ workspaceId, closed: false })
           .populate('boardId')
@@ -41,7 +48,8 @@ class AutopilotService {
           .populate('boardId cardId memberId')
           .sort({ severity: -1, createdAt: 1 })
           .limit(25),
-        workGraphService.listDecisionCandidates({ workspaceId, limit: 25 })
+        workGraphService.listDecisionCandidates({ workspaceId, limit: 25 }),
+        this.getMissionControlForecast(workspaceId)
       ]);
       const graphCandidates = graphDecisionResult.candidates || [];
 
@@ -49,15 +57,16 @@ class AutopilotService {
       const listsByBoard = await this.getListsByBoard(boards, { workspaceId });
       const cardIndex = this.buildCardIndex(cards);
       const boardSummaries = this.buildBoardSummaries(boards, cardIndex, analyticsByBoard, listsByBoard);
-      const teamLoad = this.buildTeamLoad(members, cardIndex);
+      const teamLoad = this.mergeForecastCapacity(this.buildTeamLoad(members, cardIndex), forecast);
       const focus = this.buildFocusQueue(cards);
-      const risks = this.buildRiskRadar(cards, analyticsByBoard, graphCandidates);
+      const risks = this.buildRiskRadar(cards, analyticsByBoard, graphCandidates, teamLoad);
       const commandQueue = this.buildCommandQueue({
         cards,
         boardSummaries,
         teamLoad,
         interventions,
-        graphCandidates
+        graphCandidates,
+        forecast
       });
       const dailyPlan = this.buildDailyPlan(focus, commandQueue, risks);
 
@@ -78,6 +87,28 @@ class AutopilotService {
       logger.error('Failed to build mission control snapshot:', error);
       throw error;
     }
+  }
+
+  async getMissionControlForecast(workspaceId) {
+    const cacheKey = String(workspaceId);
+    const cached = this.missionForecastCache.get(cacheKey);
+    if (cached && Date.now() - cached.generatedAt < MISSION_FORECAST_TTL_MS) return cached.forecast;
+
+    try {
+      const forecast = await forecastService.getForecast({ workspaceId });
+      this.missionForecastCache.set(cacheKey, { forecast, generatedAt: Date.now() });
+      while (this.missionForecastCache.size > MAX_MISSION_FORECAST_CACHE_ENTRIES) {
+        this.missionForecastCache.delete(this.missionForecastCache.keys().next().value);
+      }
+      return forecast;
+    } catch (error) {
+      logger.warn('Capacity forecast was unavailable for mission control; continuing without capacity commands.', { workspaceId });
+      return null;
+    }
+  }
+
+  invalidateMissionControlForecast(workspaceId) {
+    this.missionForecastCache.delete(String(workspaceId));
   }
 
   async runAutopilot(options = {}) {
@@ -333,6 +364,19 @@ class AutopilotService {
     }).sort((a, b) => b.loadScore - a.loadScore);
   }
 
+  mergeForecastCapacity(teamLoad, forecast) {
+    const byMemberId = new Map((forecast?.memberCapacity || []).map(member => [String(member.memberId), member]));
+    return teamLoad.map(member => {
+      const capacity = byMemberId.get(String(member.id));
+      return capacity ? {
+        ...member,
+        weeklyAvailableHours: capacity.weeklyAvailableHours,
+        scheduledAllocationWeeklyHours: capacity.scheduledAllocationWeeklyHours,
+        scheduledAllocationProvidersNext28Days: capacity.scheduledAllocationProvidersNext28Days || []
+      } : member;
+    });
+  }
+
   buildFocusQueue(cards) {
     return cards
       .map(card => ({
@@ -351,7 +395,7 @@ class AutopilotService {
       .slice(0, 10);
   }
 
-  buildRiskRadar(cards, analyticsByBoard, graphCandidates = []) {
+  buildRiskRadar(cards, analyticsByBoard, graphCandidates = [], teamLoad = []) {
     const cardRisks = cards
       .flatMap(card => this.getCardRisks(card))
       .sort((a, b) => b.score - a.score);
@@ -392,10 +436,25 @@ class AutopilotService {
       sourceEvidence: candidate.sourceEvidence || []
     }));
 
-    return [...cardRisks, ...boardRisks, ...graphRisks].sort((a, b) => b.score - a.score).slice(0, 12);
+    const capacityRisks = teamLoad.map(member => {
+      const risk = this.getScheduledCapacityRisk(member);
+      if (!risk) return null;
+      return {
+        id: `scheduled-capacity-${member.id}`,
+        type: 'scheduled_capacity_risk',
+        severity: risk.ratio > 1.5 ? 'critical' : 'high',
+        title: `${member.fullName || member.username || 'Team member'} has overbooked scheduled capacity`,
+        boardName: 'Capacity forecast',
+        score: Math.min(99, Math.round(70 + risk.ratio * 15)),
+        detail: `${risk.scheduledHours}h/week scheduled against ${risk.availableHours}h/week available`,
+        sourceEvidence: this.buildCapacityEvidence(member, risk)
+      };
+    }).filter(Boolean);
+
+    return [...cardRisks, ...boardRisks, ...graphRisks, ...capacityRisks].sort((a, b) => b.score - a.score).slice(0, 12);
   }
 
-  buildCommandQueue({ cards, boardSummaries, teamLoad, interventions, graphCandidates = [] }) {
+  buildCommandQueue({ cards, boardSummaries, teamLoad, interventions, graphCandidates = [], forecast = null }) {
     const commands = [];
 
     for (const card of cards) {
@@ -460,7 +519,27 @@ class AutopilotService {
     }
 
     for (const member of teamLoad) {
-      if (member.capacityState === 'overloaded') {
+      const scheduledCapacityRisk = this.getScheduledCapacityRisk(member);
+      if (scheduledCapacityRisk) {
+        commands.push(this.createCommand({
+          type: 'review_scheduled_capacity',
+          severity: scheduledCapacityRisk.ratio > 1.5 ? 'critical' : 'high',
+          title: `Review ${member.username || member.fullName || 'team member'}'s scheduled capacity`,
+          target: member.fullName || member.username || 'Team member',
+          owner: 'Sneup',
+          reason: `Mapped schedules reserve ${scheduledCapacityRisk.scheduledHours}h/week against ${scheduledCapacityRisk.availableHours}h/week available (${scheduledCapacityRisk.percent}% of capacity).`,
+          automatable: false,
+          sourceEvidence: this.buildCapacityEvidence(member, scheduledCapacityRisk),
+          payload: {
+            memberId: member.id,
+            scheduledAllocationWeeklyHours: scheduledCapacityRisk.scheduledHours,
+            weeklyAvailableHours: scheduledCapacityRisk.availableHours,
+            scheduledAllocationProviders: member.scheduledAllocationProvidersNext28Days || [],
+            forecastGeneratedAt: forecast?.generatedAt || null
+          }
+        }));
+      }
+      if (member.capacityState === 'overloaded' && !scheduledCapacityRisk) {
         commands.push(this.createCommand({
           type: 'rebalance_workload',
           severity: 'high',
@@ -592,6 +671,7 @@ class AutopilotService {
       highRiskCards: cards.filter(card => ['high', 'critical'].includes(card.riskLevel)).length,
       unassignedCards: cards.filter(card => !card.members || card.members.length === 0).length,
       overloadedMembers: teamLoad.filter(member => member.capacityState === 'overloaded').length,
+      scheduledCapacityRisks: teamLoad.filter(member => this.getScheduledCapacityRisk(member)).length,
       activeRisks: risks.length,
       graphDecisions: graphCandidates.length
     };
@@ -860,6 +940,35 @@ class AutopilotService {
     }]);
   }
 
+  getScheduledCapacityRisk(member = {}) {
+    const scheduledHours = Number(member.scheduledAllocationWeeklyHours);
+    const availableHours = Number(member.weeklyAvailableHours);
+    if (!Number.isFinite(scheduledHours) || !Number.isFinite(availableHours) || scheduledHours <= 0 || availableHours <= 0) return null;
+    const ratio = scheduledHours / availableHours;
+    if (ratio <= 1.1) return null;
+    return {
+      scheduledHours: Number(scheduledHours.toFixed(1)),
+      availableHours: Number(availableHours.toFixed(1)),
+      ratio,
+      percent: Math.round(ratio * 100)
+    };
+  }
+
+  buildCapacityEvidence(member, risk) {
+    return this.buildEvidenceRefs([{
+      type: 'member',
+      entityId: member._id || member.id,
+      label: member.fullName || member.username || 'Team member',
+      data: {
+        reason: 'Mapped scheduled capacity exceeds declared availability',
+        scheduledAllocationWeeklyHours: risk.scheduledHours,
+        weeklyAvailableHours: risk.availableHours,
+        scheduledCapacityPercent: risk.percent,
+        providers: member.scheduledAllocationProvidersNext28Days || []
+      }
+    }]);
+  }
+
   buildInterventionEvidence(intervention, reason) {
     if (!intervention) return [];
     return this.buildEvidenceRefs([{
@@ -1070,15 +1179,15 @@ class AutopilotService {
         payload: { cardId: 'demo-card-2' }
       }),
       this.createCommand({
-        type: 'rebalance_workload',
+        type: 'review_scheduled_capacity',
         severity: 'high',
-        title: 'Rebalance nina workload',
+        title: 'Review nina\'s scheduled capacity',
         target: 'Nina Jacobs',
         owner: 'Sneup',
-        reason: '12 active cards with 4 urgent',
-        automatable: true,
-        sourceEvidence: [demoEvidence('member', 'Demo workload snapshot', 'Overloaded member workload')],
-        payload: { memberId: 'demo-member-1' }
+        reason: 'Mapped schedules reserve 26h/week against 20h/week available (130% of capacity).',
+        automatable: false,
+        sourceEvidence: [demoEvidence('member', 'Demo capacity forecast', 'Mapped scheduled capacity exceeds declared availability')],
+        payload: { memberId: 'demo-member-1', scheduledAllocationWeeklyHours: 26, weeklyAvailableHours: 20, scheduledAllocationProviders: ['motion'] }
       }),
       this.createCommand({
         type: 'request_update',
@@ -1104,7 +1213,10 @@ class AutopilotService {
         overdueCards: 2,
         specialties: ['launch', 'qa'],
         loadScore: 18,
-        capacityState: 'overloaded'
+        capacityState: 'overloaded',
+        weeklyAvailableHours: 20,
+        scheduledAllocationWeeklyHours: 26,
+        scheduledAllocationProvidersNext28Days: ['motion']
       },
       {
         id: 'demo-member-2',
@@ -1188,6 +1300,7 @@ class AutopilotService {
         highRiskCards: 15,
         unassignedCards: 7,
         overloadedMembers: 2,
+        scheduledCapacityRisks: 1,
         activeRisks: risks.length
       },
       boardSummaries,

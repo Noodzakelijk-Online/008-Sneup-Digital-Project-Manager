@@ -446,7 +446,7 @@ function formatForecastDate(value) {
 }
 
 function formatProviderNames(providers = []) {
-  const labels = providers.map(provider => ({ harvest: 'Harvest', everhour: 'Everhour', toggl_track: 'Toggl Track', clockify: 'Clockify' }[provider] || provider)).filter(Boolean);
+  const labels = providers.map(provider => ({ harvest: 'Harvest', everhour: 'Everhour', timeneye: 'Lucen Track', toggl_track: 'Toggl Track', clockify: 'Clockify', float: 'Float', resource_guru: 'Resource Guru', motion: 'Motion', google_workspace: 'Google Workspace', microsoft_365: 'Microsoft 365' }[provider] || provider)).filter(Boolean);
   if (labels.length <= 1) return labels[0] || 'connected time tools';
   return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
 }
@@ -486,8 +486,8 @@ function openBoardProjectMappingsEditor(boardId) {
   els.modalTitle.textContent = `Project mappings: ${board.boardName || 'board'}`;
   els.modalBody.innerHTML = `
     <form id="boardProjectMappingsForm">
-      <div class="notice">Only explicit Float or Resource Guru project IDs scope schedule evidence to this board. Mapped schedules remain analysis-only and do not change provider data or delivery capacity.</div>
-      <div class="field"><label for="boardProjectMappings">Provider project IDs (one provider: ID per line)</label><textarea id="boardProjectMappings" name="externalProjectMappings" placeholder="float: 123&#10;resource_guru: 456">${escapeHtml(mappings)}</textarea></div>
+      <div class="notice">Only explicit Float, Resource Guru, or Motion project IDs scope schedule evidence to this board. Mapped schedules remain analysis-only and do not change provider data or delivery capacity.</div>
+      <div class="field"><label for="boardProjectMappings">Provider project IDs (one provider: ID per line)</label><textarea id="boardProjectMappings" name="externalProjectMappings" placeholder="float: 123&#10;resource_guru: 456&#10;motion: project_123">${escapeHtml(mappings)}</textarea></div>
       <div class="toolbar modal-actions"><button class="button" type="button" id="cancelBoardProjectMappings">Cancel</button><button class="button primary" type="submit">Save project mappings</button></div>
     </form>
   `;
@@ -525,7 +525,7 @@ function renderCapacityMember(member = {}) {
     <div class="item">
       <div class="item-title"><strong>${escapeHtml(member.name || 'Team member')}</strong><span class="pill ${member.configured ? 'healthy' : 'review'}">${member.configured ? 'configured' : 'default'}</span></div>
       <div class="meta"><span>${member.weeklyAvailableHours || 0}h/week</span><span>${member.dailyAvailableHours || 0}h/day</span><span>${member.allocationPercent || 0}% allocation</span><span>${member.focusHoursPerWeek || 0}h focus</span>${member.timeOffHours ? `<span>${member.timeOffHours}h planned time off</span>` : ''}</div>
-      <div class="meta">Historical card effort: ${member.historicalCardHours || 0}h. ${member.trackedTimeEntriesLast28Days ? `${escapeHtml(formatProviderNames(member.trackedTimeProvidersLast28Days))} tracked ${member.trackedTimeWeeklyHours || 0}h/week recently.` : 'No matched tracked-time evidence.'} ${member.scheduledAllocationEntriesNext28Days ? `Mapped allocations schedule ${member.scheduledAllocationWeeklyHours || 0}h/week.` : 'No mapped allocation evidence.'} ${member.calendarEventsNext28Days ? `Mapped calendar blocks ${member.calendarBusyWeeklyHours || 0}h/week.` : 'No mapped calendar evidence.'} ${(member.skills || []).map(escapeHtml).join(' | ') || 'No skills recorded.'}</div>
+      <div class="meta">Historical card effort: ${member.historicalCardHours || 0}h. ${member.trackedTimeEntriesLast28Days ? `${escapeHtml(formatProviderNames(member.trackedTimeProvidersLast28Days))} tracked ${member.trackedTimeWeeklyHours || 0}h/week recently.` : 'No matched tracked-time evidence.'} ${member.scheduledAllocationEntriesNext28Days ? `${escapeHtml(formatProviderNames(member.scheduledAllocationProvidersNext28Days))} schedules ${member.scheduledAllocationWeeklyHours || 0}h/week.` : 'No mapped allocation evidence.'} ${member.calendarEventsNext28Days ? `Mapped calendar blocks ${member.calendarBusyWeeklyHours || 0}h/week.` : 'No mapped calendar evidence.'} ${(member.skills || []).map(escapeHtml).join(' | ') || 'No skills recorded.'}</div>
       ${editable ? `<div class="item-actions"><button class="button" type="button" data-capacity-member="${escapeHtml(member.memberId)}">Edit capacity</button></div>` : ''}
     </div>
   `;
@@ -543,7 +543,7 @@ function openCapacityEditor(memberId) {
       <div class="field"><label for="capacityAllocation">Allocation percentage</label><input id="capacityAllocation" name="allocationPercent" type="number" min="0" max="100" value="${escapeHtml(member.allocationPercent ?? 100)}" required></div>
       <div class="field"><label for="capacityFocus">Focus hours per week</label><input id="capacityFocus" name="focusHoursPerWeek" type="number" min="0" max="80" value="${escapeHtml(member.focusHoursPerWeek || 0)}" required></div>
       <div class="field"><label for="capacitySkills">Skills (comma-separated)</label><input id="capacitySkills" name="skills" type="text" value="${escapeHtml((member.skills || []).join(', '))}"></div>
-      <div class="field"><label for="capacityExternalIdentities">Capacity evidence IDs (one provider: ID per line)</label><textarea id="capacityExternalIdentities" name="externalIdentities" placeholder="float: 123&#10;google_workspace: person@example.com">${escapeHtml(externalIdentities)}</textarea></div>
+      <div class="field"><label for="capacityExternalIdentities">Capacity evidence IDs (one provider: ID per line)</label><textarea id="capacityExternalIdentities" name="externalIdentities" placeholder="float: 123&#10;motion: user_123&#10;google_workspace: person@example.com">${escapeHtml(externalIdentities)}</textarea></div>
       <div class="field"><label for="capacityTimeOff">Planned time off (one YYYY-MM-DD to YYYY-MM-DD range per line)</label><textarea id="capacityTimeOff" name="timeOff">${escapeHtml((member.timeOff || []).map(item => `${String(item.startDate || '').slice(0, 10)} to ${String(item.endDate || '').slice(0, 10)}${item.label ? ` | ${item.label}` : ''}`).join('\n'))}</textarea></div>
       <div class="toolbar modal-actions"><button class="button" type="button" id="cancelCapacityEdit">Cancel</button><button class="button primary" type="submit">Save capacity</button></div>
     </form>

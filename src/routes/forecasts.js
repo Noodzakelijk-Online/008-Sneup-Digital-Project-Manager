@@ -3,6 +3,7 @@ const Board = require('../models/Board');
 const CapacityProfile = require('../models/CapacityProfile');
 const Member = require('../models/Member');
 const forecastService = require('../services/forecastService');
+const autopilotService = require('../services/autopilotService');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { clampInteger, requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
@@ -148,6 +149,7 @@ router.post('/capacity/:memberId', requirePermission('capacity:manage'), async (
       beforeState: before?.toObject() || null,
       afterState: profile.toObject()
     });
+    autopilotService.invalidateMissionControlForecast(workspaceId);
 
     res.json({ success: true, profile });
   } catch (error) {
@@ -191,6 +193,7 @@ router.post('/boards/:boardId/project-mappings', requirePermission('capacity:man
       beforeState,
       afterState: board.toObject()
     });
+    autopilotService.invalidateMissionControlForecast(workspaceId);
 
     res.json({ success: true, board });
   } catch (error) {

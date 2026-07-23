@@ -782,7 +782,7 @@ describe('capacity-aware forecasting', () => {
       ]
     });
 
-    expect(forecast.memberCapacity[0]).toMatchObject({ scheduledAllocationHoursNext28Days: 4, scheduledAllocationWeeklyHours: 1 });
+    expect(forecast.memberCapacity[0]).toMatchObject({ scheduledAllocationHoursNext28Days: 4, scheduledAllocationWeeklyHours: 1, scheduledAllocationProvidersNext28Days: ['motion'] });
     expect(forecast.dataQuality.allocations).toMatchObject({ providers: ['float', 'resource_guru', 'motion'], entries: 1, totalHours: 8, matchedEntries: 1, matchedHours: 4, unmatchedHours: 4, matchedMembers: 1, mappedProjectEntries: 1, mappedProjectHours: 4, mappedBoards: 1 });
   });
 
@@ -7513,6 +7513,43 @@ describe('mission-control evidence references', () => {
       label: 'Nina Jacobs'
     });
     expect(risks.find(risk => risk.type === 'delivery_risk').sourceEvidence[0].data.reason).toBe('High delivery risk');
+  });
+
+  test('turns overbooked mapped schedules into review-only mission-control evidence', () => {
+    const autopilotService = require('../src/services/autopilotService');
+    const memberId = new mongoose.Types.ObjectId();
+    const teamLoad = [{
+      id: memberId,
+      username: 'nina',
+      fullName: 'Nina Jacobs',
+      assignedCards: 2,
+      urgentCards: 0,
+      overdueCards: 0,
+      capacityState: 'balanced',
+      weeklyAvailableHours: 16,
+      scheduledAllocationWeeklyHours: 24,
+      scheduledAllocationProvidersNext28Days: ['motion']
+    }];
+    const commands = autopilotService.buildCommandQueue({ cards: [], boardSummaries: [], teamLoad, interventions: [] });
+    const risks = autopilotService.buildRiskRadar([], {}, [], teamLoad);
+    const command = commands.find(item => item.type === 'review_scheduled_capacity');
+
+    expect(command).toMatchObject({
+      severity: 'high',
+      automatable: false,
+      payload: {
+        memberId,
+        scheduledAllocationWeeklyHours: 24,
+        weeklyAvailableHours: 16,
+        scheduledAllocationProviders: ['motion']
+      }
+    });
+    expect(command.reason).toContain('150% of capacity');
+    expect(command.sourceEvidence[0].data).toMatchObject({
+      reason: 'Mapped scheduled capacity exceeds declared availability',
+      providers: ['motion']
+    });
+    expect(risks[0]).toMatchObject({ type: 'scheduled_capacity_risk', severity: 'high', detail: '24h/week scheduled against 16h/week available' });
   });
 
   test('ranks dependency-aware graph decisions into mission-control commands and risks', () => {
