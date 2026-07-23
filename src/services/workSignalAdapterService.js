@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -115,6 +115,7 @@ const quickBooksWorkSignalClient = lazyClient('./quickBooksWorkSignalClient');
 const powerBiWorkSignalClient = lazyClient('./powerBiWorkSignalClient');
 const scoroWorkSignalClient = lazyClient('./scoroWorkSignalClient');
 const planeWorkSignalClient = lazyClient('./planeWorkSignalClient');
+const openProjectWorkSignalClient = lazyClient('./openProjectWorkSignalClient');
 
 const asArray = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1195,6 +1196,14 @@ planeAdapter.capabilities.credentialBackedSync = true;
 planeAdapter.list = async account => (await planeWorkSignalClient.fetchDelta(account, null)).records;
 planeAdapter.fetchDelta = (account, cursor) => planeWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('plane', planeAdapter);
+
+const openProjectAdapter = buildAdapter('openproject', 'OpenProject project and work-package metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'work_package'), title: titleFromText(item.name, 'OpenProject work package'), description: '', status: item.status || 'open', priority: item.priority || 'unknown', url: undefined, owners: [], labels: compact(['openproject', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined]), dueAt: item.dueAt, providerCreatedAt: item.createdAt || item.startAt, providerUpdatedAt: item.updatedAt, evidenceRefs: baseEvidence(account, item, 'OpenProject project and work-package metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, workPackageId: item.workPackageId, identifier: item.identifier, status: item.status, priority: item.priority, percentageDone: item.percentageDone, startAt: item.startAt, dueAt: item.dueAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+openProjectAdapter.capabilities.credentialBackedSync = true;
+openProjectAdapter.list = async account => (await openProjectWorkSignalClient.fetchDelta(account, null)).records;
+openProjectAdapter.fetchDelta = (account, cursor) => openProjectWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('openproject', openProjectAdapter);
 
 const serviceNowAdapter = buildAdapter('servicenow', 'ServiceNow active incident metadata adapter', (account, item) => ({
   externalId: pick(item.id),

@@ -3839,6 +3839,7 @@ function renderConnector(connector, account) {
                                         : lastSync.source === 'basecamp_api' ? 'Basecamp API'
                                         : lastSync.source === 'scoro_project_task_metadata' ? 'Scoro API'
                                         : lastSync.source === 'plane_project_work_item_metadata' ? 'Plane API'
+                                        : lastSync.source === 'openproject_project_work_package_metadata' ? 'OpenProject API'
                                         : lastSync.source === 'xero_sales_invoice_metadata' ? 'Xero invoices'
                                         : lastSync.source === 'google_forms_metadata' ? 'Google Forms metadata'
                                           : lastSync.source === 'mural_active_mural_metadata' ? 'Mural metadata'
