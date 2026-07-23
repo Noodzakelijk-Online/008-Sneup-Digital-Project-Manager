@@ -1,7 +1,7 @@
 const WORK_SIGNAL_COUNT_FIELDS = [
   'repositories', 'boards', 'sites', 'workspaces', 'projects', 'tasks', 'taskLists', 'todoLists', 'todoTasks',
   'channels', 'calendars', 'events', 'files', 'issues', 'workflows', 'executions', 'timeEntries', 'mergeRequests',
-  'items', 'pages', 'dataSources', 'forms', 'salesInvoices', 'spaces', 'sections', 'milestones', 'userStories'
+  'items', 'pages', 'reports', 'dataSources', 'forms', 'salesInvoices', 'spaces', 'sections', 'milestones', 'userStories'
 ];
 
 const normalizeCount = value => {

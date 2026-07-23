@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'motion',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'motion',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -122,6 +122,7 @@ const muralWorkSignalClient = lazyClient('./muralWorkSignalClient');
 const canvaWorkSignalClient = lazyClient('./canvaWorkSignalClient');
 const quickBooksWorkSignalClient = lazyClient('./quickBooksWorkSignalClient');
 const powerBiWorkSignalClient = lazyClient('./powerBiWorkSignalClient');
+const dataStudioWorkSignalClient = lazyClient('./dataStudioWorkSignalClient');
 const scoroWorkSignalClient = lazyClient('./scoroWorkSignalClient');
 const planeWorkSignalClient = lazyClient('./planeWorkSignalClient');
 const openProjectWorkSignalClient = lazyClient('./openProjectWorkSignalClient');
@@ -1509,6 +1510,27 @@ powerBiAdapter.capabilities.credentialBackedSync = true;
 powerBiAdapter.list = async account => (await powerBiWorkSignalClient.fetchDelta(account, null)).records;
 powerBiAdapter.fetchDelta = (account, cursor) => powerBiWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('power_bi', powerBiAdapter);
+
+const dataStudioAdapter = buildAdapter('looker_studio', 'Data Studio bounded asset-metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: pick(item.sourceType, 'report'),
+  title: titleFromText(item.name, 'Data Studio asset'),
+  description: '',
+  status: item.status || 'open',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['looker_studio', item.sourceType]),
+  dueAt: undefined,
+  providerCreatedAt: item.createdAt,
+  providerUpdatedAt: item.updatedAt,
+  evidenceRefs: [{ provider: account.connectorId, externalId: String(pick(item.id, 'unknown')), label: 'Data Studio asset metadata', type: account.connectorId }],
+  raw: { id: item.id, assetId: item.assetId, sourceType: item.sourceType, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+dataStudioAdapter.capabilities.credentialBackedSync = true;
+dataStudioAdapter.list = async account => (await dataStudioWorkSignalClient.fetchDelta(account, null)).records;
+dataStudioAdapter.fetchDelta = (account, cursor) => dataStudioWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('looker_studio', dataStudioAdapter);
 
 const surveyMonkeyAdapter = buildAdapter('survey_monkey', 'SurveyMonkey survey metadata adapter', (account, item) => ({
   externalId: pick(item.id),
