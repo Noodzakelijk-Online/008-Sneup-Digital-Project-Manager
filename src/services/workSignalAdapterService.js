@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'motion',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'taskade', 'motion',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zapier', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -54,6 +54,7 @@ const hiveWorkSignalClient = lazyClient('./hiveWorkSignalClient');
 const clarizenWorkSignalClient = lazyClient('./clarizenWorkSignalClient');
 const lucidWorkSignalClient = lazyClient('./lucidWorkSignalClient');
 const taskworldWorkSignalClient = lazyClient('./taskworldWorkSignalClient');
+const taskadeWorkSignalClient = lazyClient('./taskadeWorkSignalClient');
 const motionWorkSignalClient = lazyClient('./motionWorkSignalClient');
 const teamworkWorkSignalClient = lazyClient('./teamworkWorkSignalClient');
 const teamGanttWorkSignalClient = lazyClient('./teamganttWorkSignalClient');
@@ -970,6 +971,14 @@ taskworldAdapter.capabilities.credentialBackedSync = true;
 taskworldAdapter.list = async account => (await taskworldWorkSignalClient.fetchDelta(account, null)).records;
 taskworldAdapter.fetchDelta = (account, cursor) => taskworldWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('taskworld', taskworldAdapter);
+
+const taskadeAdapter = buildAdapter('taskade', 'Taskade project and task metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'Taskade work item'), description: '', status: statusFromText(item.status), priority: 'unknown', url: undefined, owners: [], labels: compact(['taskade', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.status]), dueAt: undefined, providerCreatedAt: undefined, providerUpdatedAt: undefined, evidenceRefs: baseEvidence(account, item, 'Taskade metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, status: item.status }
+}));
+taskadeAdapter.capabilities.credentialBackedSync = true;
+taskadeAdapter.list = async account => (await taskadeWorkSignalClient.fetchDelta(account, null)).records;
+taskadeAdapter.fetchDelta = (account, cursor) => taskadeWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('taskade', taskadeAdapter);
 
 const motionAdapter = buildAdapter('motion', 'Motion project and task metadata adapter', (account, item) => ({
   externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'Motion task'), description: '', status: item.status || 'open', priority: priorityFromText(item.priority), url: undefined, owners: [], labels: compact(['motion', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, item.schedulingIssue === true ? 'scheduling_issue' : undefined]), dueAt: item.dueAt, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt || item.createdAt, evidenceRefs: baseEvidence(account, item, 'Motion project and task metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, status: item.status, priority: item.priority, dueAt: item.dueAt, startOn: item.startOn, durationMinutes: item.durationMinutes, assigneeIds: item.assigneeIds, scheduledStart: item.scheduledStart, scheduledEnd: item.scheduledEnd, schedulingIssue: item.schedulingIssue, createdAt: item.createdAt, updatedAt: item.updatedAt }
