@@ -225,6 +225,8 @@ Plane is available for one explicit Plane Cloud workspace slug and an API key re
 
 OpenProject is available for one public HTTPS instance and a bearer API token. Sneup pins each sync to public DNS results, uses bounded GET-only project and work-package metadata requests with server-side field selection, excludes descriptions, comments, attachments, people, custom fields, URLs, and provider writes, and fails visibly at configured collection limits.
 
+Microsoft Project connects through Microsoft OAuth with `Tasks.Read` only. Project for the web retired in 2025, so Sneup reads bounded basic Planner plan and task metadata through Microsoft Graph; premium plans, legacy Project Online data, task details, checklists, comments, attachments, people, custom fields, URLs, and provider writes remain outside the connector.
+
 TestRail is available for one explicit public HTTPS tenant, username, API key, and numeric project ID. Sneup uses one bounded GET request for active test-run metadata, rejects paginated overflow, pins DNS to public addresses, and excludes cases, results, descriptions, references, custom fields, attachments, and provider writes.
 
 BrowserStack is available with a username and access key. Sneup performs one fixed-host, bounded Automate build-list GET, fails closed when its page cap is reached, and retains only build ID, redacted name, status, priority, completion state, and bounded duration. It excludes public URLs, tags, sessions, logs, browser and device data, and provider writes.

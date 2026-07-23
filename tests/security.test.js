@@ -78,6 +78,7 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/services/basecampWorkSignalClient');
     jest.dontMock('../src/services/redmineWorkSignalClient');
     jest.dontMock('../src/services/microsoftPlannerWorkSignalClient');
+    jest.dontMock('../src/services/microsoftProjectWorkSignalClient');
     jest.dontMock('../src/services/youTrackWorkSignalClient');
     jest.dontMock('../src/services/taigaWorkSignalClient');
     jest.dontMock('../src/services/backlogWorkSignalClient');
@@ -1609,10 +1610,11 @@ describe('connector registry', () => {
     expect(result.syncReadiness.ready + result.syncReadiness.catalogOnly).toBe(result.catalogTotal);
   });
 
-  test('exposes sync readiness and blocks catalog-only connector account links', () => {
+  test('exposes sync readiness and keeps catalog-only connector account links blocked', () => {
     const catalog = accountConnectorService.getCatalog();
     const github = catalog.connectors.find(connector => connector.id === 'github');
     const microsoftProject = catalog.connectors.find(connector => connector.id === 'microsoft_project');
+    const proofhub = catalog.connectors.find(connector => connector.id === 'proofhub');
 
     expect(github.syncReadiness).toEqual({
       status: 'ready',
@@ -1620,11 +1622,16 @@ describe('connector registry', () => {
       readOnly: true
     });
     expect(microsoftProject.syncReadiness).toEqual({
+      status: 'ready',
+      accountConnectionAvailable: true,
+      readOnly: true
+    });
+    expect(proofhub.syncReadiness).toEqual({
       status: 'catalog_only',
       accountConnectionAvailable: false,
       readOnly: true
     });
-    expect(() => accountConnectorService.beginConnection('microsoft_project')).toThrow(/secure work-signal sync is not available yet/i);
+    expect(() => accountConnectorService.beginConnection('proofhub')).toThrow(/secure work-signal sync is not available yet/i);
   });
 
   test('keeps connector catalog readiness available when scheduled sync loads first', () => {
@@ -2429,6 +2436,18 @@ describe('work signal normalization', () => {
     expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
     expect(result.records).toHaveLength(1);
     expect(workSignalAdapterService.getAdapter('microsoft_planner').capabilities.credentialBackedSync).toBe(true);
+  });
+
+  test('Microsoft Project adapter delegates live delta reads to the credential-backed client', async () => {
+    jest.resetModules();
+    const fetchDelta = jest.fn().mockResolvedValue({ records: [{ id: 'project_task:1' }] });
+    jest.doMock('../src/services/microsoftProjectWorkSignalClient', () => ({ fetchDelta }));
+    const workSignalAdapterService = require('../src/services/workSignalAdapterService');
+    const account = { connectorId: 'microsoft_project' };
+    const result = await workSignalAdapterService.fetchDelta(account, '2026-07-01T00:00:00.000Z');
+    expect(fetchDelta).toHaveBeenCalledWith(account, '2026-07-01T00:00:00.000Z');
+    expect(result.records).toHaveLength(1);
+    expect(workSignalAdapterService.getAdapter('microsoft_project').capabilities.credentialBackedSync).toBe(true);
   });
 
   test('YouTrack adapter delegates live delta reads to the credential-backed client', async () => {

@@ -15,7 +15,7 @@ const FIRST_WAVE_ADAPTERS = [
   'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject',
   'wrike', 'opsgenie',
   'smartsheet',
-  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
+  'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
 ];
 // Resolve each provider client only when its adapter performs a sync.
 const lazyClient = (modulePath) => new Proxy(Object.create(null), {
@@ -54,6 +54,7 @@ const businessmapWorkSignalClient = lazyClient('./businessmapWorkSignalClient');
 const basecampWorkSignalClient = lazyClient('./basecampWorkSignalClient');
 const redmineWorkSignalClient = lazyClient('./redmineWorkSignalClient');
 const microsoftPlannerWorkSignalClient = lazyClient('./microsoftPlannerWorkSignalClient');
+const microsoftProjectWorkSignalClient = lazyClient('./microsoftProjectWorkSignalClient');
 const youTrackWorkSignalClient = lazyClient('./youTrackWorkSignalClient');
 const taigaWorkSignalClient = lazyClient('./taigaWorkSignalClient');
 const backlogWorkSignalClient = lazyClient('./backlogWorkSignalClient');
@@ -901,6 +902,14 @@ microsoftPlannerAdapter.capabilities.credentialBackedSync = true;
 microsoftPlannerAdapter.list = async account => (await microsoftPlannerWorkSignalClient.fetchDelta(account, null)).records;
 microsoftPlannerAdapter.fetchDelta = (account, cursor) => microsoftPlannerWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('microsoft_planner', microsoftPlannerAdapter);
+
+const microsoftProjectAdapter = buildAdapter('microsoft_project', 'Microsoft Project basic Planner plan and task metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'task'), title: titleFromText(item.name, 'Microsoft Project task'), description: '', status: item.status || 'open', priority: item.priority || 'unknown', url: undefined, owners: [], labels: compact(['microsoft_project', item.sourceType, item.projectId ? `project:${item.projectId}` : undefined, Number(item.percentComplete) >= 100 ? 'completed' : undefined]), dueAt: item.dueAt, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt || item.completedAt || item.createdAt, evidenceRefs: baseEvidence(account, item, 'Microsoft Project basic Planner plan and task metadata'), raw: { id: item.id, sourceType: item.sourceType, projectId: item.projectId, taskId: item.taskId, status: item.status, priority: item.priority, percentComplete: item.percentComplete, dueAt: item.dueAt, completedAt: item.completedAt, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+microsoftProjectAdapter.capabilities.credentialBackedSync = true;
+microsoftProjectAdapter.list = async account => (await microsoftProjectWorkSignalClient.fetchDelta(account, null)).records;
+microsoftProjectAdapter.fetchDelta = (account, cursor) => microsoftProjectWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('microsoft_project', microsoftProjectAdapter);
 
 const youTrackAdapter = buildAdapter('youtrack', 'YouTrack issue metadata adapter', (account, item) => ({
   externalId: pick(item.id), sourceType: 'issue', title: titleFromText(item.name, 'YouTrack issue'), description: '',
