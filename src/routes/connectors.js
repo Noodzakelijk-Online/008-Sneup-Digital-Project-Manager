@@ -3,7 +3,7 @@ const router = express.Router();
 const logger = require('../utils/logger');
 const accountConnectorService = require('../services/accountConnectorService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
-const { requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
+const { hasPermission, requirePermission, validateObjectIdParam } = require('../utils/requestSecurity');
 
 router.param('accountId', validateObjectIdParam('accountId'));
 
@@ -16,6 +16,15 @@ const connectorRequestOptions = (req) => ({
   workspaceId: getRequestWorkspaceObjectId(req),
   actorId: req.auth?.actorId
 });
+
+const buildCatalogPayload = async (catalog, req, listAccounts = accountConnectorService.listAccounts.bind(accountConnectorService)) => {
+  if (!hasPermission(req.auth, 'connectors:manage')) return catalog;
+
+  return {
+    ...catalog,
+    accounts: await listAccounts(connectorRequestOptions(req))
+  };
+};
 
 const sendError = (res, error) => {
   res.status(error.statusCode || 500).json({
@@ -33,11 +42,9 @@ router.get('/', requirePermission('api:read'), async (req, res) => {
       limit: req.query.limit,
       offset: req.query.offset
     });
-    const accounts = await accountConnectorService.listAccounts(connectorRequestOptions(req));
     res.json({
       success: true,
-      ...catalog,
-      accounts
+      ...await buildCatalogPayload(catalog, req)
     });
   } catch (error) {
     logger.error('Failed to get connector catalog:', error);
@@ -397,5 +404,7 @@ router.post('/:connectorId/accounts', requirePermission('connectors:manage'), as
     sendError(res, error);
   }
 });
+
+router.buildCatalogPayload = buildCatalogPayload;
 
 module.exports = router;

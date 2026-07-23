@@ -2160,6 +2160,29 @@ describe('connector registry', () => {
     expect(catalogOnly.total).toBe(result.syncReadiness.catalogOnly);
   });
 
+  test('keeps linked connector accounts out of the api-read catalog response', async () => {
+    const connectorRoutes = require('../src/routes/connectors');
+    const catalog = { connectors: [{ id: 'trello' }], total: 1 };
+    const listAccounts = jest.fn().mockResolvedValue([{ id: 'linked-account' }]);
+
+    await expect(connectorRoutes.buildCatalogPayload(catalog, {
+      auth: { permissions: ['api:read'], permissionsScoped: true },
+      headers: {},
+      get: () => undefined
+    }, listAccounts)).resolves.toEqual(catalog);
+    expect(listAccounts).not.toHaveBeenCalled();
+
+    await expect(connectorRoutes.buildCatalogPayload(catalog, {
+      auth: { permissions: ['api:read', 'connectors:manage'], permissionsScoped: true, actorId: 'connector-admin' },
+      headers: {},
+      get: () => undefined
+    }, listAccounts)).resolves.toEqual({
+      ...catalog,
+      accounts: [{ id: 'linked-account' }]
+    });
+    expect(listAccounts).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'connector-admin' }));
+  });
+
   test('exposes sync readiness and keeps catalog-only connector account links blocked', () => {
     const catalog = accountConnectorService.getCatalog();
     const github = catalog.connectors.find(connector => connector.id === 'github');
