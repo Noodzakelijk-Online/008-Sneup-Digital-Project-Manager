@@ -174,7 +174,7 @@ document.querySelectorAll('[data-view-button]').forEach((button) => {
 });
 
 document.getElementById('refreshButton').addEventListener('click', () => loadAll({ force: true }));
-document.getElementById('approvalButton').addEventListener('click', () => showView('approvals'));
+document.getElementById('approvalButton').addEventListener('click', () => openDecisionQueue('robert'));
 document.getElementById('connectorButton').addEventListener('click', () => showView('connectors'));
 els.setupButton.addEventListener('click', () => openFirstRunSetup());
 els.notificationPolicyButton.addEventListener('click', openNotificationPolicy);
@@ -234,7 +234,10 @@ els.enhancementAreaFilter.addEventListener('change', () => {
   loadEnhancements();
 });
 
-async function showView(viewName) {
+async function showView(viewName, options = {}) {
+  if (viewName === 'approvals' && ['all', 'robert', 'team', 'va'].includes(options.queueFilter)) {
+    state.queueFilter = options.queueFilter;
+  }
   document.querySelectorAll('[data-view-button]').forEach((button) => {
     button.classList.toggle('active', button.dataset.viewButton === viewName);
   });
@@ -252,6 +255,14 @@ async function showView(viewName) {
   };
   document.getElementById('pageTitle').textContent = titles[viewName] || titles.overview;
   await loadView(viewName);
+  if (viewName === 'approvals') {
+    renderOperationsLedger();
+    if (options.focusQueue) els.decisionQueue.scrollIntoView({ block: 'start' });
+  }
+}
+
+async function openDecisionQueue(ownerType = 'robert') {
+  await showView('approvals', { queueFilter: ownerType, focusQueue: true });
 }
 
 function openFirstRunSetup() {
@@ -1083,6 +1094,7 @@ function renderOperationsBrief() {
       <div class="meta">${escapeHtml(brief.narrative)}</div>
       <div class="meta"><span>Next: ${escapeHtml(brief.nextDecision)}</span></div>
       ${renderConfidence(brief.confidence || 0)}
+      ${robertDecisionCount > 0 ? '<div class="item-actions"><button class="button primary" type="button" data-brief-action="review-robert">Review Robert decision</button></div>' : ''}
     </div>
     ${listOrEmpty(items, renderOperationsBriefItem)}
     <div class="item">
@@ -1090,6 +1102,13 @@ function renderOperationsBrief() {
       <div class="meta">${(brief.morningPlan || []).map(step => `<span>${escapeHtml(step)}</span>`).join('')}</div>
     </div>
   `;
+  bindOperationsBriefActions();
+}
+
+function bindOperationsBriefActions() {
+  document.querySelectorAll('[data-brief-action="review-robert"]').forEach((button) => {
+    button.addEventListener('click', () => openDecisionQueue('robert'));
+  });
 }
 
 function renderJobDashboard() {
@@ -1303,6 +1322,7 @@ function renderOperationsBriefItem(item) {
         ${item.draftOnly ? '<span>draft-only</span>' : ''}
       </div>
       ${item.providerUrl ? `<div class="meta"><a href="${escapeHtml(item.providerUrl)}" rel="noreferrer" target="_blank">Open source</a></div>` : ''}
+      ${item.type === 'robert_decision' ? '<div class="item-actions"><button class="button" type="button" data-brief-action="review-robert">Review decision</button></div>' : ''}
     </div>
   `;
 }
