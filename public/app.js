@@ -33,6 +33,7 @@ const state = {
   policyHistoryError: '',
   policyHistoryFilters: {
     actionType: '',
+    actor: '',
     rangeDays: 'all'
   },
   activeWorkspaceId: localStorage.getItem('sneup.workspaceId') || '',
@@ -158,6 +159,7 @@ const els = {
   policyHistoryCount: document.getElementById('policyHistoryCount'),
   policyHistoryList: document.getElementById('policyHistoryList'),
   policyHistoryActionFilter: document.getElementById('policyHistoryActionFilter'),
+  policyHistoryActorFilter: document.getElementById('policyHistoryActorFilter'),
   policyHistoryRangeFilter: document.getElementById('policyHistoryRangeFilter'),
   setupButton: document.getElementById('setupButton'),
   modal: document.getElementById('connectorModal'),
@@ -903,8 +905,10 @@ async function loadWorkspaceAdmin() {
 function buildPolicyHistoryEndpoint() {
   const params = new URLSearchParams({ limit: '25' });
   const actionType = String(state.policyHistoryFilters?.actionType || '').trim();
+  const actor = String(state.policyHistoryFilters?.actor || '').trim();
   const rangeDays = Number.parseInt(state.policyHistoryFilters?.rangeDays, 10);
   if (actionType) params.set('actionType', actionType);
+  if (actor) params.set('actor', actor);
   if (Number.isInteger(rangeDays) && rangeDays > 0) {
     params.set('from', new Date(Date.now() - (rangeDays * 24 * 60 * 60 * 1000)).toISOString());
   }
@@ -912,7 +916,7 @@ function buildPolicyHistoryEndpoint() {
 }
 
 async function loadPolicyHistory() {
-  if (state.securityContext?.auth?.demoMode) return;
+  if (state.securityContext?.demoMode || state.currentWorkspace?.demoMode) return;
   try {
     const data = await fetchApi(buildPolicyHistoryEndpoint());
     state.policyHistory = data.history || [];
@@ -2589,7 +2593,7 @@ function renderWorkspaces(errorMessage = '') {
 }
 
 function renderPolicyHistoryFilters(policyRules = []) {
-  if (!els.policyHistoryActionFilter || !els.policyHistoryRangeFilter) return;
+  if (!els.policyHistoryActionFilter || !els.policyHistoryActorFilter || !els.policyHistoryRangeFilter) return;
   const actions = policyRules
     .map(policy => ({ actionType: String(policy.actionType || ''), label: policy.label || policy.actionType }))
     .filter(policy => policy.actionType)
@@ -2603,6 +2607,7 @@ function renderPolicyHistoryFilters(policyRules = []) {
     ...actions.map(policy => `<option value="${escapeHtml(policy.actionType)}">${escapeHtml(policy.label)}</option>`)
   ].join('');
   els.policyHistoryActionFilter.value = selectedAction;
+  els.policyHistoryActorFilter.value = String(state.policyHistoryFilters.actor || '').slice(0, 160);
   els.policyHistoryRangeFilter.value = ['all', '7', '30', '90'].includes(String(state.policyHistoryFilters.rangeDays))
     ? String(state.policyHistoryFilters.rangeDays)
     : 'all';
@@ -2768,7 +2773,7 @@ function bindPolicyRuleActions() {
 }
 
 function bindPolicyHistoryActions() {
-  if (!els.policyHistoryActionFilter || !els.policyHistoryRangeFilter) return;
+  if (!els.policyHistoryActionFilter || !els.policyHistoryActorFilter || !els.policyHistoryRangeFilter) return;
   els.policyHistoryActionFilter.onchange = () => {
     state.policyHistoryFilters.actionType = els.policyHistoryActionFilter.value;
     loadPolicyHistory();
@@ -2776,6 +2781,16 @@ function bindPolicyHistoryActions() {
   els.policyHistoryRangeFilter.onchange = () => {
     state.policyHistoryFilters.rangeDays = els.policyHistoryRangeFilter.value;
     loadPolicyHistory();
+  };
+  const applyActorFilter = () => {
+    state.policyHistoryFilters.actor = els.policyHistoryActorFilter.value.trim();
+    loadPolicyHistory();
+  };
+  els.policyHistoryActorFilter.onchange = applyActorFilter;
+  els.policyHistoryActorFilter.onkeydown = (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    applyActorFilter();
   };
 }
 

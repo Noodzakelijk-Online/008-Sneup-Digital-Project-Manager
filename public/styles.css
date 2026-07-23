@@ -149,6 +149,10 @@ h1 {
   justify-content: flex-end;
 }
 
+.history-actor-filter {
+  width: min(160px, 100%);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -980,6 +984,20 @@ h1 {
 
   .toolbar {
     justify-content: start;
+  }
+
+  .panel-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .panel-head .toolbar {
+    width: 100%;
+  }
+
+  .history-actor-filter {
+    flex: 1 1 140px;
+    min-width: 0;
   }
 
   .metrics {
