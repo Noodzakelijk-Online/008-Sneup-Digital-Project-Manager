@@ -60,6 +60,9 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/models/FollowUpPlan');
     jest.dontMock('../src/models/CardFinding');
     jest.dontMock('../src/models/BoardHealthSnapshot');
+    jest.dontMock('../src/models/Board');
+    jest.dontMock('../src/models/List');
+    jest.dontMock('../src/models/Card');
     jest.dontMock('../src/models/WorkActor');
     jest.dontMock('../src/models/WorkComment');
     jest.dontMock('../src/models/WorkContainer');
@@ -69,6 +72,10 @@ describe('request security boundaries', () => {
     jest.dontMock('../src/models/AuditEvent');
     jest.dontMock('../src/services/workspaceScopeService');
     jest.dontMock('../src/services/operationsLedgerService');
+    jest.dontMock('../src/services/trelloSync');
+    jest.dontMock('../src/services/contextAnalyzer');
+    jest.dontMock('../src/services/nlpService');
+    jest.dontMock('../src/services/operatingLedgerAnalyzer');
     jest.dontMock('../src/services/policyRuleService');
     jest.dontMock('../src/services/githubWorkSignalClient');
     jest.dontMock('../src/services/trelloWorkSignalClient');
@@ -543,6 +550,84 @@ describe('request security boundaries', () => {
     expect(next).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
     expect(res.body.requiredPermission).toBe('audit:read');
+  });
+
+  test('requires recommendation review permission before returning recommendation payloads', () => {
+    jest.resetModules();
+    jest.doMock('../src/services/operationsLedgerService', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getRequestWorkspaceObjectId: jest.fn(() => 'workspace-1')
+    }));
+
+    const recommendationRoutes = require('../src/routes/recommendations');
+    for (const path of ['/', '/:recommendationId']) {
+      const route = recommendationRoutes.stack.find((layer) => layer.route?.path === path).route;
+      const res = createResponse();
+      const next = jest.fn();
+
+      route.stack[0].handle(createRequest({ auth: { authenticated: true, roles: [], permissions: [] } }), res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(403);
+      expect(res.body.requiredPermission).toBe('recommendations:review');
+    }
+  });
+
+  test('requires decision queue management permission before returning board decisions', () => {
+    jest.resetModules();
+    jest.doMock('../src/models/Board', () => ({}));
+    jest.doMock('../src/models/List', () => ({}));
+    jest.doMock('../src/models/Card', () => ({}));
+    jest.doMock('../src/models/CardFinding', () => ({}));
+    jest.doMock('../src/models/BoardHealthSnapshot', () => ({}));
+    jest.doMock('../src/services/trelloSync', () => ({}));
+    jest.doMock('../src/services/contextAnalyzer', () => ({}));
+    jest.doMock('../src/services/nlpService', () => ({}));
+    jest.doMock('../src/services/operationsLedgerService', () => ({}));
+    jest.doMock('../src/services/operatingLedgerAnalyzer', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getRequestWorkspaceObjectId: jest.fn(() => 'workspace-1'),
+      scopeQuery: jest.fn(() => ({}))
+    }));
+
+    const boardRoutes = require('../src/routes/boards');
+    const route = boardRoutes.stack.find((layer) => layer.route?.path === '/:boardId/decision-queue').route;
+    const res = createResponse();
+    const next = jest.fn();
+
+    route.stack[0].handle(createRequest({ auth: { authenticated: true, roles: [], permissions: [] } }), res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.body.requiredPermission).toBe('decision-queue:manage');
+  });
+
+  test('requires audit read permission before returning team workload reports', () => {
+    jest.resetModules();
+    jest.doMock('../src/services/teamManager', () => ({}));
+    jest.doMock('../src/services/operationsLedgerService', () => ({}));
+    jest.doMock('../src/services/contextAnalyzer', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getRequestWorkspaceObjectId: jest.fn(() => 'workspace-1')
+    }));
+
+    const teamRoutes = require('../src/routes/team');
+    for (const path of [
+      '/board/:boardId/workload',
+      '/board/:boardId/auto-assign',
+      '/board/:boardId/at-risk',
+      '/board/:boardId/report'
+    ]) {
+      const route = teamRoutes.stack.find((layer) => layer.route?.path === path).route;
+      const res = createResponse();
+      const next = jest.fn();
+
+      route.stack[0].handle(createRequest({ auth: { authenticated: true, roles: [], permissions: [] } }), res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(403);
+      expect(res.body.requiredPermission).toBe('audit:read');
+    }
   });
 
   test('verifies Trello webhook signatures', () => {

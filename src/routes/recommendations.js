@@ -26,7 +26,7 @@ const sendError = (res, error, fallback) => res.status(error.statusCode || 500).
   error: error.statusCode ? error.message : fallback
 });
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('recommendations:review'), async (req, res) => {
   try {
     const recommendations = await operationsLedgerService.listRecommendations({
       ...workspaceOptions(req),
@@ -44,7 +44,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/:recommendationId', async (req, res) => {
+router.get('/:recommendationId', requirePermission('recommendations:review'), async (req, res) => {
   try {
     const recommendation = await operationsLedgerService.getRecommendation(req.params.recommendationId, workspaceOptions(req));
     if (!recommendation) {

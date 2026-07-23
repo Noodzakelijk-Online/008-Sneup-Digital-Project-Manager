@@ -27,7 +27,7 @@ router.get('/accountability', requirePermission('audit:read'), async (req, res) 
 });
 
 // Get workload analysis for a board
-router.get('/board/:boardId/workload', async (req, res) => {
+router.get('/board/:boardId/workload', requirePermission('audit:read'), async (req, res) => {
   try {
     const analysis = await teamManager.analyzeTeamWorkload(req.params.boardId, {
       workspaceId: getRequestWorkspaceObjectId(req)
@@ -54,7 +54,7 @@ router.get('/board/:boardId/workload', async (req, res) => {
 });
 
 // Get auto-assignment suggestions
-router.get('/board/:boardId/auto-assign', async (req, res) => {
+router.get('/board/:boardId/auto-assign', requirePermission('audit:read'), async (req, res) => {
   try {
     const suggestions = await teamManager.autoAssignCards(req.params.boardId, {
       workspaceId: getRequestWorkspaceObjectId(req)
@@ -81,7 +81,7 @@ router.get('/board/:boardId/auto-assign', async (req, res) => {
 });
 
 // Get at-risk cards
-router.get('/board/:boardId/at-risk', async (req, res) => {
+router.get('/board/:boardId/at-risk', requirePermission('audit:read'), async (req, res) => {
   try {
     const analysis = await teamManager.identifyAtRiskCards(req.params.boardId, {
       workspaceId: getRequestWorkspaceObjectId(req)
@@ -108,7 +108,7 @@ router.get('/board/:boardId/at-risk', async (req, res) => {
 });
 
 // Generate team report
-router.get('/board/:boardId/report', async (req, res) => {
+router.get('/board/:boardId/report', requirePermission('audit:read'), async (req, res) => {
   try {
     const report = await teamManager.generateTeamReport(req.params.boardId, {
       workspaceId: getRequestWorkspaceObjectId(req)

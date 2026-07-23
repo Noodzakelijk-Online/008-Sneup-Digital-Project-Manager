@@ -139,7 +139,7 @@ router.get('/:boardId/operations-ledger', requirePermission('audit:read'), getBo
 router.get('/:boardId/operating-ledger', requirePermission('audit:read'), getBoardOperationsLedger);
 
 // Get board decision queue
-router.get('/:boardId/decision-queue', async (req, res) => {
+router.get('/:boardId/decision-queue', requirePermission('decision-queue:manage'), async (req, res) => {
   try {
     await requireScopedBoard(req);
     const items = await operationsLedgerService.listDecisionQueue({
