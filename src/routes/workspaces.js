@@ -19,6 +19,10 @@ const {
   requirePermission,
   validateObjectIdParam
 } = require('../utils/requestSecurity');
+const {
+  assertWorkspaceAdministrationAccess,
+  canManageAcrossWorkspaces
+} = require('../utils/workspaceAdministrationAccess');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -80,14 +84,14 @@ const publicSession = (session) => ({
   updatedAt: session.updatedAt
 });
 
-const findWorkspaceOr404 = async (workspaceIdOrSlug) => {
+const findWorkspaceOr404 = async (req, workspaceIdOrSlug) => {
   const workspace = await Workspace.findOne(toWorkspaceQuery(workspaceIdOrSlug));
   if (!workspace) {
     const error = new Error('Workspace not found');
     error.statusCode = 404;
     throw error;
   }
-  return workspace;
+  return assertWorkspaceAdministrationAccess(req, workspace);
 };
 
 const findWorkspaceUserOr404 = async (workspace, userId) => {
@@ -165,7 +169,9 @@ router.post('/invitations/accept', async (req, res) => {
 router.get('/', requirePermission('identity:manage'), async (req, res) => {
   try {
     const limit = clampInteger(req.query.limit, 100, 1, 500);
-    const query = {};
+    const query = canManageAcrossWorkspaces(req.auth)
+      ? {}
+      : { _id: getRequestWorkspaceObjectId(req) };
     if (req.query.status) {
       query.status = validateEnum(req.query.status, WORKSPACE_STATUSES, 'status');
     }
@@ -191,6 +197,12 @@ router.get('/', requirePermission('identity:manage'), async (req, res) => {
 
 router.post('/', requirePermission('identity:manage'), async (req, res) => {
   try {
+    if (!canManageAcrossWorkspaces(req.auth)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Creating an additional workspace requires explicit cross-workspace administration'
+      });
+    }
     const name = String(req.body.name || '').trim();
     if (!name) {
       return res.status(400).json({ success: false, error: 'Workspace name is required' });
@@ -239,7 +251,7 @@ router.post('/', requirePermission('identity:manage'), async (req, res) => {
 
 router.post('/:workspaceId/update', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const beforeState = publicWorkspace(workspace);
 
     if (req.body.name) workspace.name = String(req.body.name).trim();
@@ -277,7 +289,7 @@ router.post('/:workspaceId/update', requirePermission('identity:manage'), async 
 
 router.get('/:workspaceId/users', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const users = await User.find({ workspaceId: workspace._id })
       .sort({ status: 1, role: 1, displayName: 1 })
       .limit(clampInteger(req.query.limit, 100, 1, 500));
@@ -299,7 +311,7 @@ router.get('/:workspaceId/users', requirePermission('identity:manage'), async (r
 
 router.post('/:workspaceId/users', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const displayName = String(req.body.displayName || '').trim();
     if (!displayName) {
       return res.status(400).json({ success: false, error: 'displayName is required' });
@@ -339,7 +351,7 @@ router.post('/:workspaceId/users', requirePermission('identity:manage'), async (
 
 router.get('/:workspaceId/invitations', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const invitations = await workspaceInviteService.listInvites({
       workspaceId: workspace._id,
       limit: req.query.limit
@@ -361,7 +373,7 @@ router.get('/:workspaceId/invitations', requirePermission('identity:manage'), as
 
 router.post('/:workspaceId/invitations', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const result = await workspaceInviteService.createInvite({
       workspace,
       actor: req.auth?.actorId || 'sneup',
@@ -389,7 +401,7 @@ router.post('/:workspaceId/invitations', requirePermission('identity:manage'), a
 
 router.post('/:workspaceId/invitations/:inviteId/retry-delivery', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const result = await workspaceInviteService.retryInviteDelivery({
       workspaceId: workspace._id,
       inviteId: req.params.inviteId,
@@ -414,7 +426,7 @@ router.post('/:workspaceId/invitations/:inviteId/retry-delivery', requirePermiss
 
 router.post('/:workspaceId/invitations/:inviteId/revoke', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const invite = await workspaceInviteService.revokeInvite({
       workspaceId: workspace._id,
       inviteId: req.params.inviteId,
@@ -436,7 +448,7 @@ router.post('/:workspaceId/invitations/:inviteId/revoke', requirePermission('ide
 
 router.post('/:workspaceId/users/:userId/update', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const user = await findWorkspaceUserOr404(workspace, req.params.userId);
 
     const beforeState = publicUser(user);
@@ -473,7 +485,7 @@ router.post('/:workspaceId/users/:userId/update', requirePermission('identity:ma
 
 router.get('/:workspaceId/users/:userId/sessions', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const user = await findWorkspaceUserOr404(workspace, req.params.userId);
     const sessions = await SessionToken.find({
       workspaceId: workspace._id,
@@ -500,7 +512,7 @@ router.get('/:workspaceId/users/:userId/sessions', requirePermission('identity:m
 
 router.post('/:workspaceId/users/:userId/session', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const user = await findWorkspaceUserOr404(workspace, req.params.userId);
     if (user.status !== 'active') {
       return res.status(409).json({
@@ -551,7 +563,7 @@ router.post('/:workspaceId/users/:userId/session', requirePermission('identity:m
 
 router.post('/:workspaceId/users/:userId/sessions/:sessionId/revoke', requirePermission('identity:manage'), async (req, res) => {
   try {
-    const workspace = await findWorkspaceOr404(req.params.workspaceId);
+    const workspace = await findWorkspaceOr404(req, req.params.workspaceId);
     const user = await findWorkspaceUserOr404(workspace, req.params.userId);
     const session = await SessionToken.findOne({
       _id: req.params.sessionId,

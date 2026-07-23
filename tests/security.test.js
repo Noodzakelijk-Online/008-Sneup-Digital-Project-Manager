@@ -5,6 +5,10 @@ const mongoose = require('mongoose');
 const path = require('path');
 const { safeExternalSourceUrl } = require('../src/utils/externalSourceUrl');
 const { bodyWithAuthenticatedActor, getAuthenticatedActor } = require('../src/utils/requestActor');
+const {
+  assertWorkspaceAdministrationAccess,
+  canManageAcrossWorkspaces
+} = require('../src/utils/workspaceAdministrationAccess');
 
 const {
   getPermissionsForRoles,
@@ -173,6 +177,26 @@ describe('request security boundaries', () => {
       reason: 'Legitimate operator note'
     });
     expect(getAuthenticatedActor(createRequest({ body: { actor: 'spoofed-actor' } }))).toBe('api');
+  });
+
+  test('keeps workspace identity administration inside the authenticated workspace', () => {
+    const currentWorkspace = new mongoose.Types.ObjectId();
+    const otherWorkspace = new mongoose.Types.ObjectId();
+    const request = createRequest({
+      auth: {
+        workspaceId: currentWorkspace.toString(),
+        localRequest: false,
+        workspaceOverrideAllowed: false
+      }
+    });
+
+    expect(assertWorkspaceAdministrationAccess(request, { _id: currentWorkspace })).toEqual({ _id: currentWorkspace });
+    expect(() => assertWorkspaceAdministrationAccess(request, { _id: otherWorkspace })).toThrow(
+      'Workspace administration is limited to the authenticated workspace'
+    );
+    expect(canManageAcrossWorkspaces(request.auth)).toBe(false);
+    expect(canManageAcrossWorkspaces({ localRequest: true })).toBe(true);
+    expect(canManageAcrossWorkspaces({ workspaceOverrideAllowed: true })).toBe(true);
   });
 
   test('blocks remote API access when no API key is configured', async () => {
@@ -1822,13 +1846,40 @@ describe('workspace identity models', () => {
       json: jest.fn()
     };
 
+    const foreignWorkspaceRes = {
+      status: jest.fn(function status() { return this; }),
+      json: jest.fn()
+    };
+
     await handler({
       params: {
         workspaceId: String(workspaceId),
         userId: String(userId),
         sessionId: String(sessionId)
       },
-      auth: { actorId: 'owner-1' }
+      auth: {
+        actorId: 'foreign-owner',
+        workspaceId: String(new mongoose.Types.ObjectId()),
+        localRequest: false,
+        workspaceOverrideAllowed: false
+      }
+    }, foreignWorkspaceRes);
+
+    expect(foreignWorkspaceRes.status).toHaveBeenCalledWith(403);
+    expect(session.revoke).not.toHaveBeenCalled();
+
+    await handler({
+      params: {
+        workspaceId: String(workspaceId),
+        userId: String(userId),
+        sessionId: String(sessionId)
+      },
+      auth: {
+        actorId: 'owner-1',
+        workspaceId: String(workspaceId),
+        localRequest: false,
+        workspaceOverrideAllowed: false
+      }
     }, res);
 
     expect(session.revoke).toHaveBeenCalledWith('owner-1');
