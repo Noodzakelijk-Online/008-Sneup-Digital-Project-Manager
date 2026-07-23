@@ -2,6 +2,7 @@ const Board = require('../src/models/Board');
 const trelloClient = require('../src/services/trelloClient');
 const {
   getBoardSyncConcurrency,
+  parseTrelloActivityAt,
   runSerialized,
   syncAllBoards,
   syncBoard,
@@ -39,6 +40,12 @@ describe('Trello board sync concurrency', () => {
     expect(getBoardSyncConcurrency('0')).toBe(1);
     expect(getBoardSyncConcurrency('99')).toBe(4);
     expect(getBoardSyncConcurrency('invalid')).toBe(2);
+  });
+
+  test('preserves only valid provider activity timestamps instead of treating sync time as card activity', () => {
+    expect(parseTrelloActivityAt('2026-07-23T12:34:56.000Z')).toEqual(new Date('2026-07-23T12:34:56.000Z'));
+    expect(parseTrelloActivityAt('not-a-date')).toBeNull();
+    expect(parseTrelloActivityAt()).toBeNull();
   });
 
   test('serializes writes for the same shared record and releases its queue afterward', async () => {

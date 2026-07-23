@@ -50,6 +50,12 @@ const runSerialized = async (queues, key, callback) => {
   }
 };
 
+const parseTrelloActivityAt = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
 /**
  * Trello Synchronization Service
  * Handles syncing data from Trello to local database
@@ -484,7 +490,11 @@ const syncCards = async (board) => {
       }
       card.members = cardMemberIds;
       
-      card.lastActivity = new Date();
+      // Preserve Trello's activity evidence. A sync timestamp is not card activity.
+      const observedActivityAt = parseTrelloActivityAt(trelloCard.dateLastActivity);
+      if (observedActivityAt) {
+        card.lastActivity = observedActivityAt;
+      }
       card.lastSync = new Date();
       await card.save();
       
@@ -717,5 +727,6 @@ module.exports = {
   handleWebhookEvent,
   getBoardSyncConcurrency,
   mapWithConcurrency,
-  runSerialized
+  runSerialized,
+  parseTrelloActivityAt
 };

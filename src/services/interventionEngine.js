@@ -64,7 +64,8 @@ class InterventionEngine {
         return;
       }
 
-      const cards = await Card.find({ boardId, workspaceId, closed: false });
+      const cards = await Card.find({ boardId, workspaceId, closed: false })
+        .populate({ path: 'listId', select: 'name averageTimeInList' });
       const cooldownPolicy = await policyRuleService.getScheduledInterventionCooldownPolicy({ workspaceId });
       const scanOptions = { cooldownPolicy };
       const interventions = [];
@@ -243,39 +244,55 @@ class InterventionEngine {
 
   // Helper: Check if card is stuck
   async isCardStuck(card) {
-    if (!card.currentList || !card.enteredCurrentListAt) {
-      return false;
-    }
-
-    const timeInList = (Date.now() - card.enteredCurrentListAt.getTime()) / (1000 * 60 * 60 * 24);
-    const expectedTime = card.currentList.averageTimeInList || 2;
-
-    return timeInList > expectedTime * 2;
+    const timeInListHours = this.getTimeInCurrentListHours(card);
+    const expectedTimeInListHours = this.getExpectedTimeInListHours(card);
+    return Number.isFinite(timeInListHours)
+      && Number.isFinite(expectedTimeInListHours)
+      && expectedTimeInListHours > 0
+      && timeInListHours > expectedTimeInListHours * 2;
   }
 
   // Helper: Check if card has no recent activity
   async hasNoRecentActivity(card) {
-    if (!card.lastActivityAt) {
-      return true;
-    }
+    const lastActivityAt = this.getLastActivityAt(card);
+    if (!lastActivityAt) return true;
 
-    const daysSinceActivity = (Date.now() - card.lastActivityAt.getTime()) / (1000 * 60 * 60 * 24);
+    const daysSinceActivity = (Date.now() - lastActivityAt.getTime()) / (1000 * 60 * 60 * 24);
     return daysSinceActivity > 5;
+  }
+
+  getTimeInCurrentListHours(card) {
+    const value = Number(card?.timeInCurrentList);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }
+
+  getExpectedTimeInListHours(card) {
+    const value = Number(card?.listId?.averageTimeInList ?? card?.currentList?.averageTimeInList);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  getListName(card) {
+    return card?.listId?.name || card?.currentList?.name || 'the current list';
+  }
+
+  getLastActivityAt(card) {
+    const value = card?.lastActivity || card?.lastActivityAt;
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   // Helper: Get count of cards blocked by this card
   async getBlockingCount(card) {
     // Check comments and descriptions for mentions of this card blocking others
     // This is a simplified version - in production, you'd track dependencies explicitly
-    const blockingCards = await Card.find({
+    return Card.countDocuments({
       boardId: card.boardId,
       workspaceId: card.workspaceId,
       closed: false,
       'labels.name': 'BLOCKED',
       description: new RegExp(escapeRegExp(card.name).slice(0, 200), 'i')
     });
-
-    return blockingCards.length;
   }
 
   // Helper: Find best member to reassign card to
@@ -340,12 +357,21 @@ class InterventionEngine {
 
   // Message generators
   generateStuckCardMessage(card) {
-    const daysStuck = Math.floor((Date.now() - card.enteredCurrentListAt.getTime()) / (1000 * 60 * 60 * 24));
-    return `This card has been in "${card.currentList?.name}" for ${daysStuck} days. Expected completion was ${card.currentList?.averageTimeInList || 2} days. Please provide a status update by end of day.`;
+    const hoursInList = this.getTimeInCurrentListHours(card) || 0;
+    const expectedHours = this.getExpectedTimeInListHours(card) || 0;
+    const daysStuck = Math.max(1, Math.floor(hoursInList / 24));
+    const expectedDays = Math.max(1, Math.round(expectedHours / 24));
+    return `This card has been in "${this.getListName(card)}" for ${daysStuck} day(s). Expected time in this list is ${expectedDays} day(s). Please provide a status update by end of day.`;
   }
 
   generateNoActivityMessage(card) {
-    const daysSinceActivity = Math.floor((Date.now() - card.lastActivityAt.getTime()) / (1000 * 60 * 60 * 24));
+    const lastActivityAt = this.getLastActivityAt(card);
+    const daysSinceActivity = lastActivityAt
+      ? Math.max(1, Math.floor((Date.now() - lastActivityAt.getTime()) / (1000 * 60 * 60 * 24)))
+      : 0;
+    if (!lastActivityAt) {
+      return 'No recorded card activity date is available. Please provide an update and confirm the next action.';
+    }
     return `No activity on this card for ${daysSinceActivity} days. Please provide an update. Do you need help?`;
   }
 
