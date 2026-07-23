@@ -743,7 +743,7 @@ describe('capacity-aware forecasting', () => {
     });
   });
 
-  test('uses only explicit Float and Resource Guru member mappings as bounded allocation evidence', () => {
+  test('uses only explicit Float, Resource Guru, and Motion member mappings as bounded allocation evidence', () => {
     const { buildForecast } = require('../src/services/forecastService');
     const forecast = buildForecast({
       now: new Date('2026-07-06T09:00:00.000Z'),
@@ -763,9 +763,27 @@ describe('capacity-aware forecasting', () => {
     });
 
     expect(forecast.memberCapacity[0]).toMatchObject({ scheduledAllocationHoursNext28Days: 72, scheduledAllocationWeeklyHours: 18, weeklyAvailableHours: 16 });
-    expect(forecast.dataQuality.allocations).toMatchObject({ providers: ['float', 'resource_guru'], entries: 3, totalHours: 152, matchedEntries: 2, matchedHours: 72, matchedWeeklyHours: 18, unmatchedEntries: 1, unmatchedHours: 80, matchedMembers: 1 });
+    expect(forecast.dataQuality.allocations).toMatchObject({ providers: ['float', 'resource_guru', 'motion'], entries: 3, totalHours: 152, matchedEntries: 2, matchedHours: 72, matchedWeeklyHours: 18, unmatchedEntries: 1, unmatchedHours: 80, matchedMembers: 1 });
     expect(forecast.portfolio.risks.join(' ')).toContain('Mapped resourcing allocations exceed modeled capacity');
-    expect(forecast.portfolio.assumptions.join(' ')).toContain('Explicit Float or Resource Guru member mappings');
+    expect(forecast.portfolio.assumptions.join(' ')).toContain('Explicit Float, Resource Guru, or Motion member mappings');
+  });
+
+  test('uses mapped open Motion schedules without retaining assignee profiles or double-counting shared work', () => {
+    const { buildForecast } = require('../src/services/forecastService');
+    const forecast = buildForecast({
+      now: new Date('2026-07-06T09:00:00.000Z'),
+      boards: [{ _id: 'board-1', name: 'Launch', externalProjectMappings: [{ provider: 'motion', projectId: 'project_1' }] }],
+      members: [{ _id: 'member-1', username: 'milan', fullName: 'Milan' }],
+      profiles: [{ _id: 'profile-1', memberId: 'member-1', weeklyHours: 20, allocationPercent: 100, focusHoursPerWeek: 4, externalIdentities: [{ provider: 'motion', externalId: 'user_1' }] }],
+      cards: [{ _id: 'card-1', boardId: 'board-1', members: ['member-1'], riskLevel: 'normal' }],
+      allocationSignals: [
+        { provider: 'motion', sourceType: 'task', status: 'open', raw: { projectId: 'project_1', status: 'open', assigneeIds: ['user_1', 'unmapped'], durationMinutes: 480, scheduledStart: '2026-07-07T09:00:00.000Z', scheduledEnd: '2026-07-07T17:00:00.000Z' } },
+        { provider: 'motion', sourceType: 'task', status: 'done', raw: { projectId: 'project_1', status: 'done', assigneeIds: ['user_1'], durationMinutes: 480, scheduledStart: '2026-07-08T09:00:00.000Z', scheduledEnd: '2026-07-08T17:00:00.000Z' } }
+      ]
+    });
+
+    expect(forecast.memberCapacity[0]).toMatchObject({ scheduledAllocationHoursNext28Days: 4, scheduledAllocationWeeklyHours: 1 });
+    expect(forecast.dataQuality.allocations).toMatchObject({ providers: ['float', 'resource_guru', 'motion'], entries: 1, totalHours: 8, matchedEntries: 1, matchedHours: 4, unmatchedHours: 4, matchedMembers: 1, mappedProjectEntries: 1, mappedProjectHours: 4, mappedBoards: 1 });
   });
 
   test('uses explicit provider project mappings only to scope schedule evidence to one board', () => {

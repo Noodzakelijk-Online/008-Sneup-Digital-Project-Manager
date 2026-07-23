@@ -18,7 +18,7 @@ const UTILIZATION_WINDOW_DAYS = 28;
 const ALLOCATION_WINDOW_DAYS = 28;
 const CALENDAR_WINDOW_DAYS = 28;
 const TIME_TRACKING_PROVIDERS = ['harvest', 'everhour', 'timeneye', 'toggl_track', 'clockify'];
-const RESOURCING_PROVIDERS = ['float', 'resource_guru'];
+const RESOURCING_PROVIDERS = ['float', 'resource_guru', 'motion'];
 const CALENDAR_PROVIDERS = ['google_workspace', 'microsoft_365'];
 const MAX_CALENDAR_EVENT_HOURS = 12;
 
@@ -266,12 +266,16 @@ const allocationSummary = ({ signals = [], boards = [], members = [], profilesBy
   signals.forEach((signal) => {
     const provider = String(signal?.provider || '').toLowerCase();
     const raw = signal?.raw || {};
-    const start = new Date(raw.startedAt || '');
-    const end = new Date(raw.dueAt || '');
-    const scheduledHours = provider === 'float' ? Number(raw.scheduledHours) : Number(raw.scheduledMinutes) / 60;
-    const externalId = provider === 'float' ? raw.assigneeId : raw.resourceId;
+    const motionAssigneeIds = provider === 'motion' && Array.isArray(raw.assigneeIds)
+      ? [...new Set(raw.assigneeIds.map(id => String(id || '').trim()).filter(id => /^[A-Za-z0-9_-]{1,160}$/.test(id)))]
+      : [];
+    const start = new Date(provider === 'motion' ? raw.scheduledStart || '' : raw.startedAt || '');
+    const end = new Date(provider === 'motion' ? raw.scheduledEnd || '' : raw.dueAt || '');
+    const scheduledHours = provider === 'float' ? Number(raw.scheduledHours) : provider === 'motion' ? Number(raw.durationMinutes) / 60 : Number(raw.scheduledMinutes) / 60;
+    const externalIds = provider === 'motion' ? motionAssigneeIds : [provider === 'float' ? raw.assigneeId : raw.resourceId];
     if (!RESOURCING_PROVIDERS.includes(provider)
       || (provider === 'resource_guru' && raw.approvalState !== 'approved')
+      || (provider === 'motion' && (signal.status === 'done' || raw.status === 'done'))
       || !Number.isFinite(scheduledHours) || scheduledHours <= 0
       || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < now || start > windowEnd) return;
     const totalBusinessDays = businessDaysBetween(start, end);
@@ -282,25 +286,37 @@ const allocationSummary = ({ signals = [], boards = [], members = [], profilesBy
     const hoursInWindow = scheduledHours * overlapBusinessDays / totalBusinessDays;
     entries += 1;
     totalHours += hoursInWindow;
-    const key = resourceIdentityKey(provider, externalId);
-    const memberId = duplicateIdentities.has(key) ? null : memberIdByIdentity.get(key);
-    if (!memberId) {
+    if (externalIds.length === 0) {
+      unmatchedEntries += 1;
+      unmatchedHours += hoursInWindow;
+      return;
+    }
+    const hoursPerAssignee = hoursInWindow / externalIds.length;
+    let matchedHoursInSignal = 0;
+    externalIds.forEach((externalId) => {
+      const key = resourceIdentityKey(provider, externalId);
+      const memberId = duplicateIdentities.has(key) ? null : memberIdByIdentity.get(key);
+      if (!memberId) return;
+      matchedHoursInSignal += hoursPerAssignee;
+      const current = byMember.get(memberId) || { entries: 0, hours: 0 };
+      current.entries += 1;
+      current.hours += hoursPerAssignee;
+      byMember.set(memberId, current);
+    });
+    if (matchedHoursInSignal <= 0) {
       unmatchedEntries += 1;
       unmatchedHours += hoursInWindow;
       return;
     }
     matchedEntries += 1;
-    matchedHours += hoursInWindow;
-    const current = byMember.get(memberId) || { entries: 0, hours: 0 };
-    current.entries += 1;
-    current.hours += hoursInWindow;
-    byMember.set(memberId, current);
+    matchedHours += matchedHoursInSignal;
+    unmatchedHours += hoursInWindow - matchedHoursInSignal;
     const projectKey = resourceIdentityKey(provider, raw.projectId);
     const boardId = duplicateProjects.has(projectKey) ? null : boardIdByProject.get(projectKey);
     if (boardId) {
       const boardCurrent = byBoard.get(boardId) || { entries: 0, hours: 0 };
       boardCurrent.entries += 1;
-      boardCurrent.hours += hoursInWindow;
+      boardCurrent.hours += matchedHoursInSignal;
       byBoard.set(boardId, boardCurrent);
     }
   });
@@ -520,7 +536,7 @@ const buildForecast = ({ boards = [], cards = [], members = [], profiles = [], p
       `Capacity uses ${round(weeklyHours)} available team hours per week after allocation and focus time.`,
       `Open cards use ${round(teamCardHours)} hours each when a personal historical estimate is unavailable.`,
       ...(utilizationMembers.length > 0 ? [`Bounded ${utilization.providerLabel || 'tracked-time'} metadata covers ${utilizationMembers.length}/${usableCapacity.length} assigned contributors over the last ${UTILIZATION_WINDOW_DAYS} days and calibrates forecast confidence only.`] : []),
-      ...(allocationMembers.length > 0 ? [`Explicit Float or Resource Guru member mappings cover ${allocationMembers.length}/${usableCapacity.length} assigned contributors over the next ${ALLOCATION_WINDOW_DAYS} days and calibrate forecast confidence only.`] : []),
+      ...(allocationMembers.length > 0 ? [`Explicit Float, Resource Guru, or Motion member mappings cover ${allocationMembers.length}/${usableCapacity.length} assigned contributors over the next ${ALLOCATION_WINDOW_DAYS} days and calibrate forecast confidence only.`] : []),
       ...(boardId && boardSchedule.entries > 0 ? [`${round(boardSchedule.hours / (ALLOCATION_WINDOW_DAYS / 7))} scheduled hours per week map explicitly to this board and remain confidence-only evidence.`] : []),
       ...(calendarMembers.length > 0 ? [`Explicit Google Workspace or Microsoft 365 organizer mappings cover ${calendarMembers.length}/${usableCapacity.length} assigned contributors over the next ${CALENDAR_WINDOW_DAYS} days and calibrate forecast confidence only.`] : []),
       `P80 adds ${Math.round((uncertaintyMultiplier - 1) * 100)}% delivery uncertainty for ownership, risk, and evidence gaps.`
@@ -697,8 +713,8 @@ class ForecastService {
       WorkSignal.find({
         workspaceId,
         provider: { $in: RESOURCING_PROVIDERS },
-        sourceType: { $in: ['allocation', 'booking'] }
-      }).select('provider raw lastSeenAt').sort({ lastSeenAt: -1 }).limit(MAX_ALLOCATION_SIGNALS + 1),
+        sourceType: { $in: ['allocation', 'booking', 'task'] }
+      }).select('provider status raw lastSeenAt').sort({ lastSeenAt: -1 }).limit(MAX_ALLOCATION_SIGNALS + 1),
       WorkSignal.find({
         workspaceId,
         provider: { $in: CALENDAR_PROVIDERS },

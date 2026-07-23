@@ -22,9 +22,11 @@ const projectRecord = item => {
 
 const taskRecord = item => {
   const id = String(item?.id || ''); const name = boundedText(item?.name); const createdAt = parseDate(item?.createdTime); const updatedAt = parseDate(item?.updatedTime); const dueAt = parseDate(item?.dueDate); const scheduledStart = parseDate(item?.scheduledStart); const scheduledEnd = parseDate(item?.scheduledEnd); const duration = Number(item?.duration);
-  if (!safeId(id) || !name || (item?.createdTime && !createdAt) || (item?.updatedTime && !updatedAt) || (item?.dueDate && !dueAt) || (item?.scheduledStart && !scheduledStart) || (item?.scheduledEnd && !scheduledEnd) || (item?.duration !== undefined && item?.duration !== null && item?.duration !== '' && (!Number.isInteger(duration) || duration < 1 || duration > 10080))) return null;
+  const assignees = item?.assignees;
+  const assigneeIds = assignees === undefined || assignees === null ? [] : Array.isArray(assignees) && assignees.length <= 100 ? [...new Set(assignees.map(assignee => safeId(assignee?.id) ? String(assignee.id) : null))] : null;
+  if (!safeId(id) || !name || !assigneeIds || assigneeIds.includes(null) || (item?.createdTime && !createdAt) || (item?.updatedTime && !updatedAt) || (item?.dueDate && !dueAt) || (item?.scheduledStart && !scheduledStart) || (item?.scheduledEnd && !scheduledEnd) || (item?.duration !== undefined && item?.duration !== null && item?.duration !== '' && (!Number.isInteger(duration) || duration < 1 || duration > 10080))) return null;
   const priority = ['ASAP', 'HIGH', 'MEDIUM', 'LOW'].includes(item?.priority) ? item.priority.toLowerCase() : undefined;
-  return compact({ id: `task:${id}`, sourceType: 'task', taskId: id, projectId: safeId(item?.project?.id) ? String(item.project.id) : undefined, name, status: item?.completed === true || item?.status?.isResolvedStatus === true ? 'done' : 'open', priority, dueAt: dueAt?.toISOString(), startOn: /^\d{4}-\d{2}-\d{2}$/.test(String(item?.startOn || '')) ? item.startOn : undefined, durationMinutes: Number.isInteger(duration) ? duration : undefined, scheduledStart: scheduledStart?.toISOString(), scheduledEnd: scheduledEnd?.toISOString(), schedulingIssue: item?.schedulingIssue === true, createdAt: createdAt?.toISOString(), updatedAt: updatedAt?.toISOString() });
+  return compact({ id: `task:${id}`, sourceType: 'task', taskId: id, projectId: safeId(item?.project?.id) ? String(item.project.id) : undefined, name, status: item?.completed === true || item?.status?.isResolvedStatus === true ? 'done' : 'open', priority, dueAt: dueAt?.toISOString(), startOn: /^\d{4}-\d{2}-\d{2}$/.test(String(item?.startOn || '')) ? item.startOn : undefined, durationMinutes: Number.isInteger(duration) ? duration : undefined, assigneeIds, scheduledStart: scheduledStart?.toISOString(), scheduledEnd: scheduledEnd?.toISOString(), schedulingIssue: item?.schedulingIssue === true, createdAt: createdAt?.toISOString(), updatedAt: updatedAt?.toISOString() });
 };
 
 class MotionWorkSignalClient {
@@ -76,7 +78,7 @@ class MotionWorkSignalClient {
     const cutoff = priorCursor ? new Date(priorCursor.getTime() - config.cursorLookbackMs) : null;
     const records = [...projects, ...tasks].filter(item => { const changed = parseDate(item.updatedAt || item.createdAt); return !cutoff || !changed || changed >= cutoff; });
     const newest = records.reduce((latest, item) => { const changed = parseDate(item.updatedAt || item.createdAt); return changed && (!latest || changed > latest) ? changed : latest; }, priorCursor);
-    return { records, nextCursor: newest ? newest.toISOString() : cursor || null, hasMore: false, metadata: { source: 'motion_api', workspaceId, projects: projects.length, tasks: tasks.length, contentPolicy: 'selected_workspace_bounded_project_and_task_metadata_only_no_descriptions_creator_assignees_emails_labels_custom_fields_project_payloads_workspace_profiles_or_provider_writes' } };
+    return { records, nextCursor: newest ? newest.toISOString() : cursor || null, hasMore: false, metadata: { source: 'motion_api', workspaceId, projects: projects.length, tasks: tasks.length, contentPolicy: 'selected_workspace_bounded_project_and_task_metadata_only_opaque_task_assignee_ids_only_for_explicit_capacity_mapping_no_descriptions_creator_or_assignee_names_emails_labels_custom_fields_project_payloads_workspace_profiles_or_provider_writes' } };
   }
 }
 

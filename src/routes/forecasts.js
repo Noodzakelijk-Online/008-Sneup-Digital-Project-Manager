@@ -35,8 +35,8 @@ const normalizeTimeOff = (items) => {
   });
 };
 
-const CAPACITY_EVIDENCE_PROVIDERS = new Set(['float', 'resource_guru', 'google_workspace', 'microsoft_365', 'timeneye', 'toggl_track', 'clockify']);
-const RESOURCING_PROJECT_PROVIDERS = new Set(['float', 'resource_guru']);
+const CAPACITY_EVIDENCE_PROVIDERS = new Set(['float', 'resource_guru', 'motion', 'google_workspace', 'microsoft_365', 'timeneye', 'toggl_track', 'clockify']);
+const RESOURCING_PROJECT_PROVIDERS = new Set(['float', 'resource_guru', 'motion']);
 const SAFE_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9@._+-]{0,159}$/;
 const normalizeExternalIdentities = (items) => {
   if (!Array.isArray(items)) return [];
