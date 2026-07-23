@@ -371,29 +371,32 @@ gitlabAdapter.fetchDelta = (account, cursor) => gitlabWorkSignalClient.fetchDelt
 adapters.set('gitlab', gitlabAdapter);
 
 const googleWorkspaceAdapter = buildAdapter('google_workspace', 'Google Workspace artifact adapter', (account, item) => {
+  const isGoogleTask = item.googleSource === 'tasks';
   const mime = String(item.mimeType || item.kind || '').toLowerCase();
-  const sourceType = mime.includes('calendar') || item.start ? 'event'
+  const sourceType = isGoogleTask ? pick(item.sourceType, 'task') : mime.includes('calendar') || item.start ? 'event'
     : mime.includes('mail') || item.threadId ? 'message'
       : 'document';
   const nativeId = pick(item.id, item.threadId, 'unknown');
-  const externalId = pick(item.externalId, sourceType === 'event'
+  const externalId = pick(item.externalId, isGoogleTask
+    ? `google_tasks:${item.taskListId || 'default'}:${item.taskId || nativeId}`
+    : sourceType === 'event'
     ? `calendar:${item.calendar?.id || 'default'}:${nativeId}`
     : `drive:${nativeId}`);
   return {
     externalId,
     sourceType,
     title: pick(item.title, item.name, item.summary, item.subject),
-    description: pick(item.description, item.snippet, ''),
-    status: item.trashed ? 'archived' : statusFromText(item.status),
+    description: isGoogleTask ? '' : pick(item.description, item.snippet, ''),
+    status: isGoogleTask ? item.status || 'open' : item.trashed ? 'archived' : statusFromText(item.status),
     priority: priorityFromText(item.priority, item.labels),
-    url: pick(item.url, item.webViewLink, item.htmlLink),
-    owners: userNames(item.owners || item.creator || item.organizer),
-    labels: labelNames(pick(item.labels, item.labelIds)),
-    dueAt: pick(item.dueAt, item.end?.dateTime, item.end?.date),
-    providerCreatedAt: pick(item.providerCreatedAt, item.createdTime, item.created),
-    providerUpdatedAt: pick(item.providerUpdatedAt, item.modifiedTime, item.updated),
+    url: isGoogleTask ? undefined : pick(item.url, item.webViewLink, item.htmlLink),
+    owners: isGoogleTask ? [] : userNames(item.owners || item.creator || item.organizer),
+    labels: isGoogleTask ? compact(['google_tasks', item.sourceType, item.taskList?.name]) : labelNames(pick(item.labels, item.labelIds)),
+    dueAt: isGoogleTask ? item.dueAt : pick(item.dueAt, item.end?.dateTime, item.end?.date),
+    providerCreatedAt: isGoogleTask ? undefined : pick(item.providerCreatedAt, item.createdTime, item.created),
+    providerUpdatedAt: isGoogleTask ? pick(item.updatedAt) : pick(item.providerUpdatedAt, item.modifiedTime, item.updated),
     evidenceRefs: baseEvidence(account, item, 'Google Workspace item'),
-    raw: item
+    raw: isGoogleTask ? { id: item.id, sourceType: item.sourceType, taskId: item.taskId, taskListId: item.taskListId, taskList: item.taskList, status: item.status, dueAt: item.dueAt, completedAt: item.completedAt, updatedAt: item.updatedAt } : item
   };
 });
 googleWorkspaceAdapter.capabilities.credentialBackedSync = true;

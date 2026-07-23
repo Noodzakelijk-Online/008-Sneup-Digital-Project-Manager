@@ -3455,6 +3455,7 @@ describe('work signal normalization', () => {
       get: jest.fn()
         .mockResolvedValueOnce({ data: { items: [{ id: 'primary', summary: 'Primary' }] } })
         .mockResolvedValueOnce({ data: { files: [{ id: 'file-1', name: 'Launch brief', mimeType: 'application/pdf', modifiedTime: '2026-07-08T12:00:00.000Z' }] } })
+        .mockResolvedValueOnce({ data: { items: [] } })
         .mockResolvedValueOnce({ data: { items: [{ id: 'event-1', summary: 'Launch review', updated: '2026-07-08T13:00:00.000Z', start: { dateTime: '2026-07-09T09:00:00Z' }, description: 'Private client notes', attendees: [{ email: 'private@example.test' }], location: 'Private room', conferenceData: { entryPoints: [{ uri: 'https://private.example.test' }] } }] } })
     };
     const client = new GoogleWorkspaceWorkSignalClient({

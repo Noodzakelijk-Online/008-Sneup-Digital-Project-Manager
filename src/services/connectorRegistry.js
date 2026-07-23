@@ -282,7 +282,7 @@ const CONNECTORS = [
     id: 'google_workspace',
     name: 'Google Workspace',
     category: 'calendar_email',
-    description: 'Calendar, Drive, Docs, Sheets, Slides, Meet artifacts, and directory data through Google APIs. Gmail connects separately with a narrower metadata-only scope.',
+    description: 'Read-only Calendar, Drive, and bounded Google Tasks metadata through Google APIs. Sneup excludes Gmail, task notes, links, assignments, and provider writes.',
     auth: oauth2({
       envPrefix: 'GOOGLE',
       authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
@@ -292,12 +292,13 @@ const CONNECTORS = [
         'email',
         'profile',
         'https://www.googleapis.com/auth/calendar.readonly',
-        'https://www.googleapis.com/auth/drive.metadata.readonly'
+        'https://www.googleapis.com/auth/drive.metadata.readonly',
+        'https://www.googleapis.com/auth/tasks.readonly'
       ],
       extraAuthParams: { access_type: 'offline', prompt: 'consent' },
       docsUrl: 'https://developers.google.com/identity/protocols/oauth2/web-server'
     }),
-    sync: ['calendar', 'drive', 'docs', 'sheets', 'slides', 'users']
+    sync: ['calendar', 'drive', 'google_tasks']
   },
   {
     id: 'slack',
