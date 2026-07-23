@@ -467,6 +467,8 @@ class JobObservabilityService {
         failureCount: 0,
         metadata: {
           mode: 'demo',
+          providerQueueCount: 2,
+          concurrency: 2,
           dependencyFreshness: {
             providerCount: 2,
             markedStale: 1,
