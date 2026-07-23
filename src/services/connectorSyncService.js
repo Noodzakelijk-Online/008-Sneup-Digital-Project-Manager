@@ -56,13 +56,20 @@ class ConnectorSyncService {
   }
 
   async runTrackedSync(options = {}) {
+    const scheduledMetadata = Number.isFinite(Number(options.scheduledWorkspaceCount))
+      ? {
+        scheduledWorkspaceCount: clamp(options.scheduledWorkspaceCount, 0, 0, 5000),
+        scheduledWorkspaceConcurrency: this.getScheduledWorkspaceConcurrency(options.scheduledWorkspaceConcurrency)
+      }
+      : {};
     return jobObservabilityService.trackJob({
       jobName: 'connectors.work_signals_sync',
       jobType: 'sync',
       triggerType: options.triggerType || 'scheduled',
       workspaceId: options.workspaceId,
       metadata: {
-        actor: options.actor || 'connector-sync'
+        actor: options.actor || 'connector-sync',
+        ...scheduledMetadata
       }
     }, () => this.syncConnectedAccounts(options));
   }
@@ -90,18 +97,15 @@ class ConnectorSyncService {
     }
   }
 
-  async runScheduledSyncPass() {
-    const workspaceIds = await listActiveWorkspaceIds();
-    const results = [];
-
-    for (const workspaceId of workspaceIds) {
-      results.push(await this.runTrackedSync({
+  async runScheduledSyncPass(options = {}) {
+    const workspaceIds = options.workspaceIds || await listActiveWorkspaceIds();
+    const concurrency = this.getScheduledWorkspaceConcurrency(options.concurrency);
+    return mapWithConcurrency(workspaceIds, concurrency, workspaceId => this.runTrackedSync({
         triggerType: 'scheduled',
-        workspaceId
+        workspaceId,
+        scheduledWorkspaceCount: workspaceIds.length,
+        scheduledWorkspaceConcurrency: concurrency
       }));
-    }
-
-    return results;
   }
 
   async syncConnectedAccounts(options = {}) {
@@ -160,6 +164,12 @@ class ConnectorSyncService {
     }
 
     const dependencyFreshness = await this.finalizeDependencyFreshness(workspaceId, successfulProviders);
+    const scheduledMetadata = Number.isFinite(Number(options.scheduledWorkspaceCount))
+      ? {
+        scheduledWorkspaceCount: clamp(options.scheduledWorkspaceCount, 0, 0, 5000),
+        scheduledWorkspaceConcurrency: this.getScheduledWorkspaceConcurrency(options.scheduledWorkspaceConcurrency)
+      }
+      : {};
 
     return {
       processedCount: accounts.length,
@@ -175,13 +185,18 @@ class ConnectorSyncService {
         retryCount,
         rateLimitWaitMs,
         providerStats,
-        dependencyFreshness
+        dependencyFreshness,
+        ...scheduledMetadata
       }
     };
   }
 
   getAccountSyncConcurrency(value = process.env.SNEUP_CONNECTOR_SYNC_CONCURRENCY) {
     return clamp(value, 3, 1, 8);
+  }
+
+  getScheduledWorkspaceConcurrency(value = process.env.SNEUP_CONNECTOR_SCHEDULED_WORKSPACE_CONCURRENCY) {
+    return clamp(value, 2, 1, 4);
   }
 
   groupAccountsByProvider(accounts = []) {

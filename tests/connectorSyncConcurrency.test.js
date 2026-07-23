@@ -79,5 +79,43 @@ describe('connector sync concurrency', () => {
     expect(service.getAccountSyncConcurrency('0')).toBe(1);
     expect(service.getAccountSyncConcurrency('99')).toBe(8);
     expect(service.getAccountSyncConcurrency('invalid')).toBe(3);
+    expect(service.getScheduledWorkspaceConcurrency('0')).toBe(1);
+    expect(service.getScheduledWorkspaceConcurrency('99')).toBe(4);
+    expect(service.getScheduledWorkspaceConcurrency('invalid')).toBe(2);
+  });
+
+  test('starts a bounded number of scheduled workspaces and records that scheduler capacity', async () => {
+    const service = new ConnectorSyncService();
+    const starts = [];
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    service.runTrackedSync = jest.fn(async (options) => {
+      starts.push(options.workspaceId);
+      await gate;
+      return { workspaceId: options.workspaceId };
+    });
+
+    const pass = service.runScheduledSyncPass({
+      workspaceIds: ['workspace-1', 'workspace-2', 'workspace-3'],
+      concurrency: 2
+    });
+    await waitFor(() => starts.length === 2);
+
+    expect(starts).toEqual(['workspace-1', 'workspace-2']);
+    expect(service.runTrackedSync.mock.calls.map(([options]) => ({
+      workspaceId: options.workspaceId,
+      scheduledWorkspaceCount: options.scheduledWorkspaceCount,
+      scheduledWorkspaceConcurrency: options.scheduledWorkspaceConcurrency
+    }))).toEqual([
+      { workspaceId: 'workspace-1', scheduledWorkspaceCount: 3, scheduledWorkspaceConcurrency: 2 },
+      { workspaceId: 'workspace-2', scheduledWorkspaceCount: 3, scheduledWorkspaceConcurrency: 2 }
+    ]);
+
+    release();
+    await expect(pass).resolves.toEqual([
+      { workspaceId: 'workspace-1' },
+      { workspaceId: 'workspace-2' },
+      { workspaceId: 'workspace-3' }
+    ]);
   });
 });

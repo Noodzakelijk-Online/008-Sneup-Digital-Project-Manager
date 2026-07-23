@@ -19,12 +19,14 @@ const providerEnvKey = (provider) => String(provider || 'unknown')
 class ProviderSyncPolicyService {
   constructor(options = {}) {
     this.nextAllowedAt = new Map();
+    this.providerQueues = new Map();
     this.now = options.now || Date.now;
     this.sleep = options.sleep || delay;
   }
 
   reset() {
     this.nextAllowedAt.clear();
+    this.providerQueues.clear();
   }
 
   getPolicy(provider, overrides = {}) {
@@ -64,6 +66,23 @@ class ProviderSyncPolicyService {
   }
 
   async run(provider, callback, overrides = {}) {
+    const key = String(provider || 'unknown');
+    const previous = this.providerQueues.get(key) || Promise.resolve();
+    const queued = previous
+      .catch(() => undefined)
+      .then(() => this.runWithPolicy(provider, callback, overrides));
+    this.providerQueues.set(key, queued);
+
+    try {
+      return await queued;
+    } finally {
+      if (this.providerQueues.get(key) === queued) {
+        this.providerQueues.delete(key);
+      }
+    }
+  }
+
+  async runWithPolicy(provider, callback, overrides = {}) {
     const policy = this.getPolicy(provider, overrides);
     let retryCount = 0;
     let rateLimitWaitMs = 0;

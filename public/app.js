@@ -1295,6 +1295,8 @@ function renderJobHealthItem(job) {
   const connectorPacingMs = Number(job.metadata?.rateLimitWaitMs) || 0;
   const providerQueueCount = Number(job.metadata?.providerQueueCount) || 0;
   const connectorConcurrency = Number(job.metadata?.concurrency) || 0;
+  const scheduledWorkspaceCount = Number(job.metadata?.scheduledWorkspaceCount) || 0;
+  const scheduledWorkspaceConcurrency = Number(job.metadata?.scheduledWorkspaceConcurrency) || 0;
   const signalWriteBatchCount = Number(job.metadata?.signalWriteBatchCount) || 0;
   const signalWriteBatchSize = Number(job.metadata?.signalWriteBatchSize) || 0;
   const dependencyFreshness = job.metadata?.dependencyFreshness;
@@ -1333,6 +1335,7 @@ function renderJobHealthItem(job) {
       </div>
       ${connectorRetries || connectorPacingMs ? `<div class="meta"><span>${connectorRetries} provider retries</span><span>${Math.round(connectorPacingMs / 1000)}s provider pacing</span></div>` : ''}
       ${providerQueueCount || connectorConcurrency ? `<div class="meta"><span>${providerQueueCount} provider queues</span><span>up to ${connectorConcurrency || 1} in parallel</span></div>` : ''}
+      ${scheduledWorkspaceCount ? `<div class="meta"><span>${scheduledWorkspaceCount} scheduled ${scheduledWorkspaceCount === 1 ? 'workspace' : 'workspaces'}</span><span>up to ${scheduledWorkspaceConcurrency || 1} at once</span></div>` : ''}
       ${signalWriteBatchCount ? `<div class="meta"><span>${signalWriteBatchCount} signal write ${signalWriteBatchCount === 1 ? 'batch' : 'batches'}</span><span>up to ${signalWriteBatchSize || 1} signals each</span></div>` : ''}
       ${freshnessProviders || staleDependencies || freshnessFailures ? `<div class="meta"><span>Graph freshness: ${freshnessProviders} providers checked</span><span>${staleDependencies} stale edges marked</span>${freshnessHorizon ? `<span>${freshnessHorizon}</span>` : ''}${freshnessFailures ? `<span>${freshnessFailures} freshness checks failed</span>` : ''}</div>` : ''}
       ${syncRegressionSignals ? `<div class="meta"><span>Sync regression watch: ${syncRegressionSignals} ${syncRegressionSignals === 1 ? 'signal' : 'signals'} across ${syncRegressionProviders.length} ${syncRegressionProviders.length === 1 ? 'provider' : 'providers'}</span><span>${escapeHtml(syncRegressionDetails.join(' | '))}</span></div>` : ''}
