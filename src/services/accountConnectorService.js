@@ -1421,17 +1421,21 @@ class AccountConnectorService {
     const workSignalAdapterService = require('./workSignalAdapterService');
     const adapter = workSignalAdapterService.getAdapter(connector.id);
     const accountConnectionAvailable = Boolean(adapter?.capabilities?.credentialBackedSync);
+    const availability = connector.availability || {};
     return {
       status: accountConnectionAvailable ? 'ready' : 'catalog_only',
       accountConnectionAvailable,
-      readOnly: true
+      readOnly: true,
+      availabilityStatus: accountConnectionAvailable ? 'available' : availability.status || 'unavailable',
+      reason: accountConnectionAvailable ? undefined : availability.reason || 'A bounded read-only account-sync contract has not been verified for this provider.'
     };
   }
 
   requireAccountConnectionAvailable(connector) {
     if (this.getSyncReadiness(connector).accountConnectionAvailable) return;
 
-    const error = new Error(`${connector.name} is listed in the connector catalog, but its secure work-signal sync is not available yet.`);
+    const reason = this.getSyncReadiness(connector).reason;
+    const error = new Error(`${connector.name} is listed in the connector catalog, but its secure work-signal sync is unavailable. ${reason}`);
     error.statusCode = 409;
     throw error;
   }

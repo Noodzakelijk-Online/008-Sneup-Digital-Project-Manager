@@ -1834,44 +1834,76 @@ describe('connector registry', () => {
     expect(github.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
-      readOnly: true
+      readOnly: true,
+      availabilityStatus: 'available',
+      reason: undefined
     });
     expect(microsoftProject.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
-      readOnly: true
+      readOnly: true,
+      availabilityStatus: 'available',
+      reason: undefined
     });
     expect(quip.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
-      readOnly: true
+      readOnly: true,
+      availabilityStatus: 'available',
+      reason: undefined
     });
     expect(hive.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
-      readOnly: true
+      readOnly: true,
+      availabilityStatus: 'available',
+      reason: undefined
     });
     expect(clarizen.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
-      readOnly: true
+      readOnly: true,
+      availabilityStatus: 'available',
+      reason: undefined
     });
     expect(lucid.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
-      readOnly: true
+      readOnly: true,
+      availabilityStatus: 'available',
+      reason: undefined
     });
     expect(taskworld.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
-      readOnly: true
+      readOnly: true,
+      availabilityStatus: 'available',
+      reason: undefined
     });
     expect(proofhub.syncReadiness).toEqual({
       status: 'ready',
       accountConnectionAvailable: true,
-      readOnly: true
+      readOnly: true,
+      availabilityStatus: 'available',
+      reason: undefined
     });
     expect(accountConnectorService.beginConnection('proofhub')).toMatchObject({ authType: 'api_key' });
+
+    const pivotalTracker = catalog.connectors.find(connector => connector.id === 'pivotal_tracker');
+    const evernote = catalog.connectors.find(connector => connector.id === 'evernote');
+    expect(pivotalTracker.syncReadiness).toMatchObject({
+      status: 'catalog_only',
+      accountConnectionAvailable: false,
+      availabilityStatus: 'retired',
+      reason: expect.stringMatching(/sunset/i)
+    });
+    expect(evernote.syncReadiness).toMatchObject({
+      status: 'catalog_only',
+      accountConnectionAvailable: false,
+      availabilityStatus: 'legacy',
+      reason: expect.stringMatching(/legacy-only/i)
+    });
+    expect(() => accountConnectorService.beginConnection('pivotal_tracker')).toThrow(/sunset/i);
   });
 
   test('keeps connector catalog readiness available when scheduled sync loads first', () => {

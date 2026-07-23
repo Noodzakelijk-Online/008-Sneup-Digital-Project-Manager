@@ -3904,11 +3904,12 @@ function renderConnector(connector, account) {
   const safety = connector.safety || {};
   const syncReady = connector.syncReadiness?.accountConnectionAvailable === true;
   const adapterImplemented = syncReady;
-  const connectionLabel = connected ? (adapterImplemented ? 'connected' : 'linked') : syncReady ? (configured ? 'ready' : 'setup') : 'catalog';
+  const catalogAvailability = connector.syncReadiness?.availabilityStatus || 'unavailable';
+  const connectionLabel = connected ? (adapterImplemented ? 'connected' : 'linked') : syncReady ? (configured ? 'ready' : 'setup') : catalogAvailability === 'retired' ? 'retired' : catalogAvailability === 'legacy' ? 'legacy' : 'unavailable';
   const connectionStatusClass = connected && adapterImplemented ? 'connected' : connected || (syncReady && configured) ? 'review' : 'high';
   const adapterSummary = syncReady
     ? 'Read-only sync adapter available.'
-    : 'Account connection is not available yet.';
+    : connector.syncReadiness?.reason || 'Account connection is not available yet.';
   const isJira = connector.id === 'jira_software' || connector.id === 'jira_service_management';
   const isConfluence = connector.id === 'confluence';
   const isAsana = connector.id === 'asana';
@@ -3984,7 +3985,7 @@ function renderConnector(connector, account) {
         <span class="pill ${connectionStatusClass}">${connectionLabel}</span>
       </div>
       <p>${escapeHtml(connector.description)}</p>
-      <div class="connector-policy ${safety.scopeRisk === 'review' ? 'review' : ''}">${escapeHtml(safety.summary || 'Read-only ingestion only.')}</div>
+      ${syncReady ? `<div class="connector-policy ${safety.scopeRisk === 'review' ? 'review' : ''}">${escapeHtml(safety.summary || 'Read-only ingestion only.')}</div>` : ''}
       <div class="meta"><span>${escapeHtml(isGenericWebhook ? 'HMAC-verified inbound event adapter available.' : adapterSummary)}</span></div>
       ${consentSummary}
       ${syncSummary}
