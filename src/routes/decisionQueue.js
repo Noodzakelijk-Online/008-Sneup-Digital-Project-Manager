@@ -43,10 +43,10 @@ const listQueue = async (req, res, ownerType) => {
   }
 };
 
-router.get('/', (req, res) => listQueue(req, res));
-router.get('/robert', (req, res) => listQueue(req, res, 'robert'));
-router.get('/team', (req, res) => listQueue(req, res, 'team'));
-router.get('/va', (req, res) => listQueue(req, res, 'va'));
+router.get('/', requirePermission('decision-queue:manage'), (req, res) => listQueue(req, res));
+router.get('/robert', requirePermission('decision-queue:manage'), (req, res) => listQueue(req, res, 'robert'));
+router.get('/team', requirePermission('decision-queue:manage'), (req, res) => listQueue(req, res, 'team'));
+router.get('/va', requirePermission('decision-queue:manage'), (req, res) => listQueue(req, res, 'va'));
 
 router.post('/:itemId/resolve', requirePermission('decision-queue:manage'), async (req, res) => {
   try {

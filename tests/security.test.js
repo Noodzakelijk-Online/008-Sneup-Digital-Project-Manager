@@ -602,6 +602,48 @@ describe('request security boundaries', () => {
     expect(res.body.requiredPermission).toBe('decision-queue:manage');
   });
 
+  test('requires decision queue management permission before returning canonical decision queues', () => {
+    jest.resetModules();
+    jest.doMock('../src/services/operationsLedgerService', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getRequestWorkspaceObjectId: jest.fn(() => 'workspace-1')
+    }));
+
+    const decisionQueueRoutes = require('../src/routes/decisionQueue');
+    for (const path of ['/', '/robert', '/team', '/va']) {
+      const route = decisionQueueRoutes.stack.find((layer) => layer.route?.path === path).route;
+      const res = createResponse();
+      const next = jest.fn();
+
+      route.stack[0].handle(createRequest({ auth: { authenticated: true, roles: [], permissions: [] } }), res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(403);
+      expect(res.body.requiredPermission).toBe('decision-queue:manage');
+    }
+  });
+
+  test('requires follow-up management permission before returning follow-up queues', () => {
+    jest.resetModules();
+    jest.doMock('../src/services/operationsLedgerService', () => ({}));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      getRequestWorkspaceObjectId: jest.fn(() => 'workspace-1')
+    }));
+
+    const followUpRoutes = require('../src/routes/followUps');
+    for (const path of ['/', '/due']) {
+      const route = followUpRoutes.stack.find((layer) => layer.route?.path === path).route;
+      const res = createResponse();
+      const next = jest.fn();
+
+      route.stack[0].handle(createRequest({ auth: { authenticated: true, roles: [], permissions: [] } }), res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(403);
+      expect(res.body.requiredPermission).toBe('follow-ups:manage');
+    }
+  });
+
   test('requires audit read permission before returning team workload reports', () => {
     jest.resetModules();
     jest.doMock('../src/services/teamManager', () => ({}));

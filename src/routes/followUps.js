@@ -20,7 +20,7 @@ const sendError = (res, error, fallback) => res.status(error.statusCode || 500).
   error: error.statusCode ? error.message : fallback
 });
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('follow-ups:manage'), async (req, res) => {
   try {
     const followUps = await operationsLedgerService.listFollowUps({
       ...workspaceOptions(req),
@@ -37,7 +37,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/due', async (req, res) => {
+router.get('/due', requirePermission('follow-ups:manage'), async (req, res) => {
   try {
     const followUps = await operationsLedgerService.listFollowUps({
       ...workspaceOptions(req),
