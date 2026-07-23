@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject', 'hive', 'clarizen',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -51,6 +51,7 @@ const codaWorkSignalClient = lazyClient('./codaWorkSignalClient');
 const quipWorkSignalClient = lazyClient('./quipWorkSignalClient');
 const hiveWorkSignalClient = lazyClient('./hiveWorkSignalClient');
 const clarizenWorkSignalClient = lazyClient('./clarizenWorkSignalClient');
+const lucidWorkSignalClient = lazyClient('./lucidWorkSignalClient');
 const teamworkWorkSignalClient = lazyClient('./teamworkWorkSignalClient');
 const teamGanttWorkSignalClient = lazyClient('./teamganttWorkSignalClient');
 const businessmapWorkSignalClient = lazyClient('./businessmapWorkSignalClient');
@@ -937,6 +938,14 @@ clarizenAdapter.capabilities.credentialBackedSync = true;
 clarizenAdapter.list = async account => (await clarizenWorkSignalClient.fetchDelta(account, null)).records;
 clarizenAdapter.fetchDelta = (account, cursor) => clarizenWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('clarizen', clarizenAdapter);
+
+const lucidAdapter = buildAdapter('lucid', 'Lucid document metadata adapter', (account, item) => ({
+  externalId: pick(item.id), sourceType: pick(item.sourceType, 'document'), title: titleFromText(item.name, 'Lucid document'), description: '', status: item.status || 'open', priority: 'unknown', url: undefined, owners: [], labels: compact(['lucid', item.sourceType, item.product]), dueAt: undefined, providerCreatedAt: item.createdAt, providerUpdatedAt: item.updatedAt || item.createdAt, evidenceRefs: baseEvidence(account, item, 'Lucid document metadata'), raw: { id: item.id, sourceType: item.sourceType, documentId: item.documentId, product: item.product, status: item.status, createdAt: item.createdAt, updatedAt: item.updatedAt }
+}));
+lucidAdapter.capabilities.credentialBackedSync = true;
+lucidAdapter.list = async account => (await lucidWorkSignalClient.fetchDelta(account, null)).records;
+lucidAdapter.fetchDelta = (account, cursor) => lucidWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('lucid', lucidAdapter);
 
 const youTrackAdapter = buildAdapter('youtrack', 'YouTrack issue metadata adapter', (account, item) => ({
   externalId: pick(item.id), sourceType: 'issue', title: titleFromText(item.name, 'YouTrack issue'), description: '',
