@@ -42,7 +42,7 @@ class AutopilotService {
           .sort({ name: 1 })
           .lean(),
         Card.find({ workspaceId, closed: false })
-          .select('_id trelloId name boardId listId members due dueComplete closed riskLevel riskFactors labels checklists lastActivity updatedAt createdAt')
+          .select('_id trelloId name boardId listId members due dueComplete closed riskLevel riskFactors labels.name checklists.items.complete lastActivity updatedAt createdAt')
           .populate({ path: 'boardId', select: '_id trelloId name url' })
           .populate({ path: 'listId', select: '_id name' })
           .populate({ path: 'members', select: '_id username fullName' })
@@ -254,10 +254,27 @@ class AutopilotService {
 
     if (boardIds.length === 0) return analyticsByBoard;
 
-    const analyticsRecords = await Analytics.find({ workspaceId, boardId: { $in: boardIds } })
-      .select('_id boardId date updatedAt createdAt velocity projectHealth bottlenecks')
-      .sort({ boardId: 1, date: -1 })
-      .lean();
+    const analyticsRecords = await Analytics.aggregate([
+      { $match: { workspaceId, boardId: { $in: boardIds } } },
+      { $sort: { boardId: 1, date: -1 } },
+      {
+        $group: {
+          _id: '$boardId',
+          velocity: { $first: '$velocity' },
+          projectHealth: { $first: '$projectHealth' },
+          bottlenecks: { $first: '$bottlenecks' }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          boardId: '$_id',
+          velocity: 1,
+          projectHealth: 1,
+          bottlenecks: 1
+        }
+      }
+    ]);
 
     for (const analytics of analyticsRecords) {
       const boardId = analytics.boardId.toString();

@@ -50,14 +50,14 @@ describe('mission-control read optimization', () => {
     }]);
     const memberQuery = queryResult([{ _id: 'member-1', username: 'nina', fullName: 'Nina Jacobs', workloadLevel: 'normal', specialties: ['launch'] }]);
     const interventionQuery = queryResult([]);
-    const analyticsQuery = queryResult([]);
+    const analyticsAggregate = jest.fn().mockResolvedValue([]);
     const listQuery = queryResult([{ _id: 'list-1', boardId: 'board-1', name: 'Review', position: 1, averageTimeInList: 6 }]);
 
     jest.doMock('../src/models/Board', () => ({ find: jest.fn(() => boardQuery) }));
     jest.doMock('../src/models/Card', () => ({ find: jest.fn(() => cardQuery) }));
     jest.doMock('../src/models/Member', () => ({ find: jest.fn(() => memberQuery) }));
     jest.doMock('../src/models/Intervention', () => ({ find: jest.fn(() => interventionQuery) }));
-    jest.doMock('../src/models/Analytics', () => ({ find: jest.fn(() => analyticsQuery) }));
+    jest.doMock('../src/models/Analytics', () => ({ aggregate: analyticsAggregate }));
     jest.doMock('../src/models/List', () => ({ find: jest.fn(() => listQuery) }));
     jest.doMock('../src/services/workGraphService', () => ({ listDecisionCandidates: jest.fn().mockResolvedValue({ candidates: [] }) }));
     jest.doMock('../src/services/forecastService', () => ({ getForecast: jest.fn().mockResolvedValue({ memberCapacity: [] }) }));
@@ -76,12 +76,21 @@ describe('mission-control read optimization', () => {
     expect(snapshot.risks.some(risk => risk.type === 'overdue')).toBe(true);
     expect(snapshot.commandQueue.some(command => command.type === 'escalate_overdue')).toBe(true);
     expect(boardQuery.select).toHaveBeenCalledWith(expect.stringContaining('trelloId'));
-    expect(cardQuery.select).toHaveBeenCalledWith(expect.stringContaining('checklists'));
+    expect(cardQuery.select).toHaveBeenCalledWith(expect.stringContaining('labels.name'));
+    expect(cardQuery.select).toHaveBeenCalledWith(expect.stringContaining('checklists.items.complete'));
+    const cardProjection = cardQuery.select.mock.calls[0][0];
+    expect(cardProjection).not.toMatch(/description|comments|attachments|history/);
     expect(boardQuery.lean).toHaveBeenCalledTimes(1);
     expect(cardQuery.lean).toHaveBeenCalledTimes(1);
     expect(memberQuery.lean).toHaveBeenCalledTimes(1);
     expect(interventionQuery.lean).toHaveBeenCalledTimes(1);
-    expect(analyticsQuery.lean).toHaveBeenCalledTimes(1);
+    const analyticsPipeline = analyticsAggregate.mock.calls[0][0];
+    expect(analyticsPipeline[0].$match.boardId).toEqual({ $in: ['board-1'] });
+    expect(String(analyticsPipeline[0].$match.workspaceId)).toBe(workspaceId);
+    expect(analyticsPipeline[1]).toEqual({ $sort: { boardId: 1, date: -1 } });
+    expect(analyticsPipeline[2]).toMatchObject({
+      $group: { _id: '$boardId', velocity: { $first: '$velocity' } }
+    });
     expect(listQuery.lean).toHaveBeenCalledTimes(1);
   });
 });
