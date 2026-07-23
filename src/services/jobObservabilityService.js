@@ -5,6 +5,9 @@ const { getDefaultWorkspaceObjectId, normalizeWorkspaceObjectId } = require('./w
 const logger = require('../utils/logger');
 
 const DEFAULT_LIMIT = 100;
+const CONNECTOR_SYNC_REGRESSION_HISTORY_LIMIT = 4;
+const CONNECTOR_SYNC_REGRESSION_MIN_BASELINE_RUNS = 2;
+const CONNECTOR_SYNC_REGRESSION_MIN_PACING_MS = 60 * 1000;
 
 const trackedJobs = [
   {
@@ -244,6 +247,7 @@ class JobObservabilityService {
 
     const controlsByJob = new Map(controls.map(control => [control.jobName, control]));
 
+    const connectorSyncRegressionWatch = this.getConnectorSyncRegressionWatch(runs);
     const health = trackedJobs.map(config => {
       const latest = latestByJob.get(config.jobName);
       const lastSuccess = runs.find(run => run.jobName === config.jobName && run.status === 'succeeded');
@@ -276,7 +280,12 @@ class JobObservabilityService {
         processedCount: latest?.processedCount || 0,
         successCount: latest?.successCount || 0,
         failureCount: latest?.failureCount || 0,
-        metadata: latest?.metadata || {},
+        metadata: {
+          ...(latest?.metadata || {}),
+          ...(config.jobName === 'connectors.work_signals_sync'
+            ? { syncRegressionWatch: connectorSyncRegressionWatch }
+            : {})
+        },
         pausedAt: control?.pausedAt,
         pausedBy: control?.pausedBy || '',
         pausedReason: control?.pausedReason || ''
@@ -297,11 +306,81 @@ class JobObservabilityService {
         failedJobs: health.filter(item => item.status === 'failed').length,
         pausedJobs: health.filter(item => item.status === 'paused').length,
         runningJobs: runningRuns.length,
-        failedRuns: failedRuns.length
+        failedRuns: failedRuns.length,
+        syncRegressionProviders: connectorSyncRegressionWatch.regressionProviderCount,
+        syncRegressionSignals: connectorSyncRegressionWatch.signalCount
       },
       health,
       recentRuns: runs.slice(0, 25).map(run => this.serializeRun(run))
     };
+  }
+
+  getConnectorSyncRegressionWatch(runs = []) {
+    const syncRuns = runs
+      .filter(run => run?.jobName === 'connectors.work_signals_sync' && run.status === 'succeeded')
+      .sort((left, right) => new Date(right.finishedAt || right.startedAt || 0) - new Date(left.finishedAt || left.startedAt || 0));
+    const current = syncRuns[0];
+    const currentProviderStats = current?.metadata?.providerStats || {};
+    const history = syncRuns.slice(1, CONNECTOR_SYNC_REGRESSION_HISTORY_LIMIT + 1);
+    const providers = [];
+
+    for (const provider of Object.keys(currentProviderStats).sort()) {
+      const baselineStats = history
+        .map(run => run.metadata?.providerStats?.[provider])
+        .filter(Boolean);
+      if (baselineStats.length < CONNECTOR_SYNC_REGRESSION_MIN_BASELINE_RUNS) continue;
+
+      const currentStats = currentProviderStats[provider] || {};
+      const currentFailures = this.safeMetric(currentStats.failures);
+      const baselineFailures = baselineStats.map(stats => this.safeMetric(stats.failures));
+      const currentPacingMs = this.safeMetric(currentStats.rateLimitWaitMs);
+      const baselinePacingMs = baselineStats.map(stats => this.safeMetric(stats.rateLimitWaitMs));
+      const signals = [];
+
+      if (currentFailures > 0 && baselineFailures.every(value => value === 0)) {
+        signals.push('new_failures_after_clean_baseline');
+      }
+
+      const pacingBaselineMs = this.medianMetric(baselinePacingMs);
+      const pacingThresholdMs = Math.max(
+        CONNECTOR_SYNC_REGRESSION_MIN_PACING_MS,
+        pacingBaselineMs * 3
+      );
+      if (currentPacingMs >= pacingThresholdMs) {
+        signals.push('pacing_spike');
+      }
+
+      if (signals.length > 0) {
+        providers.push({
+          provider,
+          signalCount: signals.length,
+          signals,
+          baselineRunCount: baselineStats.length
+        });
+      }
+    }
+
+    return {
+      historyRunCount: history.length,
+      observedProviderCount: Object.keys(currentProviderStats).length,
+      regressionProviderCount: providers.length,
+      signalCount: providers.reduce((total, provider) => total + provider.signalCount, 0),
+      providers
+    };
+  }
+
+  safeMetric(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+  }
+
+  medianMetric(values = []) {
+    const sorted = values.filter(Number.isFinite).sort((left, right) => left - right);
+    if (sorted.length === 0) return 0;
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+      ? (sorted[middle - 1] + sorted[middle]) / 2
+      : sorted[middle];
   }
 
   serializeRun(run) {

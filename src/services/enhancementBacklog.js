@@ -175,7 +175,7 @@ const enhancements = [
     impact: 'Allows Sneup to reason across projects without forcing every provider into Trello-specific schemas.',
     effort: 'XL',
     status: 'in-progress',
-    nextStep: 'Use durable stale-edge telemetry to tune connector-specific freshness thresholds and flag sync regressions before they distort project decisions.',
+    nextStep: 'Use durable stale-edge telemetry to tune connector-specific freshness thresholds after reviewing the bounded Job Health regression watch in a live workspace.',
     acceptanceCriteria: [
       'Trello data can be projected into the normalized graph without losing Trello-specific fields.',
       'At least three non-Trello providers can sync into the graph.',

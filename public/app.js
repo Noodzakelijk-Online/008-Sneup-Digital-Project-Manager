@@ -1072,7 +1072,10 @@ function renderJobDashboard() {
   const summary = dashboard.summary || {};
   const health = dashboard.health || [];
   const freshnessEvidenceJobs = health.filter(job =>
-    job.status === 'healthy' && Number(job.metadata?.dependencyFreshness?.providerCount) > 0
+    job.status === 'healthy' && (
+      Number(job.metadata?.dependencyFreshness?.providerCount) > 0
+      || Number(job.metadata?.syncRegressionWatch?.signalCount) > 0
+    )
   ).slice(0, 1);
   const problemJobs = health
     .filter(job => job.status !== 'healthy')
@@ -1305,6 +1308,17 @@ function renderJobHealthItem(job) {
   const freshnessHorizon = freshnessHorizons.length > 0
     ? `${freshnessHorizons[0]}${freshnessHorizons[0] === freshnessHorizons.at(-1) ? '' : `-${freshnessHorizons.at(-1)}`} day horizon`
     : '';
+  const syncRegressionWatch = job.metadata?.syncRegressionWatch || {};
+  const syncRegressionSignals = Number(syncRegressionWatch.signalCount) || 0;
+  const syncRegressionProviders = Array.isArray(syncRegressionWatch.providers)
+    ? syncRegressionWatch.providers
+    : [];
+  const syncRegressionDetails = syncRegressionProviders.map(provider => {
+    const labels = (provider.signals || []).map(signal => signal === 'pacing_spike'
+      ? 'pacing spike'
+      : 'new failures').join(', ');
+    return `${provider.provider}: ${labels}`;
+  });
   return `
     <div class="item">
       <div class="item-title">
@@ -1321,6 +1335,7 @@ function renderJobHealthItem(job) {
       ${providerQueueCount || connectorConcurrency ? `<div class="meta"><span>${providerQueueCount} provider queues</span><span>up to ${connectorConcurrency || 1} in parallel</span></div>` : ''}
       ${signalWriteBatchCount ? `<div class="meta"><span>${signalWriteBatchCount} signal write ${signalWriteBatchCount === 1 ? 'batch' : 'batches'}</span><span>up to ${signalWriteBatchSize || 1} signals each</span></div>` : ''}
       ${freshnessProviders || staleDependencies || freshnessFailures ? `<div class="meta"><span>Graph freshness: ${freshnessProviders} providers checked</span><span>${staleDependencies} stale edges marked</span>${freshnessHorizon ? `<span>${freshnessHorizon}</span>` : ''}${freshnessFailures ? `<span>${freshnessFailures} freshness checks failed</span>` : ''}</div>` : ''}
+      ${syncRegressionSignals ? `<div class="meta"><span>Sync regression watch: ${syncRegressionSignals} ${syncRegressionSignals === 1 ? 'signal' : 'signals'} across ${syncRegressionProviders.length} ${syncRegressionProviders.length === 1 ? 'provider' : 'providers'}</span><span>${escapeHtml(syncRegressionDetails.join(' | '))}</span></div>` : ''}
       ${job.pausedReason ? `<div class="meta">${escapeHtml(job.pausedReason)}</div>` : ''}
       ${job.lastError ? `<div class="meta">${escapeHtml(job.lastError)}</div>` : ''}
       <div class="item-actions">
