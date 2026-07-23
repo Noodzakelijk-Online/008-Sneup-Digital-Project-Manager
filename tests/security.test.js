@@ -4769,7 +4769,7 @@ describe('work signal normalization', () => {
     jest.dontMock('../src/services/airtableWorkSignalClient');
     jest.resetModules();
     const { AirtableWorkSignalClient } = require('../src/services/airtableWorkSignalClient');
-    const http = { get: jest.fn().mockResolvedValue({ data: { records: [{ id: 'rec-1', createdTime: '2026-07-10T08:00:00.000Z', fields: { Task: 'Ship Airtable sync', Status: 'In Progress', Priority: 'High', Owner: 'Robert', Due: '2026-07-15', PrivateNotes: 'Never retain this' } }] } }) };
+    const http = { get: jest.fn().mockResolvedValue({ data: { records: [{ id: 'rec123', createdTime: '2026-07-10T08:00:00.000Z', fields: { Task: 'Ship Airtable sync', Status: 'In Progress', Priority: 'High', Owner: 'Robert', Due: '2026-07-15', PrivateNotes: 'Never retain this' } }] } }) };
     const client = new AirtableWorkSignalClient({ http, accountConnectorService: { getAccountCredentials: jest.fn(() => ({ token: 'airtable-token' })) } });
     const result = await client.fetchDelta({ metadata: { fields: { baseId: 'app123', tableName: 'Tasks', fieldNames: 'Task, Status, Priority, Owner, Due' } } });
     expect(http.get).toHaveBeenCalledWith('https://api.airtable.com/v0/app123/Tasks', expect.objectContaining({ params: expect.objectContaining({ 'fields[]': ['Task', 'Status', 'Priority', 'Owner', 'Due'], pageSize: 100 }), headers: expect.objectContaining({ Authorization: 'Bearer airtable-token' }) }));

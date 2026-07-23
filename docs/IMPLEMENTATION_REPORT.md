@@ -12,6 +12,8 @@ Sneup now includes an account connector marketplace for project-management tools
 
 - Todoist uses only fixed-host bounded GET requests for project and task metadata. Each response is capped at 1 MB by default, redirects and proxy use are disabled, task titles redact email addresses and URLs, and normalized evidence never retains provider URLs, descriptions, comments, attachments, or provider-write capability.
 
+- Airtable requires an explicit base, table, and field allowlist. It uses capped fixed-host GET pages with redirects and proxy use disabled, rejects malformed or repeated pagination cursors, redacts email addresses and URLs in retained field values, and excludes unselected fields, provider URLs, and provider writes.
+
 ## Security Work
 
 Fixed or mitigated:

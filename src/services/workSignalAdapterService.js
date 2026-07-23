@@ -674,10 +674,36 @@ smartsheetAdapter.fetchDelta = (account, cursor) => smartsheetWorkSignalClient.f
 adapters.set('smartsheet', smartsheetAdapter);
 
 const airtableAdapter = buildAdapter('airtable', 'Airtable record adapter', (account, record) => ({
-  externalId: pick(record.externalId, record.id), sourceType: 'task', title: pick(record.title, record.name), description: '',
-  status: statusFromText(record.status), priority: priorityFromText(record.priority), url: pick(record.url), owners: userNames(record.owners),
-  labels: compact([record.base?.name, record.table?.name, record.status]), dueAt: pick(record.dueAt), providerCreatedAt: pick(record.createdTime),
-  providerUpdatedAt: pick(record.updatedTime, record.createdTime), evidenceRefs: baseEvidence(account, record, 'Airtable record'), raw: record
+  externalId: pick(record.externalId, record.id),
+  sourceType: 'task',
+  title: titleFromText(pick(record.title, record.name), 'Airtable task'),
+  description: '',
+  status: statusFromText(record.status),
+  priority: priorityFromText(record.priority),
+  url: undefined,
+  owners: userNames(record.owners),
+  labels: compact(['airtable', record.base?.name, record.table?.name, record.status]),
+  dueAt: record.dueAt,
+  providerCreatedAt: record.createdTime,
+  providerUpdatedAt: record.updatedTime || record.createdTime,
+  evidenceRefs: [{
+    provider: account.connectorId,
+    externalId: String(pick(record.externalId, record.id, 'unknown')),
+    label: 'Airtable allowlisted task metadata',
+    type: account.connectorId
+  }],
+  raw: {
+    id: record.id,
+    externalId: record.externalId,
+    status: record.status,
+    priority: record.priority,
+    owners: record.owners,
+    dueAt: record.dueAt,
+    createdTime: record.createdTime,
+    updatedTime: record.updatedTime,
+    base: record.base ? { id: record.base.id, name: record.base.name } : undefined,
+    table: record.table ? { name: record.table.name } : undefined
+  }
 }));
 airtableAdapter.capabilities.credentialBackedSync = true;
 airtableAdapter.list = async (account) => (await airtableWorkSignalClient.fetchDelta(account, null)).records;

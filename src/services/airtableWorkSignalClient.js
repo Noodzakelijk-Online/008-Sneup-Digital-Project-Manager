@@ -17,11 +17,16 @@ const safeFields = (value) => String(value || '')
   .filter((field, index, fields) => fields.indexOf(field) === index);
 
 const valueText = (value) => (Array.isArray(value) ? value.join(', ') : String(value ?? ''))
+  .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted email]')
+  .replace(/\bhttps?:\/\/\S+/gi, '[redacted url]')
   .replace(/\s+/g, ' ')
   .trim()
-  .slice(0, 500);
+  .slice(0, 240);
 
 const matchingField = (fields, pattern) => fields.find(field => pattern.test(field));
+const connectorError = (message, statusCode = 502) => Object.assign(new Error(message), { statusCode });
+const validRecordId = value => /^rec[A-Za-z0-9]{1,124}$/.test(String(value || ''));
+const validOffset = value => typeof value === 'string' && value.length > 0 && value.length <= 512;
 
 class AirtableWorkSignalClient {
   constructor(options = {}) {
@@ -48,6 +53,7 @@ class AirtableWorkSignalClient {
       tableName: String(metadata.tableName).trim(),
       allowedFields,
       timeout: clampInteger(process.env.SNEUP_AIRTABLE_TIMEOUT_MS, 15000, 1000, 60000),
+      maxResponseBytes: clampInteger(process.env.SNEUP_AIRTABLE_MAX_RESPONSE_BYTES, 1000000, 1024, 5000000),
       maxRecords: clampInteger(process.env.SNEUP_AIRTABLE_MAX_RECORDS, 1000, 1, 5000),
       pageSize: clampInteger(process.env.SNEUP_AIRTABLE_PAGE_SIZE, 100, 1, 100)
     };
@@ -92,6 +98,7 @@ class AirtableWorkSignalClient {
     const dueField = matchingField(config.allowedFields, /\b(due|deadline|finish|end)\b/i);
     const records = [];
     let offset;
+    const seenOffsets = new Set();
     do {
       const remaining = config.maxRecords - records.length;
       if (remaining <= 0) {
@@ -102,11 +109,22 @@ class AirtableWorkSignalClient {
       const response = await this.http.get(`${config.apiUrl}/${encodeURIComponent(config.baseId)}/${encodeURIComponent(config.tableName)}`, {
         params: { 'fields[]': config.allowedFields, pageSize: Math.min(config.pageSize, remaining), ...(offset ? { offset } : {}) },
         headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
-        timeout: config.timeout
+        timeout: config.timeout,
+        maxContentLength: config.maxResponseBytes,
+        maxBodyLength: config.maxResponseBytes,
+        maxRedirects: 0,
+        proxy: false
       });
-      const page = Array.isArray(response.data?.records) ? response.data.records : [];
+      const page = response?.data?.records;
+      if (!Array.isArray(page) || page.length > remaining) {
+        throw connectorError('Airtable returned an invalid record page. Reconnect this account before syncing again.');
+      }
       for (const record of page) {
-        const fields = record.fields || {};
+        if (!record || typeof record !== 'object' || Array.isArray(record) || !validRecordId(record.id)
+          || !record.fields || typeof record.fields !== 'object' || Array.isArray(record.fields)) {
+          throw connectorError('Airtable returned invalid record metadata. Reconnect this account before syncing again.');
+        }
+        const fields = record.fields;
         const title = valueText(fields[titleField]);
         if (!title) continue;
         records.push({
@@ -122,7 +140,15 @@ class AirtableWorkSignalClient {
           table: { name: config.tableName }
         });
       }
-      offset = response.data?.offset;
+      const nextOffset = response?.data?.offset;
+      if (nextOffset !== undefined && nextOffset !== null && nextOffset !== '' && !validOffset(nextOffset)) {
+        throw connectorError('Airtable returned an invalid pagination cursor. Reconnect this account before syncing again.');
+      }
+      if (nextOffset && seenOffsets.has(nextOffset)) {
+        throw connectorError('Airtable returned a repeated pagination cursor. Reconnect this account before syncing again.');
+      }
+      if (nextOffset) seenOffsets.add(nextOffset);
+      offset = nextOffset || undefined;
       if (offset && records.length >= config.maxRecords) {
         const error = new Error('Airtable sync reached its configured record limit. Increase SNEUP_AIRTABLE_MAX_RECORDS before continuing.');
         error.statusCode = 413;
@@ -134,7 +160,17 @@ class AirtableWorkSignalClient {
         throw error;
       }
     } while (offset);
-    return { records, nextCursor: cursor || null, hasMore: false, metadata: { source: 'airtable_api', projects: 1, items: records.length } };
+    return {
+      records,
+      nextCursor: cursor || null,
+      hasMore: false,
+      metadata: {
+        source: 'airtable_api',
+        projects: 1,
+        items: records.length,
+        contentPolicy: 'explicit_allowlisted_fields_only_with_redacted_values_no_unselected_fields_provider_urls_or_provider_writes'
+      }
+    };
   }
 }
 

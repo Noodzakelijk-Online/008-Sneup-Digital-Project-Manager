@@ -230,6 +230,8 @@ Kantata OX (formerly Mavenlink) connects through an administrator-registered OAu
 
 Todoist uses its fixed HTTPS API host with bounded project and task collections, a 1 MB response ceiling by default, no redirects, and no proxy use. Sneup redacts email addresses and URLs from retained titles and excludes task descriptions, comments, attachments, provider URLs, and provider writes.
 
+Airtable requires an explicit base, table, and allowlisted task fields. Sneup rejects malformed or repeated page cursors, caps each fixed-host response at 1 MB by default, disables redirects and proxy use, redacts emails and URLs from retained field values, and excludes unselected fields, provider URLs, and provider writes.
+
 Motion is available for one explicit workspace and API key. Sneup uses fixed-host GET-only cursor pagination for project and task metadata, keeps only redacted titles, opaque IDs, schedule state, dates, durations, scheduling-issue flags, and opaque task-assignee IDs only for explicit capacity mappings. It excludes descriptions, creators, assignee names and emails, labels, custom fields, embedded project or workspace data, and provider writes.
 
 OpenProject is available for one public HTTPS instance and a bearer API token. Sneup pins each sync to public DNS results, uses bounded GET-only project and work-package metadata requests with server-side field selection, excludes descriptions, comments, attachments, people, custom fields, URLs, and provider writes, and fails visibly at configured collection limits.
