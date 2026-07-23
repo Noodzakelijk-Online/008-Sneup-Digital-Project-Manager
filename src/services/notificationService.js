@@ -7,6 +7,7 @@ const NotificationDelivery = require('../models/NotificationDelivery');
 const AuditEvent = require('../models/AuditEvent');
 const accountConnectorService = require('./accountConnectorService');
 const operationsLedgerService = require('./operationsLedgerService');
+const operationsBriefService = require('./operationsBriefService');
 const reportingService = require('./reportingService');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 const { safeExternalSourceUrl } = require('../utils/externalSourceUrl');
@@ -16,6 +17,7 @@ const MAX_POLICY_LIMIT = 100;
 const MAX_DELIVERY_LIMIT = 250;
 const MAX_DIGEST_ITEMS = 25;
 const MAX_REPORT_SOURCE_EVIDENCE = 12;
+const MAX_DAILY_BRIEF_HIGHLIGHTS = 10;
 const EMAIL_PATTERN = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 const severityRank = { warning: 1, critical: 2 };
 
@@ -99,8 +101,8 @@ class NotificationService {
   normalizeEventTypes(value) {
     const eventTypes = Array.isArray(value) ? value : [value || 'reconciliation_alert'];
     const unique = [...new Set(eventTypes.map(item => String(item || '').trim()).filter(Boolean))];
-    if (unique.length === 0 || unique.some(item => !['reconciliation_alert', 'weekly_status_report'].includes(item))) {
-      const error = new Error('Notification events must be reconciliation_alert or weekly_status_report');
+    if (unique.length === 0 || unique.some(item => !['reconciliation_alert', 'weekly_status_report', 'daily_operations_brief'].includes(item))) {
+      const error = new Error('Notification events must be reconciliation_alert, weekly_status_report, or daily_operations_brief');
       error.statusCode = 400;
       throw error;
     }
@@ -162,9 +164,21 @@ class NotificationService {
       error.statusCode = 400;
       throw error;
     }
+    const dailyBriefSchedule = body.dailyBriefSchedule || {};
+    const dailyBriefHourUtc = Number(dailyBriefSchedule.hourUtc ?? 8);
+    if (!Number.isInteger(dailyBriefHourUtc) || dailyBriefHourUtc < 0 || dailyBriefHourUtc > 23) {
+      const error = new Error('Daily operations brief settings require a valid UTC hour');
+      error.statusCode = 400;
+      throw error;
+    }
     const eventTypes = this.normalizeEventTypes(body.eventTypes);
     if (eventTypes.includes('weekly_status_report') && reportSchedule.enabled !== true) {
       const error = new Error('Enable a weekly status report schedule before adding that notification event');
+      error.statusCode = 400;
+      throw error;
+    }
+    if (eventTypes.includes('daily_operations_brief') && dailyBriefSchedule.enabled !== true) {
+      const error = new Error('Enable a daily operations brief schedule before adding that notification event');
       error.statusCode = 400;
       throw error;
     }
@@ -182,6 +196,10 @@ class NotificationService {
         reportType,
         dayOfWeekUtc: reportDayOfWeekUtc,
         hourUtc: reportHourUtc
+      },
+      dailyBriefSchedule: {
+        enabled: dailyBriefSchedule.enabled === true,
+        hourUtc: dailyBriefHourUtc
       }
     };
   }
@@ -200,6 +218,7 @@ class NotificationService {
       quietHours: policy.quietHours || { enabled: false, startHourUtc: 18, endHourUtc: 8 },
       digest: policy.digest || { enabled: false, hourUtc: 9, maximumItems: 10 },
       reportSchedule: policy.reportSchedule || { enabled: false, reportType: 'weekly_status', dayOfWeekUtc: 1, hourUtc: 9 },
+      dailyBriefSchedule: policy.dailyBriefSchedule || { enabled: false, hourUtc: 8 },
       status: policy.status,
       activatedBy: policy.activatedBy || '',
       activatedAt: policy.activatedAt,
@@ -563,6 +582,123 @@ class NotificationService {
       eventTypes: 'weekly_status_report',
       'reportSchedule.enabled': true,
       'reportSchedule.reportType': 'weekly_status'
+    });
+  }
+
+  dailyBriefOccurrence(policy, now = new Date()) {
+    const schedule = policy.dailyBriefSchedule;
+    const date = new Date(now);
+    if (!schedule?.enabled || Number.isNaN(date.getTime())) return null;
+
+    const occurrence = new Date(date);
+    occurrence.setUTCMinutes(0, 0, 0);
+    occurrence.setUTCHours(schedule.hourUtc);
+    if (occurrence > date) occurrence.setUTCDate(occurrence.getUTCDate() - 1);
+
+    const ageHours = (date.getTime() - occurrence.getTime()) / (60 * 60 * 1000);
+    return ageHours >= 0 && ageHours <= this.reportCatchUpHours() ? occurrence : null;
+  }
+
+  dailyBriefDedupeKey(occurrence = new Date()) {
+    return `daily-operations-brief:${new Date(occurrence).toISOString().slice(0, 10)}`;
+  }
+
+  buildDailyOperationsBriefEvent(brief = {}, now = new Date(), occurrence = now) {
+    const highlights = [
+      ...(brief.robertDecisions || []),
+      ...(brief.failedActions || []),
+      ...(brief.dueFollowUps || []),
+      ...(brief.boardHealth || [])
+    ].slice(0, MAX_DAILY_BRIEF_HIGHLIGHTS)
+      .map(item => compact(item.title || item.reason, 220))
+      .filter(Boolean);
+    const message = compact([
+      compact(brief.narrative, 900),
+      brief.nextDecision ? `Next decision: ${compact(brief.nextDecision, 300)}` : '',
+      highlights.length > 0 ? `Priority items:\n${highlights.map(item => `- ${item}`).join('\n')}` : '',
+      brief.morningPlan?.length ? `Morning plan:\n${brief.morningPlan.slice(0, 5).map(item => `- ${compact(item, 240)}`).join('\n')}` : ''
+    ].filter(Boolean).join('\n\n'), 4000) || 'No critical operating decisions are waiting.';
+
+    return {
+      eventType: 'daily_operations_brief',
+      dedupeKey: this.dailyBriefDedupeKey(occurrence),
+      severity: 'info',
+      title: compact(`Sneup daily operations: ${brief.headline || 'Project update'}`, 240),
+      message,
+      sourceType: 'operations_brief',
+      sourceId: new Date(occurrence).toISOString().slice(0, 10),
+      sourceEvidence: [],
+      now
+    };
+  }
+
+  async dispatchScheduledDailyOperationsBriefs(options = {}) {
+    this.requireDatabase();
+    const workspaceId = this.resolveWorkspaceId(options.workspaceId);
+    const now = new Date(options.now || Date.now());
+    const policies = await NotificationPolicy.find({
+      workspaceId,
+      status: 'active',
+      eventTypes: 'daily_operations_brief',
+      'dailyBriefSchedule.enabled': true
+    }).select('+destinationEncrypted');
+    const duePolicies = policies.map(policy => ({ policy, occurrence: this.dailyBriefOccurrence(policy, now) }))
+      .filter(item => item.occurrence);
+    if (duePolicies.length === 0) return { processedCount: 0, successCount: 0, failureCount: 0, metadata: { activePolicies: policies.length, duePolicies: 0, pendingPolicies: 0, existingDeliveries: 0 } };
+
+    const deliveryChecks = await Promise.all(duePolicies.map(async (item) => ({
+      ...item,
+      existing: await NotificationDelivery.exists({
+        workspaceId,
+        policyId: item.policy._id,
+        dedupeKey: this.dailyBriefDedupeKey(item.occurrence)
+      })
+    })));
+    const pendingPolicies = deliveryChecks.filter(item => !item.existing);
+    if (pendingPolicies.length === 0) {
+      return { processedCount: 0, successCount: 0, failureCount: 0, metadata: { activePolicies: policies.length, duePolicies: duePolicies.length, pendingPolicies: 0, existingDeliveries: duePolicies.length } };
+    }
+
+    let brief;
+    try {
+      brief = await operationsBriefService.getDailyBrief({ workspaceId });
+    } catch (error) {
+      logger.error('Scheduled daily operations brief generation failed:', error);
+      return { processedCount: pendingPolicies.length, successCount: 0, failureCount: pendingPolicies.length, metadata: { activePolicies: policies.length, duePolicies: duePolicies.length, pendingPolicies: pendingPolicies.length, existingDeliveries: duePolicies.length - pendingPolicies.length } };
+    }
+
+    let successCount = 0;
+    let failureCount = 0;
+    for (const { policy, occurrence } of pendingPolicies) {
+      try {
+        const result = await this.createAndDeliver(policy, this.buildDailyOperationsBriefEvent(brief, now, occurrence), 'sneup-notification-worker');
+        if (['delivered', 'duplicate', 'in_progress'].includes(result.status)) successCount += 1;
+        else failureCount += 1;
+      } catch (error) {
+        failureCount += 1;
+        logger.error('Scheduled daily operations brief delivery failed:', error);
+      }
+    }
+    return {
+      processedCount: pendingPolicies.length,
+      successCount,
+      failureCount,
+      metadata: {
+        activePolicies: policies.length,
+        duePolicies: duePolicies.length,
+        pendingPolicies: pendingPolicies.length,
+        existingDeliveries: duePolicies.length - pendingPolicies.length,
+        headline: compact(brief.headline, 240)
+      }
+    };
+  }
+
+  async listActiveDailyBriefWorkspaceIds() {
+    this.requireDatabase();
+    return NotificationPolicy.distinct('workspaceId', {
+      status: 'active',
+      eventTypes: 'daily_operations_brief',
+      'dailyBriefSchedule.enabled': true
     });
   }
 

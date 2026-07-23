@@ -20,6 +20,7 @@ const { getCategories, getConnectors } = require('../src/services/connectorRegis
 const { NotificationService } = require('../src/services/notificationService');
 const NotificationPolicy = require('../src/models/NotificationPolicy');
 const NotificationDelivery = require('../src/models/NotificationDelivery');
+const operationsBriefService = require('../src/services/operationsBriefService');
 const reportingService = require('../src/services/reportingService');
 
 const createResponse = () => ({
@@ -1184,6 +1185,99 @@ describe('notification delivery safety', () => {
       find.mockRestore();
       exists.mockRestore();
       generateReport.mockRestore();
+    }
+  });
+
+  test('keeps daily operations brief delivery explicit, bounded, and read-only', () => {
+    const policy = notificationService.normalizePolicyInput({
+      name: 'Daily operations',
+      channel: 'generic_webhook',
+      eventTypes: ['daily_operations_brief'],
+      dailyBriefSchedule: { enabled: true, hourUtc: 8 }
+    });
+    const brief = {
+      headline: 'Two Robert decisions waiting',
+      narrative: 'Two decisions and one follow-up need attention.',
+      nextDecision: 'Approve the release plan: Yes/No.',
+      robertDecisions: Array.from({ length: 12 }, (_, index) => ({ title: `Decision ${index + 1}` })),
+      failedActions: [],
+      dueFollowUps: [],
+      boardHealth: [],
+      morningPlan: Array.from({ length: 8 }, (_, index) => `Plan ${index + 1}`)
+    };
+
+    expect(notificationService.dailyBriefOccurrence(policy, '2026-07-13T07:59:00.000Z').toISOString()).toBe('2026-07-12T08:00:00.000Z');
+    expect(notificationService.dailyBriefOccurrence(policy, '2026-07-13T08:00:00.000Z').toISOString()).toBe('2026-07-13T08:00:00.000Z');
+    expect(notificationService.dailyBriefDedupeKey('2026-07-13T08:00:00.000Z')).toBe('daily-operations-brief:2026-07-13');
+    const event = notificationService.buildDailyOperationsBriefEvent(brief, '2026-07-13T08:00:00.000Z');
+    expect(event).toMatchObject({
+      eventType: 'daily_operations_brief',
+      severity: 'info',
+      dedupeKey: 'daily-operations-brief:2026-07-13',
+      sourceEvidence: []
+    });
+    expect(event.message).toContain('Next decision: Approve the release plan: Yes/No.');
+    expect(event.message).toContain('Decision 10');
+    expect(event.message).not.toContain('Decision 11');
+    expect(event.message).not.toContain('Plan 6');
+    expect(() => notificationService.normalizePolicyInput({
+      name: 'Unscheduled daily operations',
+      channel: 'generic_webhook',
+      eventTypes: ['daily_operations_brief']
+    })).toThrow(/schedule/i);
+  });
+
+  test('generates one daily brief only for due active policies and skips recorded deliveries', async () => {
+    const service = new NotificationService();
+    const duePolicy = {
+      _id: 'policy-daily-due',
+      workspaceId: 'workspace-1',
+      dailyBriefSchedule: { enabled: true, hourUtc: 8 }
+    };
+    const futurePolicy = {
+      _id: 'policy-daily-future',
+      workspaceId: 'workspace-1',
+      dailyBriefSchedule: { enabled: true, hourUtc: 10 }
+    };
+    const select = jest.fn().mockResolvedValue([duePolicy, futurePolicy]);
+    const find = jest.spyOn(NotificationPolicy, 'find').mockReturnValue({ select });
+    const exists = jest.spyOn(NotificationDelivery, 'exists').mockResolvedValueOnce(null).mockResolvedValueOnce({ _id: 'delivery-existing' });
+    const getDailyBrief = jest.spyOn(operationsBriefService, 'getDailyBrief').mockResolvedValue({
+      headline: 'Daily focus',
+      narrative: 'One decision needs review.',
+      robertDecisions: [],
+      failedActions: [],
+      dueFollowUps: [],
+      boardHealth: [],
+      morningPlan: []
+    });
+    service.requireDatabase = jest.fn();
+    service.resolveWorkspaceId = jest.fn(value => value);
+    service.reportCatchUpHours = jest.fn(() => 1);
+    service.createAndDeliver = jest.fn().mockResolvedValue({ status: 'duplicate' });
+
+    try {
+      await expect(service.dispatchScheduledDailyOperationsBriefs({ workspaceId: 'workspace-1', now: '2026-07-14T09:00:00.000Z' })).resolves.toMatchObject({
+        processedCount: 1,
+        successCount: 1,
+        failureCount: 0,
+        metadata: { activePolicies: 2, duePolicies: 1, headline: 'Daily focus' }
+      });
+      expect(find).toHaveBeenCalledWith(expect.objectContaining({
+        workspaceId: 'workspace-1',
+        status: 'active',
+        eventTypes: 'daily_operations_brief',
+        'dailyBriefSchedule.enabled': true
+      }));
+      expect(getDailyBrief).toHaveBeenCalledTimes(1);
+      expect(service.createAndDeliver).toHaveBeenCalledWith(duePolicy, expect.objectContaining({
+        eventType: 'daily_operations_brief',
+        dedupeKey: 'daily-operations-brief:2026-07-14'
+      }), 'sneup-notification-worker');
+    } finally {
+      find.mockRestore();
+      exists.mockRestore();
+      getDailyBrief.mockRestore();
     }
   });
 });

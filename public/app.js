@@ -1539,7 +1539,9 @@ function renderNotificationPolicy(policy) {
   const statusClass = policy.status === 'active' ? 'healthy' : 'review';
   const channel = String(policy.channel || '').replaceAll('_', ' ');
   const isWeeklyStatus = (policy.eventTypes || []).includes('weekly_status_report');
+  const isDailyOperationsBrief = (policy.eventTypes || []).includes('daily_operations_brief');
   const reportSchedule = policy.reportSchedule || {};
+  const dailyBriefSchedule = policy.dailyBriefSchedule || {};
   const weekDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   return `
     <div class="item">
@@ -1554,7 +1556,10 @@ function renderNotificationPolicy(policy) {
       </div>
       <div class="meta"><span>${policy.destinationConfigured ? 'Encrypted destination configured' : 'Destination needs configuration'}</span><span>${policy.quietHours?.enabled ? `Warning alerts defer ${escapeHtml(policy.quietHours.startHourUtc)}:00-${escapeHtml(policy.quietHours.endHourUtc)}:00 UTC` : 'No quiet hours'}</span></div>
       <div class="meta"><span>${policy.digest?.enabled ? `Warning digest at ${escapeHtml(policy.digest.hourUtc)}:00 UTC, up to ${escapeHtml(policy.digest.maximumItems)} items` : 'Warning alerts deliver individually'}</span></div>
-      <div class="meta"><span>${isWeeklyStatus && reportSchedule.enabled ? `Weekly status every ${escapeHtml(weekDays[reportSchedule.dayOfWeekUtc] || 'Monday')} at ${escapeHtml(reportSchedule.hourUtc)}:00 UTC` : 'No scheduled status report'}</span></div>
+      <div class="meta"><span>${[
+        isDailyOperationsBrief && dailyBriefSchedule.enabled ? `Daily operations brief at ${escapeHtml(dailyBriefSchedule.hourUtc)}:00 UTC` : '',
+        isWeeklyStatus && reportSchedule.enabled ? `Weekly status every ${escapeHtml(weekDays[reportSchedule.dayOfWeekUtc] || 'Monday')} at ${escapeHtml(reportSchedule.hourUtc)}:00 UTC` : ''
+      ].filter(Boolean).join(' | ') || 'No scheduled brief or report'}</span></div>
       ${renderNotificationPolicySchedulerHealth(policy)}
       <div class="item-actions">
         <button class="button" data-notification-policy-edit="${escapeHtml(policyId)}" type="button">Edit</button>
@@ -1576,6 +1581,10 @@ function renderNotificationPolicySchedulerHealth(policy) {
     weekly_status_report: {
       jobName: 'notifications.weekly_status_reports',
       label: 'Report scheduler'
+    },
+    daily_operations_brief: {
+      jobName: 'notifications.daily_operations_briefs',
+      label: 'Daily brief scheduler'
     }
   };
   const healthByJobName = new Map((state.notificationJobHealth || []).map(job => [job.jobName, job]));
@@ -4875,6 +4884,7 @@ function openNotificationPolicyForm(policy = null) {
   const quietHours = policy?.quietHours || { enabled: false, startHourUtc: 18, endHourUtc: 8 };
   const digest = policy?.digest || { enabled: false, hourUtc: 9, maximumItems: 10 };
   const reportSchedule = policy?.reportSchedule || { dayOfWeekUtc: 1, hourUtc: 9 };
+  const dailyBriefSchedule = policy?.dailyBriefSchedule || { hourUtc: 8 };
   const channel = policy?.channel || 'slack_webhook';
   els.modalTitle.textContent = isEdit ? 'Edit delivery policy' : 'Add delivery policy';
   els.modalBody.innerHTML = `
@@ -4884,6 +4894,7 @@ function openNotificationPolicyForm(policy = null) {
         <legend>Deliver</legend>
         <label><input name="eventTypes" type="checkbox" value="reconciliation_alert" ${eventTypes.includes('reconciliation_alert') ? 'checked' : ''}> Reconciliation alerts</label>
         <label><input name="eventTypes" type="checkbox" value="weekly_status_report" ${eventTypes.includes('weekly_status_report') ? 'checked' : ''}> Weekly status report</label>
+        <label><input name="eventTypes" type="checkbox" value="daily_operations_brief" ${eventTypes.includes('daily_operations_brief') ? 'checked' : ''}> Daily operations brief</label>
       </fieldset>
       <label>Channel
         <select name="channel" required>
@@ -4925,7 +4936,13 @@ function openNotificationPolicyForm(policy = null) {
           <label>Delivery hour UTC<input name="reportHourUtc" type="number" min="0" max="23" value="${escapeHtml(reportSchedule.hourUtc)}"></label>
         </div>
       </div>
-      <div class="notice">${isEdit ? `Changes keep this policy ${escapeHtml(policy.status)}. Activation remains a separate confirmation.` : 'The policy starts paused. Activate it separately when this workspace is ready to deliver its configured alerts or weekly status report.'}</div>
+      <div id="notificationDailyBriefSettings" hidden>
+        <div class="form-grid">
+          <label>Daily delivery hour UTC<input name="dailyBriefHourUtc" type="number" min="0" max="23" value="${escapeHtml(dailyBriefSchedule.hourUtc)}"></label>
+        </div>
+        <div class="notice">The daily brief is read-only: it summarizes current decisions, risks, follow-ups, and the morning plan. It never changes a provider account.</div>
+      </div>
+      <div class="notice">${isEdit ? `Changes keep this policy ${escapeHtml(policy.status)}. Activation remains a separate confirmation.` : 'The policy starts paused. Activate it separately when this workspace is ready to deliver its configured alerts, daily brief, or weekly status report.'}</div>
       <div class="toolbar modal-actions">
         <button class="button" type="button" id="cancelNotificationPolicy">Cancel</button>
         <button class="button primary" type="submit">${isEdit ? 'Save changes' : 'Save paused policy'}</button>
@@ -4941,6 +4958,7 @@ function openNotificationPolicyForm(policy = null) {
   const emailDestination = document.getElementById('notificationEmailDestination');
   const alertSettings = document.getElementById('notificationAlertSettings');
   const reportSettings = document.getElementById('notificationReportSettings');
+  const dailyBriefSettings = document.getElementById('notificationDailyBriefSettings');
   const syncDestinationInput = () => {
     const emailSelected = channelInput.value === 'email';
     const retainsDestination = isEdit && policy.destinationConfigured && channelInput.value === policy.channel;
@@ -4954,6 +4972,7 @@ function openNotificationPolicyForm(policy = null) {
     const selectedEventTypes = eventTypeInputs.filter(input => input.checked).map(input => input.value);
     alertSettings.hidden = !selectedEventTypes.includes('reconciliation_alert');
     reportSettings.hidden = !selectedEventTypes.includes('weekly_status_report');
+    dailyBriefSettings.hidden = !selectedEventTypes.includes('daily_operations_brief');
     eventTypeInputs[0].setCustomValidity(selectedEventTypes.length ? '' : 'Select at least one delivery type');
   };
   eventTypeInputs.forEach(input => input.addEventListener('change', syncEventSettings));
@@ -4986,6 +5005,10 @@ function openNotificationPolicyForm(policy = null) {
           reportType: 'weekly_status',
           dayOfWeekUtc: Number(form.elements.reportDayOfWeekUtc.value),
           hourUtc: Number(form.elements.reportHourUtc.value)
+        },
+        dailyBriefSchedule: {
+          enabled: eventTypeInputs.some(input => input.checked && input.value === 'daily_operations_brief'),
+          hourUtc: Number(form.elements.dailyBriefHourUtc.value)
         }
       };
       delete payload.destinationUrl;
@@ -5031,6 +5054,7 @@ function openNotificationActivation(policyId) {
   const eventLabels = [];
   if ((policy.eventTypes || []).includes('reconciliation_alert')) eventLabels.push(`${policy.minimumSeverity} reconciliation evidence alerts`);
   if ((policy.eventTypes || []).includes('weekly_status_report')) eventLabels.push('weekly status reports');
+  if ((policy.eventTypes || []).includes('daily_operations_brief')) eventLabels.push('daily operations briefs');
   els.modalTitle.textContent = 'Activate delivery policy';
   els.modalBody.innerHTML = `
     <form id="activateNotificationPolicyForm" class="notice-stack">

@@ -102,6 +102,13 @@ const trackedJobs = [
     manualTriggerAllowed: false
   },
   {
+    jobName: 'notifications.daily_operations_briefs',
+    jobType: 'system',
+    label: 'Daily operations brief delivery',
+    staleAfterMinutes: 26 * 60,
+    manualTriggerAllowed: false
+  },
+  {
     jobName: 'identity.invitation_retention',
     jobType: 'security',
     label: 'Invitation privacy retention',

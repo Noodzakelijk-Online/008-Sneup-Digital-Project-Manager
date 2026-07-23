@@ -15,7 +15,7 @@ const notificationDeliverySchema = new mongoose.Schema({
   },
   eventType: {
     type: String,
-    enum: ['reconciliation_alert', 'reconciliation_digest', 'weekly_status_report', 'test'],
+    enum: ['reconciliation_alert', 'reconciliation_digest', 'weekly_status_report', 'daily_operations_brief', 'test'],
     required: true,
     index: true
   },
