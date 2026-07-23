@@ -12,7 +12,7 @@ const FIRST_WAVE_ADAPTERS = [
   'notion',
   'monday',
   'clickup',
-  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'taskade', 'motion', 'ganttpro', 'paymo',
+  'azure_devops', 'workfront', 'servicenow', 'zoho_projects', 'new_relic', 'tableau', 'sharepoint', 'xero', 'google_forms', 'mural', 'canva', 'quickbooks', 'power_bi', 'looker_studio', 'jira_align', 'scoro', 'plane', 'openproject', 'hive', 'clarizen', 'lucid', 'taskworld', 'taskade', 'motion', 'ganttpro', 'paymo', 'kantata',
   'wrike', 'opsgenie',
   'smartsheet',
   'airtable', 'todoist', 'shortcut', 'bitbucket', 'harvest', 'everhour', 'timeneye', 'coda', 'quip', 'teamwork', 'teamgantt', 'kanbanize', 'basecamp', 'redmine', 'microsoft_planner', 'microsoft_project', 'youtrack', 'taiga', 'backlog', 'freedcamp', 'proofhub', 'meistertask', 'aha', 'productboard', 'toggl_track', 'clockify', 'float', 'resource_guru', 'sentry', 'pagerduty', 'statuspage', 'rest_api_generic', 'datadog', 'zendesk', 'freshdesk', 'pipedrive', 'hubspot', 'typeform', 'salesforce', 'survey_monkey', 'zapier', 'zoom', 'miro', 'dropbox', 'onedrive', 'google_drive', 'calendly', 'teams', 'google_chat', 'figma', 'confluence', 'box', 'rally', 'gmail', 'outlook', 'podio', 'intercom', 'webex', 'discord', 'mattermost', 'testRail', 'browserstack', 'make', 'n8n'
@@ -31,6 +31,7 @@ const gitlabWorkSignalClient = lazyClient('./gitlabWorkSignalClient');
 const trelloWorkSignalClient = lazyClient('./trelloWorkSignalClient');
 const jiraWorkSignalClient = lazyClient('./jiraWorkSignalClient');
 const asanaWorkSignalClient = lazyClient('./asanaWorkSignalClient');
+const kantataWorkSignalClient = lazyClient('./kantataWorkSignalClient');
 const slackWorkSignalClient = lazyClient('./slackWorkSignalClient');
 const googleWorkspaceWorkSignalClient = lazyClient('./googleWorkspaceWorkSignalClient');
 const microsoft365WorkSignalClient = lazyClient('./microsoft365WorkSignalClient');
@@ -313,6 +314,41 @@ asanaAdapter.capabilities.credentialBackedSync = true;
 asanaAdapter.list = async (account) => (await asanaWorkSignalClient.fetchDelta(account, null)).records;
 asanaAdapter.fetchDelta = (account, cursor) => asanaWorkSignalClient.fetchDelta(account, cursor);
 adapters.set('asana', asanaAdapter);
+
+const kantataAdapter = buildAdapter('kantata', 'Kantata OX project metadata adapter', (account, item) => ({
+  externalId: pick(item.id),
+  sourceType: 'project',
+  title: titleFromText(item.name, 'Kantata OX project'),
+  description: '',
+  status: item.status || 'open',
+  priority: 'unknown',
+  url: undefined,
+  owners: [],
+  labels: compact(['kantata', item.sourceType, item.status]),
+  dueAt: item.dueAt,
+  providerCreatedAt: item.createdAt,
+  providerUpdatedAt: item.updatedAt || item.createdAt,
+  evidenceRefs: [{
+    provider: account.connectorId,
+    externalId: String(pick(item.id, 'unknown')),
+    label: 'Kantata OX project metadata',
+    type: account.connectorId
+  }],
+  raw: {
+    id: item.id,
+    sourceType: item.sourceType,
+    projectId: item.projectId,
+    status: item.status,
+    startAt: item.startAt,
+    dueAt: item.dueAt,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt
+  }
+}));
+kantataAdapter.capabilities.credentialBackedSync = true;
+kantataAdapter.list = async (account) => (await kantataWorkSignalClient.fetchDelta(account, null)).records;
+kantataAdapter.fetchDelta = (account, cursor) => kantataWorkSignalClient.fetchDelta(account, cursor);
+adapters.set('kantata', kantataAdapter);
 
 const slackAdapter = buildAdapter('slack', 'Slack message adapter', (account, message) => {
   const text = pick(message.title, message.text, message.message, '');

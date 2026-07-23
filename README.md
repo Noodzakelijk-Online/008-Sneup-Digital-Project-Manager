@@ -226,6 +226,8 @@ Live credential-backed ingestion is available for Trello, Jira, Asana, Slack, Gi
 
 Plane is available for one explicit Plane Cloud workspace slug and an API key restricted to `projects:read` and `projects.work_items:read`. Sneup uses bounded GET-only cursor pagination for project and work-item metadata, excludes descriptions, assignees, labels, comments, attachments, custom fields, URLs, and provider writes, and fails visibly at configured collection limits.
 
+Kantata OX (formerly Mavenlink) connects through an administrator-registered OAuth application. Sneup reads only bounded workspace (project) metadata from its fixed HTTPS API endpoint, redacts emails and URLs from retained titles, and excludes stories, people, schedules, resource allocations, budgets, financials, attachments, comments, custom fields, provider URLs, and provider writes.
+
 Motion is available for one explicit workspace and API key. Sneup uses fixed-host GET-only cursor pagination for project and task metadata, keeps only redacted titles, opaque IDs, schedule state, dates, durations, scheduling-issue flags, and opaque task-assignee IDs only for explicit capacity mappings. It excludes descriptions, creators, assignee names and emails, labels, custom fields, embedded project or workspace data, and provider writes.
 
 OpenProject is available for one public HTTPS instance and a bearer API token. Sneup pins each sync to public DNS results, uses bounded GET-only project and work-package metadata requests with server-side field selection, excludes descriptions, comments, attachments, people, custom fields, URLs, and provider writes, and fails visibly at configured collection limits.
