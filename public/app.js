@@ -911,6 +911,7 @@ async function loadOperationsLedger() {
       reconciliationHealth: ledger.reconciliationHealth || null,
       notificationPolicies: ledger.notificationPolicies || [],
       notificationDeliveries: ledger.notificationDeliveries || [],
+      demoMode: Boolean(ledger.demoMode),
       errors: (ledger.errors || []).map((error) => error.message || String(error))
     };
   } catch (error) {
@@ -928,6 +929,7 @@ async function loadOperationsLedger() {
       reconciliationHealth: null,
       notificationPolicies: [],
       notificationDeliveries: [],
+      demoMode: false,
       errors: [error.message]
     };
   }
@@ -1136,6 +1138,13 @@ function renderOperationsLedger() {
 
   const errorNotice = state.ledger.errors.length > 0
     ? `<div class="notice">Operations ledger needs MongoDB/live data: ${escapeHtml(unique(state.ledger.errors).join(' | '))}</div>`
+    : state.ledger.demoMode
+      ? '<div class="notice">Read-only demo ledger. It shows representative approval evidence and never sends provider writes or saves decisions.</div>'
+      : '';
+
+  els.notificationPolicyButton.disabled = state.ledger.demoMode;
+  els.notificationPolicyButton.title = state.ledger.demoMode
+    ? 'Notification policies are unavailable in the read-only demo ledger.'
     : '';
 
   els.decisionQueue.innerHTML = errorNotice + listOrEmpty(filteredDecisions, renderDecisionItem);
@@ -1294,12 +1303,12 @@ function renderDecisionItem(item) {
         <span>Answer: ${escapeHtml(item.recommendedAnswer || 'yes')}</span>
       </div>
       ${renderSourceEvidence(item.sourceEvidence)}
-      ${recommendationId ? renderReviewActions(recommendationId) : ''}
-      <div class="item-actions">
+      ${recommendationId && !state.ledger.demoMode ? renderReviewActions(recommendationId) : ''}
+      ${state.ledger.demoMode ? '' : `<div class="item-actions">
         <button class="button" data-decision-id="${itemId}" data-decision-action="snooze" type="button">Snooze 24h</button>
         <button class="button warn" data-decision-id="${itemId}" data-decision-action="delegate-team" type="button">Delegate team</button>
         <button class="button warn" data-decision-id="${itemId}" data-decision-action="delegate-va" type="button">Delegate VA</button>
-      </div>
+      </div>`}
     </div>
   `;
 }
@@ -1325,11 +1334,11 @@ function renderRecommendation(recommendation) {
         <summary>Exact action payload</summary>
         <pre>${escapeHtml(JSON.stringify(recommendation.actionPayload || {}, null, 2))}</pre>
       </details>
-      <div class="item-actions">
+      ${state.ledger.demoMode ? '' : `<div class="item-actions">
         <button class="button" data-recommendation-evidence="${escapeHtml(id)}" type="button">Evidence bundle</button>
-      </div>
-      ${renderPayloadEditAction(id, recommendation)}
-      ${renderReviewActions(id, recommendation.status, recommendation)}
+      </div>`}
+      ${state.ledger.demoMode ? '' : renderPayloadEditAction(id, recommendation)}
+      ${state.ledger.demoMode ? '' : renderReviewActions(id, recommendation.status, recommendation)}
     </div>
   `;
 }
@@ -1375,7 +1384,7 @@ function renderFinding(finding) {
       </div>
       <div class="meta">${escapeHtml(finding.recommendedAction || finding.description || 'Review finding')}</div>
       ${renderSourceEvidence(finding.sourceEvidence)}
-      ${cardId ? `<div class="item-actions"><button class="button" data-card-ledger="${escapeHtml(cardId)}" type="button">Card ledger</button></div>` : ''}
+      ${cardId && !state.ledger.demoMode ? `<div class="item-actions"><button class="button" data-card-ledger="${escapeHtml(cardId)}" type="button">Card ledger</button></div>` : ''}
     </div>
   `;
 }
@@ -1592,10 +1601,10 @@ function renderFollowUp(followUp) {
         <span>Due ${formatDate(followUp.dueAt)}</span>
         <span>${escapeHtml(followUp.nextAction || 'Review worker response')}</span>
       </div>
-      <div class="item-actions">
+      ${state.ledger.demoMode ? '' : `<div class="item-actions">
         <button class="button primary" data-followup-id="${followUpId}" data-followup-action="resolved" type="button">Resolved</button>
         <button class="button" data-followup-id="${followUpId}" data-followup-action="escalated" type="button">Escalate</button>
-      </div>
+      </div>`}
     </div>
   `;
 }
@@ -1657,7 +1666,7 @@ function renderInterventionOutcome(outcome) {
         <span>Checked ${formatDate(outcome.evaluatedAt)}</span>
       </div>
       <div class="meta"><span>${escapeHtml(outcome.summary || 'Outcome evidence is pending.')}</span></div>
-      ${canEvaluate ? `<div class="item-actions"><button class="button" data-outcome-evaluate="${escapeHtml(recommendationId)}" type="button">Refresh evidence</button></div>` : ''}
+      ${canEvaluate && !state.ledger.demoMode ? `<div class="item-actions"><button class="button" data-outcome-evaluate="${escapeHtml(recommendationId)}" type="button">Refresh evidence</button></div>` : ''}
     </div>
   `;
 }
@@ -2077,6 +2086,14 @@ function bindLedgerDrilldownActions() {
 
 async function openOperatingLedger(type, entityId) {
   if (!entityId) return;
+
+  if (state.snapshot?.mode === 'demo' || state.ledger.demoMode) {
+    openNotice(
+      'Read-only demo ledger',
+      'Board and card drill-downs need live workspace data. Review the approval ledger for representative demo evidence.'
+    );
+    return;
+  }
 
   const endpoint = type === 'board'
     ? `/api/boards/${entityId}/operating-ledger`

@@ -3,11 +3,15 @@ const logger = require('../utils/logger');
 const operationsLedgerService = require('../services/operationsLedgerService');
 const { getRequestWorkspaceObjectId } = require('../services/workspaceScopeService');
 const { clampInteger, requirePermission } = require('../utils/requestSecurity');
+const { getDemoOperationsLedger, isDemoMode } = require('../services/demoWorkspaceService');
 
 const router = express.Router();
 
 router.get('/', requirePermission('audit:read'), async (req, res) => {
   try {
+    if (isDemoMode()) {
+      return res.json({ success: true, ledger: getDemoOperationsLedger() });
+    }
     const ledger = await operationsLedgerService.getWorkspaceLedger({
       workspaceId: getRequestWorkspaceObjectId(req),
       limit: clampInteger(req.query.limit, 50, 1, 250),
