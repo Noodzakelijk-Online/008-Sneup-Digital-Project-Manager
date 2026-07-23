@@ -69,7 +69,8 @@ const state = {
   search: '',
   queueFilter: 'all',
   signalFilter: 'all',
-  setupMode: localStorage.getItem(FIRST_RUN_SETUP_KEY) || ''
+  setupMode: localStorage.getItem(FIRST_RUN_SETUP_KEY) || '',
+  runtimeMode: 'unknown'
 };
 
 const els = {
@@ -253,6 +254,29 @@ async function showView(viewName) {
 }
 
 function openFirstRunSetup() {
+  const isDesktopRuntime = Boolean(window.sneupDesktop?.saveStartupMode && window.sneupDesktop?.restart);
+  if (!isDesktopRuntime) {
+    const isDemoRuntime = state.runtimeMode === 'demo';
+    els.modalTitle.textContent = isDemoRuntime ? 'Demo workspace' : 'Connected workspace';
+    els.modalBody.innerHTML = `
+      <div class="setup-flow">
+        <p class="setup-intro">${isDemoRuntime
+    ? 'Sneup is running its local demo workspace. No provider account is connected.'
+    : 'Sneup is connected to its running workspace. Account connections and approval controls use this active runtime.'}</p>
+        <div class="notice">Runtime mode is selected when Sneup starts. This browser reflects that active mode and does not change it.</div>
+        <div class="toolbar modal-actions">
+          <button class="button primary" type="button" id="openRuntimeConnectors">Connect tools</button>
+        </div>
+      </div>
+    `;
+    els.modal.classList.add('open');
+    document.getElementById('openRuntimeConnectors').addEventListener('click', () => {
+      closeModal();
+      showView('connectors');
+    });
+    return;
+  }
+
   let selectedMode = state.setupMode || 'demo';
   const modeDetails = {
     demo: {
@@ -706,11 +730,13 @@ async function loadSecurityContext() {
   try {
     const data = await fetchApi('/api/security/context');
     state.securityContext = data.context;
+    state.runtimeMode = data.controls?.demoMode ? 'demo' : 'live';
     if (!state.activeWorkspaceId && data.context?.workspaceId) {
       state.activeWorkspaceId = data.context.workspaceId;
     }
   } catch (error) {
     state.securityContext = null;
+    state.runtimeMode = 'unknown';
   }
 }
 
@@ -5290,5 +5316,5 @@ if (invitationToken) {
   openInviteAcceptance(invitationToken);
 } else {
   loadAll();
-  if (!state.setupMode) openFirstRunSetup();
+  if (!state.setupMode && window.sneupDesktop?.saveStartupMode) openFirstRunSetup();
 }

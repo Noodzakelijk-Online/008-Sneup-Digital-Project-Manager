@@ -1570,6 +1570,9 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('Report scheduler');
     expect(appJs).toContain("query.set('readiness', state.connectorReadiness)");
     expect(appJs).toContain('data-connector-readiness');
+    expect(appJs).toContain("state.runtimeMode = data.controls?.demoMode ? 'demo' : 'live'");
+    expect(appJs).toContain('Runtime mode is selected when Sneup starts. This browser reflects that active mode and does not change it.');
+    expect(appJs).toContain("if (!state.setupMode && window.sneupDesktop?.saveStartupMode) openFirstRunSetup();");
     expect(html).toContain('Connector readiness filter');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
     expect(server).toContain("app.use('/api/forecasts', forecastRoutes)");
