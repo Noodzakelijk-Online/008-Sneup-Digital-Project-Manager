@@ -2,6 +2,7 @@ const http = require('http');
 const path = require('path');
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { acquireSingleInstanceLock } = require('./singleInstance');
+const { createNavigationPolicy } = require('./navigationPolicy');
 const {
   getDesktopSettingsPath,
   readDesktopSettings,
@@ -93,10 +94,10 @@ const createWindow = async () => {
     mainWindow.show();
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: 'deny' };
-  });
+  const navigationPolicy = createNavigationPolicy({ shell, internalUrl: DESKTOP_URL });
+  mainWindow.webContents.setWindowOpenHandler(navigationPolicy.handleWindowOpen);
+  mainWindow.webContents.on('will-navigate', navigationPolicy.handleNavigation);
+  mainWindow.webContents.on('will-redirect', navigationPolicy.handleNavigation);
 
   await mainWindow.loadURL(DESKTOP_URL);
 };
