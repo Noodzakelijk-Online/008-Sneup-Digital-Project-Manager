@@ -1227,6 +1227,10 @@ describe('dashboard content security policy', () => {
     expect(appJs).toContain('Encrypted destination retained unless you enter a replacement.');
     expect(appJs).toContain('Select at least one delivery type');
     expect(appJs).toContain('Activate delivery policy');
+    expect(appJs).toContain('loadNotificationDeliveryHealth');
+    expect(appJs).toContain("fetchApi('/api/jobs/health')");
+    expect(appJs).toContain('renderNotificationPolicySchedulerHealth(policy)');
+    expect(appJs).toContain('Report scheduler');
     expect(server).toContain("app.use('/api/work-signals', workSignalRoutes)");
     expect(server).toContain("app.use('/api/forecasts', forecastRoutes)");
     expect(fs.readFileSync(path.join(rootDir, 'src', 'routes', 'workSignals.js'), 'utf8')).toContain("router.post('/graph/dependencies/:dependencyId/review'");

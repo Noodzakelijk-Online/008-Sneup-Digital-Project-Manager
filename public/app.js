@@ -7,6 +7,7 @@ const state = {
   snapshot: null,
   operationsBrief: null,
   jobDashboard: null,
+  notificationJobHealth: [],
   responseTiming: null,
   rateLimitMetrics: null,
   connectors: [],
@@ -320,7 +321,10 @@ const viewLoaders = {
     loadOperationsBrief(),
     loadJobDashboard()
   ]),
-  approvals: loadOperationsLedger,
+  approvals: () => Promise.all([
+    loadOperationsLedger(),
+    loadNotificationDeliveryHealth()
+  ]),
   connectors: loadConnectors,
   enhancements: loadEnhancements,
   signals: loadWorkSignals,
@@ -740,6 +744,17 @@ async function loadJobDashboard() {
     els.jobHealthCount.textContent = '0 tracked';
     els.jobHealthList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
   }
+}
+
+async function loadNotificationDeliveryHealth() {
+  try {
+    const data = await fetchApi('/api/jobs/health');
+    state.notificationJobHealth = data.health || [];
+  } catch (error) {
+    // Delivery configuration remains usable when observability is temporarily unavailable.
+    state.notificationJobHealth = [];
+  }
+  renderOperationsLedger();
 }
 
 async function loadConnectors({ append = false } = {}) {
@@ -1458,6 +1473,7 @@ function renderNotificationPolicy(policy) {
       <div class="meta"><span>${policy.destinationConfigured ? 'Encrypted destination configured' : 'Destination needs configuration'}</span><span>${policy.quietHours?.enabled ? `Warning alerts defer ${escapeHtml(policy.quietHours.startHourUtc)}:00-${escapeHtml(policy.quietHours.endHourUtc)}:00 UTC` : 'No quiet hours'}</span></div>
       <div class="meta"><span>${policy.digest?.enabled ? `Warning digest at ${escapeHtml(policy.digest.hourUtc)}:00 UTC, up to ${escapeHtml(policy.digest.maximumItems)} items` : 'Warning alerts deliver individually'}</span></div>
       <div class="meta"><span>${isWeeklyStatus && reportSchedule.enabled ? `Weekly status every ${escapeHtml(weekDays[reportSchedule.dayOfWeekUtc] || 'Monday')} at ${escapeHtml(reportSchedule.hourUtc)}:00 UTC` : 'No scheduled status report'}</span></div>
+      ${renderNotificationPolicySchedulerHealth(policy)}
       <div class="item-actions">
         <button class="button" data-notification-policy-edit="${escapeHtml(policyId)}" type="button">Edit</button>
         ${policy.status === 'active'
@@ -1465,6 +1481,47 @@ function renderNotificationPolicy(policy) {
     : `<button class="button primary" data-notification-policy-activate="${escapeHtml(policyId)}" type="button">Activate</button>`}
         <button class="button" data-notification-policy-test="${escapeHtml(policyId)}" type="button">Send test</button>
       </div>
+    </div>
+  `;
+}
+
+function renderNotificationPolicySchedulerHealth(policy) {
+  const jobsByEventType = {
+    reconciliation_alert: {
+      jobName: 'notifications.reconciliation_alerts',
+      label: 'Alert scheduler'
+    },
+    weekly_status_report: {
+      jobName: 'notifications.weekly_status_reports',
+      label: 'Report scheduler'
+    }
+  };
+  const healthByJobName = new Map((state.notificationJobHealth || []).map(job => [job.jobName, job]));
+  const schedulers = (policy.eventTypes || [])
+    .map(eventType => jobsByEventType[eventType])
+    .filter(Boolean)
+    .map(config => ({
+      ...config,
+      health: healthByJobName.get(config.jobName)
+    }));
+
+  if (schedulers.length === 0) return '';
+  return `
+    <div class="meta">
+      ${schedulers.map(({ label, health }) => {
+        const status = health?.status || 'unavailable';
+        const statusClass = status === 'failed'
+          ? 'critical'
+          : status === 'stale'
+            ? 'high'
+            : status === 'healthy'
+              ? 'healthy'
+              : 'review';
+        const detail = health
+          ? `${label}: ${status}, last run ${formatDate(health.lastRunAt)}`
+          : `${label}: health unavailable`;
+        return `<span class="pill ${statusClass}">${escapeHtml(detail)}</span>`;
+      }).join('')}
     </div>
   `;
 }
