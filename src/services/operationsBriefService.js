@@ -7,6 +7,7 @@ const CardFinding = require('../models/CardFinding');
 const BoardHealthSnapshot = require('../models/BoardHealthSnapshot');
 const { normalizeWorkspaceObjectId } = require('./workspaceScopeService');
 const workGraphService = require('./workGraphService');
+const { getDemoOperationsLedger } = require('./demoWorkspaceService');
 
 const SEVERITY_SCORE = {
   critical: 4,
@@ -331,73 +332,16 @@ class OperationsBriefService {
   }
 
   getDemoDailyBrief() {
-    const now = new Date();
+    const ledger = getDemoOperationsLedger();
     return this.buildBrief({
       mode: 'demo',
-      generatedAt: now,
-      decisions: [
-        {
-          _id: 'demo-decision-1',
-          ownerType: 'robert',
-          question: 'Approve recovery plan for Growth Experiments: Yes/No.',
-          reason: 'Campaign dependencies are blocked and production is saturated.',
-          riskLevel: 'critical',
-          status: 'open',
-          boardId: { name: 'Growth Experiments' },
-          dueAt: now
-        },
-        {
-          _id: 'demo-decision-2',
-          ownerType: 'team',
-          question: 'Post a crisp update request to paid campaign owner: Yes/No.',
-          reason: 'No activity for 6 days.',
-          riskLevel: 'medium',
-          status: 'open',
-          cardId: { name: 'Clear copy approvals for paid campaign' }
-        }
-      ],
-      recommendations: [
-        {
-          _id: 'demo-recommendation-1',
-          status: 'pending',
-          riskLevel: 'critical',
-          recommendedAction: 'Run Growth Experiments recovery plan'
-        }
-      ],
-      failedActions: [],
-      dueFollowUps: [
-        {
-          _id: 'demo-follow-up-1',
-          reason: 'Verify launch checklist response.',
-          nextAction: 'Check whether Nina responded with the next action.',
-          status: 'due',
-          riskLevel: 'medium',
-          dueAt: now,
-          cardId: { name: 'Approve launch checklist for Sneup onboarding' }
-        }
-      ],
-      findings: [
-        {
-          _id: 'demo-finding-1',
-          title: 'Analytics webhook rollout has no owner',
-          description: 'Unowned work has no accountable path to completion.',
-          findingType: 'unassigned',
-          waitingOn: 'va',
-          severity: 'high',
-          status: 'open',
-          cardId: { name: 'Analytics webhook rollout' }
-        }
-      ],
-      healthSnapshots: [
-        {
-          _id: 'demo-health-1',
-          boardId: { name: 'Growth Experiments' },
-          healthStatus: 'critical',
-          healthScore: 42,
-          summary: 'Production queue is saturated and owner capacity is overloaded.',
-          generatedAt: now
-        }
-      ]
+      generatedAt: ledger.generatedAt,
+      decisions: ledger.decisions,
+      recommendations: ledger.recommendations,
+      failedActions: ledger.actions.filter(action => action.status === 'failed'),
+      dueFollowUps: ledger.followUps.filter(followUp => ['scheduled', 'due'].includes(followUp.status)),
+      findings: ledger.findings,
+      healthSnapshots: ledger.healthSnapshots
     });
   }
 }

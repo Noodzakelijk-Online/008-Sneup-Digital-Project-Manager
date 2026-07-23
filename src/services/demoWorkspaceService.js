@@ -67,6 +67,20 @@ function getDemoOperationsLedger(now = new Date()) {
       sourceEvidence,
       status: 'open',
       createdAt: observedAt
+    }, {
+      _id: 'demo-decision-team-update',
+      ownerType: 'team',
+      boardId: { _id: 'demo-board-client-launches', name: 'Client Launches' },
+      cardId: { _id: 'demo-card-launch-checklist', name: 'Approve launch checklist for Sneup onboarding' },
+      title: 'Request a clear launch checklist update',
+      question: 'Ask the launch owner for a confirmed next action: Yes/No.',
+      recommendedAnswer: 'yes',
+      options: ['yes', 'no', 'change'],
+      riskLevel: 'medium',
+      reason: 'The launch checklist follow-up is due and no worker response is recorded.',
+      sourceEvidence,
+      status: 'open',
+      createdAt: observedAt
     }],
     recommendations: [{
       _id: recoveryRecommendationId,
@@ -175,13 +189,25 @@ function getDemoOperationsLedger(now = new Date()) {
       recommendedAction: 'Review the recovery plan and confirm the next owner action.',
       sourceEvidence,
       lastObservedAt: observedAt
+    }, {
+      _id: 'demo-finding-analytics',
+      boardId: { _id: 'demo-board-growth', name: 'Growth Experiments' },
+      cardId: { _id: 'demo-card-analytics-webhook', name: 'Analytics webhook rollout' },
+      title: 'Analytics webhook rollout has no owner',
+      findingType: 'unassigned',
+      waitingOn: 'va',
+      severity: 'high',
+      signalScore: 88,
+      recommendedAction: 'Assign a VA owner and confirm the next action.',
+      sourceEvidence,
+      lastObservedAt: observedAt
     }],
     healthSnapshots: [{
       _id: 'demo-health-growth',
       boardId: { _id: 'demo-board-growth', name: 'Growth Experiments' },
       healthStatus: 'critical',
       healthScore: 42,
-      counts: { findings: 3, robertQueueCandidates: 1, vaReadyCandidates: 1 },
+      counts: { findings: 2, robertQueueCandidates: 1, vaReadyCandidates: 1 },
       summary: 'Production capacity is saturated and three blockers need review.',
       generatedAt
     }],

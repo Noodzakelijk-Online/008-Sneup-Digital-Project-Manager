@@ -257,12 +257,23 @@ async function showView(viewName, options = {}) {
   await loadView(viewName);
   if (viewName === 'approvals') {
     renderOperationsLedger();
-    if (options.focusQueue) els.decisionQueue.scrollIntoView({ block: 'start' });
+    if (options.focusElementId) {
+      const focusTarget = document.getElementById(options.focusElementId);
+      if (focusTarget) {
+        focusTarget.tabIndex = -1;
+        focusTarget.scrollIntoView({ block: 'start' });
+        focusTarget.focus({ preventScroll: true });
+      }
+    }
   }
 }
 
 async function openDecisionQueue(ownerType = 'robert') {
-  await showView('approvals', { queueFilter: ownerType, focusQueue: true });
+  await showView('approvals', { queueFilter: ownerType, focusElementId: 'decisionQueue' });
+}
+
+async function openLedgerSection(options = {}) {
+  await showView('approvals', options);
 }
 
 function openFirstRunSetup() {
@@ -1109,6 +1120,34 @@ function bindOperationsBriefActions() {
   document.querySelectorAll('[data-brief-action="review-robert"]').forEach((button) => {
     button.addEventListener('click', () => openDecisionQueue('robert'));
   });
+  document.querySelectorAll('[data-brief-route]').forEach((button) => {
+    button.addEventListener('click', () => openBriefRoute(button.dataset.briefRoute));
+  });
+}
+
+function openBriefRoute(route) {
+  const routes = {
+    robert_decision: { queueFilter: 'robert', focusElementId: 'decisionQueue' },
+    va_ready: { queueFilter: 'va', focusElementId: 'findingsList' },
+    team_queue: { queueFilter: 'team', focusElementId: 'decisionQueue' },
+    follow_up_due: { focusElementId: 'followUps' },
+    failed_action: { focusElementId: 'trelloAttempts' },
+    board_health: { focusElementId: 'boardHealthList' }
+  };
+  const target = routes[route];
+  if (target) openLedgerSection(target);
+}
+
+function operationsBriefRoute(item = {}) {
+  const routes = {
+    robert_decision: { label: 'Review Robert decision', route: 'robert_decision' },
+    va_ready: { label: 'Open VA work', route: 'va_ready' },
+    team_queue: { label: 'Open team queue', route: 'team_queue' },
+    follow_up_due: { label: 'Review follow-up', route: 'follow_up_due' },
+    failed_action: { label: 'Review failed action', route: 'failed_action' },
+    board_health: { label: 'Review board health', route: 'board_health' }
+  };
+  return routes[item.type] || null;
 }
 
 function renderJobDashboard() {
@@ -1306,6 +1345,7 @@ function renderOperationsLedger() {
 }
 
 function renderOperationsBriefItem(item) {
+  const route = operationsBriefRoute(item);
   return `
     <div class="item">
       <div class="item-title">
@@ -1322,7 +1362,7 @@ function renderOperationsBriefItem(item) {
         ${item.draftOnly ? '<span>draft-only</span>' : ''}
       </div>
       ${item.providerUrl ? `<div class="meta"><a href="${escapeHtml(item.providerUrl)}" rel="noreferrer" target="_blank">Open source</a></div>` : ''}
-      ${item.type === 'robert_decision' ? '<div class="item-actions"><button class="button" type="button" data-brief-action="review-robert">Review decision</button></div>' : ''}
+      ${route ? `<div class="item-actions"><button class="button" type="button" data-brief-route="${route.route}">${escapeHtml(route.label)}</button></div>` : ''}
     </div>
   `;
 }
