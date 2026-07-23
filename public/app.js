@@ -1410,20 +1410,25 @@ function renderRecommendation(recommendation) {
 
 function renderReviewActions(recommendationId, status = 'pending', recommendation = {}) {
   const payload = recommendation.actionPayload || {};
+  const canApprove = ['pending', 'change_requested', 'snoozed', 'delegated'].includes(status);
+  const canReject = ['pending', 'approved', 'change_requested', 'snoozed', 'delegated'].includes(status);
+  const canChange = ['pending', 'approved', 'snoozed', 'delegated'].includes(status);
   const executable = payload.executable !== false && payload.draftOnly !== true && recommendation.actionType !== 'manual_review';
   const executeButton = status === 'approved' && executable
     ? `<button class="button primary" data-recommendation-id="${recommendationId}" data-recommendation-action="execute-approved" type="button">Execute approved</button>`
     : '';
+  if (!canApprove && !canReject && !canChange && !executeButton) return '';
   return `
     <div class="item-actions">
-      <button class="button primary" data-recommendation-id="${recommendationId}" data-recommendation-action="approve" type="button">Yes</button>
-      <button class="button danger" data-recommendation-id="${recommendationId}" data-recommendation-action="reject" type="button">No</button>
-      <button class="button warn" data-recommendation-id="${recommendationId}" data-recommendation-action="change" type="button">Change</button>
+      ${canApprove ? `<button class="button primary" data-recommendation-id="${recommendationId}" data-recommendation-action="approve" type="button">Yes</button>` : ''}
+      ${canReject ? `<button class="button danger" data-recommendation-id="${recommendationId}" data-recommendation-action="reject" type="button">No</button>` : ''}
+      ${canChange ? `<button class="button warn" data-recommendation-id="${recommendationId}" data-recommendation-action="change" type="button">Change</button>` : ''}
       ${executeButton}
     </div>
   `;
 }
 function renderPayloadEditAction(recommendationId, recommendation = {}) {
+  if (!['pending', 'change_requested', 'snoozed', 'delegated'].includes(recommendation.status || 'pending')) return '';
   const fields = getPayloadReviewFields(recommendation);
   if (fields.length === 0) return '';
   return `<div class="item-actions"><button class="button warn" data-payload-edit="${recommendationId}" type="button">Review payload</button></div>`;

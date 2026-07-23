@@ -8810,6 +8810,79 @@ describe('approved Trello action execution safety', () => {
       new: true
     });
   });
+
+  test('keeps terminal recommendations out of approval and payload-edit review flows', async () => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    jest.doMock('../src/models/Recommendation', () => ({
+      findOne: jest.fn()
+        .mockResolvedValueOnce({ _id: 'executed-1', workspaceId: 'workspace-1', status: 'executed' })
+        .mockResolvedValueOnce({ _id: 'failed-1', workspaceId: 'workspace-1', status: 'failed' })
+    }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({
+      normalizeWorkspaceObjectId: jest.fn(value => value)
+    }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    jest.spyOn(operationsLedgerService, 'isDatabaseReady').mockReturnValue(true);
+
+    await expect(operationsLedgerService.approveRecommendation('executed-1', {
+      workspaceId: 'workspace-1'
+    })).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('cannot be approved') });
+    await expect(operationsLedgerService.updateRecommendationPayload('failed-1', {
+      workspaceId: 'workspace-1',
+      actionPayload: { commentText: 'Do not revive this failed action.' }
+    })).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('cannot be edited') });
+  });
+
+  test('revokes an approved decision queue item when its recommendation is rejected', async () => {
+    jest.resetModules();
+    jest.dontMock('../src/services/operationsLedgerService');
+
+    const recommendation = {
+      _id: 'recommendation-1',
+      workspaceId: 'workspace-1',
+      status: 'approved',
+      interventionId: null,
+      boardId: 'board-1',
+      cardId: 'card-1',
+      recommendedAction: 'Post the reviewed follow-up',
+      actionPayload: { cardTrelloId: 'trello-card-1', commentText: 'Please share the next action.' },
+      riskLevel: 'medium',
+      save: jest.fn().mockResolvedValue(undefined),
+      toObject: jest.fn(() => ({ _id: 'recommendation-1', status: 'rejected' }))
+    };
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 1 });
+    jest.doMock('../src/models/Recommendation', () => ({ findOne: jest.fn().mockResolvedValue(recommendation) }));
+    jest.doMock('../src/models/Approval', () => ({
+      create: jest.fn().mockResolvedValue({
+        _id: 'approval-1',
+        decidedAt: new Date('2026-07-23T12:00:00.000Z'),
+        toObject: () => ({ _id: 'approval-1', decision: 'rejected' })
+      })
+    }));
+    jest.doMock('../src/models/DecisionQueueItem', () => ({ updateMany }));
+    jest.doMock('../src/services/workspaceScopeService', () => ({ normalizeWorkspaceObjectId: jest.fn(value => value) }));
+
+    const operationsLedgerService = require('../src/services/operationsLedgerService');
+    jest.spyOn(operationsLedgerService, 'isDatabaseReady').mockReturnValue(true);
+    jest.spyOn(operationsLedgerService, 'recordAudit').mockResolvedValue(undefined);
+    jest.spyOn(operationsLedgerService, 'recordRecommendationLearningFeedback').mockResolvedValue(undefined);
+
+    await operationsLedgerService.rejectRecommendation('recommendation-1', {
+      workspaceId: 'workspace-1',
+      decidedBy: 'owner-1',
+      decisionReason: 'Wait for updated client context.'
+    });
+
+    expect(recommendation).toMatchObject({ status: 'rejected', rejectedAt: new Date('2026-07-23T12:00:00.000Z') });
+    expect(updateMany).toHaveBeenCalledWith({
+      recommendationId: 'recommendation-1',
+      status: { $in: expect.arrayContaining(['approved', 'open', 'change_requested', 'snoozed', 'delegated']) },
+      workspaceId: 'workspace-1'
+    }, expect.objectContaining({ status: 'rejected' }));
+  });
 });
 
 describe('Trello action reconciliation safety', () => {

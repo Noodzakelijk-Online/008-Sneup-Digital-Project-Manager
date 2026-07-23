@@ -36,6 +36,11 @@ const DEFAULT_APPROVAL_TTL_HOURS = Object.freeze({
 const CHAT_RESPONSE_TYPES = new Set(['acknowledged', 'completed', 'blocked', 'needs_help']);
 const WORKER_RESPONSE_SOURCES = new Set(['trello_comment', 'slack', 'email', 'web_chat', 'api', 'manual', 'system']);
 const MAX_LEDGER_TIMELINE_ENTRIES = 100;
+const APPROVABLE_RECOMMENDATION_STATUSES = new Set(['pending', 'change_requested', 'snoozed', 'delegated']);
+const REJECTABLE_RECOMMENDATION_STATUSES = new Set(['pending', 'approved', 'change_requested', 'snoozed', 'delegated']);
+const CHANGEABLE_RECOMMENDATION_STATUSES = new Set(['pending', 'approved', 'snoozed', 'delegated']);
+const PAYLOAD_EDITABLE_RECOMMENDATION_STATUSES = new Set(['pending', 'change_requested', 'snoozed', 'delegated']);
+const ACTIVE_DECISION_QUEUE_STATUSES = ['open', 'approved', 'change_requested', 'snoozed', 'delegated'];
 
 const resolveSnoozedUntil = ({ snoozedUntil, defaultSnoozeHours, now = new Date() } = {}) => {
   const currentTime = now instanceof Date ? now : new Date(now);
@@ -192,6 +197,21 @@ class OperationsLedgerService {
       ...query,
       workspaceId: this.resolveWorkspaceId(filters.workspaceId)
     };
+  }
+
+  requireRecommendationStatus(recommendation, allowedStatuses, action) {
+    if (allowedStatuses.has(recommendation.status)) return;
+
+    const error = new Error(`A recommendation in ${recommendation.status || 'unknown'} status cannot be ${action}`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  clearRecommendationApproval(recommendation) {
+    recommendation.approvedAt = undefined;
+    recommendation.approvalExpiresAt = undefined;
+    recommendation.approvalExpiredAt = undefined;
+    recommendation.approvalExpiryReason = undefined;
   }
 
   async createRecommendationFromIntervention(intervention, policy = null) {
@@ -712,6 +732,8 @@ class OperationsLedgerService {
       throw error;
     }
 
+    this.requireRecommendationStatus(recommendation, APPROVABLE_RECOMMENDATION_STATUSES, 'approved');
+
     if (body.approvedPayloadSnapshot !== undefined) {
       const error = new Error('Approval always uses the current protected action payload. Review the payload before approving.');
       error.statusCode = 400;
@@ -742,7 +764,10 @@ class OperationsLedgerService {
     await recommendation.save();
 
     await DecisionQueueItem.updateMany(
-      this.workspaceQuery({ workspaceId: recommendation.workspaceId }, { recommendationId: recommendation._id, status: 'open' }),
+      this.workspaceQuery({ workspaceId: recommendation.workspaceId }, {
+        recommendationId: recommendation._id,
+        status: { $in: ['open', 'change_requested', 'snoozed', 'delegated'] }
+      }),
       {
         status: 'approved',
         resolvedAt: new Date(),
@@ -781,6 +806,8 @@ class OperationsLedgerService {
       throw error;
     }
 
+    this.requireRecommendationStatus(recommendation, REJECTABLE_RECOMMENDATION_STATUSES, 'rejected');
+
     const approval = await Approval.create({
       workspaceId: recommendation.workspaceId,
       recommendationId: recommendation._id,
@@ -796,10 +823,14 @@ class OperationsLedgerService {
 
     recommendation.status = 'rejected';
     recommendation.rejectedAt = approval.decidedAt;
+    this.clearRecommendationApproval(recommendation);
     await recommendation.save();
 
     await DecisionQueueItem.updateMany(
-      this.workspaceQuery({ workspaceId: recommendation.workspaceId }, { recommendationId: recommendation._id, status: 'open' }),
+      this.workspaceQuery({ workspaceId: recommendation.workspaceId }, {
+        recommendationId: recommendation._id,
+        status: { $in: ACTIVE_DECISION_QUEUE_STATUSES }
+      }),
       {
         status: 'rejected',
         resolvedAt: new Date(),
@@ -845,6 +876,8 @@ class OperationsLedgerService {
       throw error;
     }
 
+    this.requireRecommendationStatus(recommendation, CHANGEABLE_RECOMMENDATION_STATUSES, 'changed');
+
     const approval = await Approval.create({
       workspaceId: recommendation.workspaceId,
       recommendationId: recommendation._id,
@@ -859,10 +892,14 @@ class OperationsLedgerService {
     });
 
     recommendation.status = 'change_requested';
+    this.clearRecommendationApproval(recommendation);
     await recommendation.save();
 
     await DecisionQueueItem.updateMany(
-      this.workspaceQuery({ workspaceId: recommendation.workspaceId }, { recommendationId: recommendation._id, status: 'open' }),
+      this.workspaceQuery({ workspaceId: recommendation.workspaceId }, {
+        recommendationId: recommendation._id,
+        status: { $in: ACTIVE_DECISION_QUEUE_STATUSES }
+      }),
       {
         status: 'change_requested',
         resolvedAt: new Date(),
@@ -900,11 +937,7 @@ class OperationsLedgerService {
       throw error;
     }
 
-    if (['executing', 'executed'].includes(recommendation.status)) {
-      const error = new Error('An executing or executed recommendation payload cannot be changed');
-      error.statusCode = 409;
-      throw error;
-    }
+    this.requireRecommendationStatus(recommendation, PAYLOAD_EDITABLE_RECOMMENDATION_STATUSES, 'edited');
     if (body.replace === true || body.actionType !== undefined || body.recommendedAction !== undefined) {
       const error = new Error('Action type, recommendation text, and protected payload fields cannot be changed during review');
       error.statusCode = 400;
