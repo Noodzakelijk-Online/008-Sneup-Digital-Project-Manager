@@ -503,15 +503,11 @@ const acceptInvite = async ({ rawToken, displayName }) => {
     throw invitationError('Invitation is invalid or has expired');
   }
 
-  const rawSessionToken = SessionToken.generateRawToken();
-  const session = await SessionToken.create(SessionToken.buildSecretRecord(rawSessionToken, {
-    workspaceId: invite.workspaceId,
-    userId: user._id,
-    name: 'Invitation onboarding session',
-    expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
-    createdBy: `invite:${String(invite._id)}`,
-    metadata: { inviteId: String(invite._id), onboarding: true }
-  }));
+  const Workspace = require('../models/Workspace');
+  const workspace = await Workspace.findById(invite.workspaceId);
+  if (!workspace) {
+    throw invitationError('Invitation workspace is unavailable', 503);
+  }
 
   const accepted = await WorkspaceInvite.findOneAndUpdate({
     _id: invite._id,
@@ -525,20 +521,40 @@ const acceptInvite = async ({ rawToken, displayName }) => {
   }, { new: true });
 
   if (!accepted) {
-    await session.revoke('invite_acceptance_race');
     throw invitationError('Invitation is invalid or has expired');
   }
 
-  user.status = 'active';
-  user.lastSeenAt = now;
-  if (String(displayName || '').trim()) user.displayName = String(displayName).trim();
-  await user.save();
+  const restorePendingInvite = async () => {
+    await WorkspaceInvite.findOneAndUpdate({
+      _id: accepted._id,
+      status: 'accepted',
+      acceptedAt: now
+    }, {
+      $set: { status: 'pending' },
+      $unset: { acceptedAt: 1 }
+    });
+  };
 
-  const Workspace = require('../models/Workspace');
-  const workspace = await Workspace.findById(invite.workspaceId);
-  if (!workspace) {
-    await session.revoke('workspace_missing');
-    throw invitationError('Invitation workspace is unavailable', 503);
+  const rawSessionToken = SessionToken.generateRawToken();
+  let session;
+  try {
+    session = await SessionToken.create(SessionToken.buildSecretRecord(rawSessionToken, {
+      workspaceId: invite.workspaceId,
+      userId: user._id,
+      name: 'Invitation onboarding session',
+      expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+      createdBy: `invite:${String(invite._id)}`,
+      metadata: { inviteId: String(invite._id), onboarding: true }
+    }));
+
+    user.status = 'active';
+    user.lastSeenAt = now;
+    if (String(displayName || '').trim()) user.displayName = String(displayName).trim();
+    await user.save();
+  } catch (error) {
+    if (session) await session.revoke('invite_acceptance_failed');
+    await restorePendingInvite();
+    throw error;
   }
 
   await recordAudit({

@@ -20,7 +20,7 @@ describe('workspace invitation delivery retries', () => {
     restoreEnvironment();
   });
 
-  const loadService = ({ invite, user, replacementInvite, retentionCandidates = [], retentionModifiedCount = 0, retainableWorkspaceIds = [] }) => {
+  const loadService = ({ invite, user, replacementInvite, workspace = null, session = null, retentionCandidates = [], retentionModifiedCount = 0, retainableWorkspaceIds = [] }) => {
     const retentionChain = {
       select: jest.fn(),
       sort: jest.fn(),
@@ -49,11 +49,18 @@ describe('workspace invitation delivery retries', () => {
       create: jest.fn().mockResolvedValue(replacementInvite)
     };
     const User = { findOne: jest.fn().mockResolvedValue(user) };
+    const SessionToken = {
+      generateRawToken: jest.fn(() => 'sneup_session_onboarding_token'),
+      buildSecretRecord: jest.fn((token, fields) => ({ ...fields, tokenPrefix: String(token).slice(0, 18), tokenHash: 'session-hash' })),
+      create: jest.fn().mockResolvedValue(session)
+    };
+    const Workspace = { findById: jest.fn().mockResolvedValue(workspace) };
     const operationsLedgerService = { recordAudit: jest.fn().mockResolvedValue(null) };
 
     jest.doMock('../src/models/WorkspaceInvite', () => WorkspaceInvite);
     jest.doMock('../src/models/User', () => User);
-    jest.doMock('../src/models/SessionToken', () => ({}));
+    jest.doMock('../src/models/SessionToken', () => SessionToken);
+    jest.doMock('../src/models/Workspace', () => Workspace);
     jest.doMock('../src/services/operationsLedgerService', () => operationsLedgerService);
     jest.doMock('../src/utils/logger', () => ({ error: jest.fn() }));
 
@@ -61,9 +68,69 @@ describe('workspace invitation delivery retries', () => {
       service: require('../src/services/workspaceInviteService'),
       WorkspaceInvite,
       User,
+      SessionToken,
+      Workspace,
       operationsLedgerService
     };
   };
+
+  test('does not mint an onboarding session when the atomic invitation claim loses a race', async () => {
+    const invite = {
+      _id: 'invite-race',
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      status: 'pending',
+      matches: jest.fn(() => true),
+      isUsable: jest.fn(() => true)
+    };
+    const user = { _id: 'user-1', workspaceId: 'workspace-1', status: 'invited', save: jest.fn() };
+    const workspace = { _id: 'workspace-1', name: 'Workspace One', slug: 'workspace-one' };
+    const session = { _id: 'session-race', revoke: jest.fn() };
+    const { service, WorkspaceInvite, SessionToken } = loadService({ invite, user, workspace, session });
+    WorkspaceInvite.findOne.mockReturnValueOnce({ select: jest.fn().mockResolvedValue(invite) });
+    WorkspaceInvite.findOneAndUpdate.mockResolvedValueOnce(null);
+
+    await expect(service.acceptInvite({ rawToken: 'sneup_invite_race_token' }))
+      .rejects.toMatchObject({ statusCode: 400 });
+
+    expect(SessionToken.create).not.toHaveBeenCalled();
+    expect(SessionToken.generateRawToken).not.toHaveBeenCalled();
+    expect(session.revoke).not.toHaveBeenCalled();
+  });
+
+  test('restores a claimed invitation when onboarding session persistence fails', async () => {
+    const invite = {
+      _id: 'invite-session-failure',
+      workspaceId: 'workspace-1',
+      userId: 'user-1',
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      status: 'pending',
+      matches: jest.fn(() => true),
+      isUsable: jest.fn(() => true)
+    };
+    const user = { _id: 'user-1', workspaceId: 'workspace-1', status: 'invited', save: jest.fn() };
+    const workspace = { _id: 'workspace-1', name: 'Workspace One', slug: 'workspace-one' };
+    const { service, WorkspaceInvite, SessionToken } = loadService({ invite, user, workspace });
+    const sessionError = new Error('session datastore unavailable');
+    WorkspaceInvite.findOne.mockReturnValueOnce({ select: jest.fn().mockResolvedValue(invite) });
+    WorkspaceInvite.findOneAndUpdate
+      .mockResolvedValueOnce({ ...invite, status: 'accepted', acceptedAt: expect.any(Date) })
+      .mockResolvedValueOnce({ ...invite, status: 'pending' });
+    SessionToken.create.mockRejectedValueOnce(sessionError);
+
+    await expect(service.acceptInvite({ rawToken: 'sneup_invite_session_failure' })).rejects.toBe(sessionError);
+
+    expect(user.save).not.toHaveBeenCalled();
+    expect(WorkspaceInvite.findOneAndUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
+      _id: 'invite-session-failure',
+      status: 'accepted',
+      acceptedAt: expect.any(Date)
+    }), {
+      $set: { status: 'pending' },
+      $unset: { acceptedAt: 1 }
+    });
+  });
 
   test('reissues a failed email invitation with a fresh token and audit evidence', async () => {
     process.env.RESEND_API_KEY = 're_test_key';
